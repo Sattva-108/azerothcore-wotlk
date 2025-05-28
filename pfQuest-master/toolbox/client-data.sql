@@ -1263,7 +1263,7 @@ CREATE TABLE `AreaTrigger_wotlk` (
 `Size` float NOT NULL DEFAULT 0.0
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='AreaTrigger';
 
-INSERT INTO `AreaTrigger_wotlk` VALUES ("100", "0", "2019, 349", "1904, 359");
+INSERT INTO `AreaTrigger_wotlk` VALUES ("100", "0", "2019.349", "1904.359", "0.0", "0.0");
 INSERT INTO `AreaTrigger_wotlk` VALUES ("101", "0", "-8761, 85", "848, 557");
 INSERT INTO `AreaTrigger_wotlk` VALUES ("1022", "1", "898, 482", "922, 688");
 INSERT INTO `AreaTrigger_wotlk` VALUES ("1023", "1", "-7162, 14", "-3845, 95");

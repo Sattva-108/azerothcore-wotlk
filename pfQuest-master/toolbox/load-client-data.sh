@@ -67,13 +67,25 @@ CREATE TABLE \`AreaTrigger_${v}\` (
 EOF
 
   if [ -d $root/$v ] && [ -f $root/$v/AreaTrigger.dbc.csv ]; then
-    cat $root/$v/AreaTrigger.dbc.csv | tail -n +2 | sort -nt "," -k1,1 | while read line; do
-      id=$(echo $line | cut -d "," -f 1)
-      map=$(echo $line | cut -d "," -f 2)
-      x=$(echo $line | cut -d "," -f 3)
-      y=$(echo $line | cut -d "," -f 4)
-      z=$(echo $line | cut -d "," -f 5)
-      size=$(echo $line | cut -d "," -f 6)
+    cat $root/$v/AreaTrigger.dbc.csv | tail -n +2 | sort -nt "," -k1,1 | while IFS= read -r line; do
+      # Remove quotes and split by comma, handling quoted values properly
+      line_clean=$(echo "$line" | sed 's/"//g')
+
+      # Use array to split fields properly
+      IFS=',' read -ra FIELDS <<< "$line_clean"
+
+      id="${FIELDS[0]}"
+      map="${FIELDS[1]}"
+      x="${FIELDS[2]}"
+      y="${FIELDS[3]}"
+      z="${FIELDS[4]}"
+      size="${FIELDS[5]}"
+
+      # Convert comma decimals to dot decimals for MySQL
+      x=$(echo "$x" | sed 's/,/./g')
+      y=$(echo "$y" | sed 's/,/./g')
+      z=$(echo "$z" | sed 's/,/./g')
+      size=$(echo "$size" | sed 's/,/./g')
 
       echo "INSERT INTO \`AreaTrigger_${v}\` VALUES ($id, $map, $x, $y, $z, $size);" >> $rootsql
     done
@@ -97,15 +109,25 @@ CREATE TABLE \`WorldMapArea_${v}\` (
 EOF
 
   if [ -d $root/$v ] && [ -f $root/$v/WorldMapArea.dbc.csv ]; then
-    cat $root/$v/WorldMapArea.dbc.csv | tail -n +2 | sort -nt ',' -k3,3 | while read line; do
-      zone=$(echo $line | cut -d "," -f 1)
-      map=$(echo $line | cut -d "," -f 2)
-      area=$(echo $line | cut -d "," -f 3)
-      name=$(echo $line | cut -d "," -f 4)
-      x_min=$(echo $line | cut -d "," -f 5)
-      y_min=$(echo $line | cut -d "," -f 6)
-      x_max=$(echo $line | cut -d "," -f 7)
-      y_max=$(echo $line | cut -d "," -f 8)
+    cat $root/$v/WorldMapArea.dbc.csv | tail -n +2 | sort -nt ',' -k3,3 | while IFS= read -r line; do
+      # Remove quotes and split properly
+      line_clean=$(echo "$line" | sed 's/"//g')
+      IFS=',' read -ra FIELDS <<< "$line_clean"
+
+      zone="${FIELDS[0]}"
+      map="${FIELDS[1]}"
+      area="${FIELDS[2]}"
+      name="\"${FIELDS[3]}\""  # Re-add quotes for name
+      x_min="${FIELDS[4]}"
+      y_min="${FIELDS[5]}"
+      x_max="${FIELDS[6]}"
+      y_max="${FIELDS[7]}"
+
+      # Convert comma decimals to dot decimals for MySQL
+      x_min=$(echo "$x_min" | sed 's/,/./g')
+      y_min=$(echo "$y_min" | sed 's/,/./g')
+      x_max=$(echo "$x_max" | sed 's/,/./g')
+      y_max=$(echo "$y_max" | sed 's/,/./g')
 
       echo "INSERT INTO \`WorldMapArea_${v}\` VALUES ($zone, $map, $area, $name, $y_max, $y_min, $x_max, $x_min);" >> $rootsql
     done

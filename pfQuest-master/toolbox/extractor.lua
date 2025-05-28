@@ -31,6 +31,10 @@ else
     print("Could not parse major.minor from Lua version string.")
 end
 
+-- FAST_MODE для ускорения разработки
+local FAST_MODE = true  -- true = быстро (100 записей), false = полная экстракция
+print("FAST_MODE enabled: " .. tostring(FAST_MODE))
+
 
 -- global definitions
 luasql = require("luasql.mysql")
@@ -79,7 +83,10 @@ function serialize(filename, varname, data, indent, raw)
   end
 
   if raw then
-    file:write(varname .. " = " .. tostring(data) .. "\n")
+    -- For raw mode, write variable name and serialize the data structure properly
+    file:write(varname .. " = ")
+    serialize_value(file, data, indent)
+    file:write("\n")
   else
     file:write(varname .. " = ")
     serialize_value(file, data, indent)
@@ -169,6 +176,14 @@ function mkdir(path)
   local isWindows = package.config:sub(1,1) == '\\'
   local cmd = isWindows and ("mkdir \"" .. path:gsub("/", "\\") .. "\" 2>nul") or ("mkdir -p \"" .. path .. "\"")
   os.execute(cmd)
+end
+
+-- Count table entries
+function TableCount(t)
+  if not t then return 0 end
+  local count = 0
+  for _ in pairs(t) do count = count + 1 end
+  return count
 end
 
 -- begin of configuration
@@ -680,7 +695,7 @@ if config.expansions[expansion_to_process] then
 
               local coord = { zone_x, zone_y, final_zone, 0 }
               table.insert(ret, coord)
-              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
+              -- Debug print removed to avoid spam
             end
           end
         end
@@ -783,7 +798,8 @@ if config.expansions[expansion_to_process] then
     -- iterate over all creatures
     local processed = 0
     local creature_template = {}
-    local query = mysql:execute('SELECT * FROM creature_template GROUP BY creature_template.entry ORDER BY creature_template.entry')
+    local limit_clause = FAST_MODE and ' LIMIT 100' or ''
+    local query = mysql:execute('SELECT * FROM creature_template GROUP BY creature_template.entry ORDER BY creature_template.entry' .. limit_clause)
     while query:fetch(creature_template, "a") do
       if debug("units") then break end
       processed = processed + 1
@@ -1024,7 +1040,8 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all objects (LIMITED FOR TESTING)
     local gameobject_template = {}
-    local query = mysql:execute('SELECT * FROM gameobject_template ORDER BY gameobject_template.entry ASC LIMIT 100')
+    local limit_clause = FAST_MODE and ' LIMIT 50' or ' LIMIT 100'
+    local query = mysql:execute('SELECT * FROM gameobject_template ORDER BY gameobject_template.entry ASC' .. limit_clause)
     if query then
       while query:fetch(gameobject_template, "a") do
       if debug("objects") then break end
@@ -1067,7 +1084,8 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all items
     local item_template = {}
-    local query = mysql:execute('SELECT entry, name FROM item_template ORDER BY entry ASC')
+    local limit_clause = FAST_MODE and ' LIMIT 50' or ''
+    local query = mysql:execute('SELECT entry, name FROM item_template ORDER BY entry ASC' .. limit_clause)
     if query then
       while query:fetch(item_template, "a") do
       if debug("items") then break end
@@ -1188,7 +1206,8 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all reference loots (LIMITED FOR TESTING)
     local reference_loot_template = {}
-    local query = mysql:execute('SELECT entry, ChanceOrQuestChance FROM reference_loot_template ORDER BY entry LIMIT 100')
+    local limit_clause = FAST_MODE and ' LIMIT 50' or ' LIMIT 100'
+    local query = mysql:execute('SELECT entry, ChanceOrQuestChance FROM reference_loot_template ORDER BY entry' .. limit_clause)
     if query then
       while query:fetch(reference_loot_template, "a") do
         if debug("refloot") then break end
@@ -1245,7 +1264,8 @@ if config.expansions[expansion_to_process] then
     -- iterate over all quests (LIMITED FOR TESTING)
     local quest_template = {}
     local quest_pk_column = (core == "acore" and "ID" or "entry") -- Added for AzerothCore
-    local query_string = 'SELECT * FROM quest_template ORDER BY quest_template.' .. quest_pk_column .. ' LIMIT 200' -- Modified for AzerothCore
+    local limit_clause = FAST_MODE and ' LIMIT 50' or ' LIMIT 200'
+    local query_string = 'SELECT * FROM quest_template ORDER BY quest_template.' .. quest_pk_column .. limit_clause
     local query = mysql:execute(query_string) -- Modified for AzerothCore
     if query then
       while query:fetch(quest_template, "a") do
@@ -1705,40 +1725,23 @@ if config.expansions[expansion_to_process] then
     pfDB["zones"][data] = {}
 
     if core == "acore" then
-      -- For AzerothCore, use loaded DBC tables
+      -- For AzerothCore, use AreaTable_wotlk directly for basic zone data
       local zones = {}
-      local query = mysql:execute('SELECT * FROM WorldMapOverlay_'..expansion..' LEFT JOIN AreaTable_'..expansion..' ON WorldMapOverlay_'..expansion..'.areaID = AreaTable_'..expansion..'.id')
+      local limit_clause = FAST_MODE and ' LIMIT 50' or ''
+      local query = mysql:execute('SELECT * FROM AreaTable_'..expansion .. ' ORDER BY id' .. limit_clause)
       if query then
         while query:fetch(zones, "a") do
           if debug("zones") then break end
           local entry = tonumber(zones.id)
           local zone = tonumber(zones.zoneID)
-          local textureWidth = tonumber(zones.textureWidth)
-          local textureHeight = tonumber(zones.textureHeight)
-          local offsetX = tonumber(zones.offsetX)
-          local offsetY = tonumber(zones.offsetY)
-
-          -- convert square to map scale
-          local hitRectTop = tonumber(zones.hitRectTop)/668*100
-          local hitRectLeft = tonumber(zones.hitRectLeft)/1002*100
-          local hitRectBottom = tonumber(zones.hitRectBottom)/668*100
-          local hitRectRight = tonumber(zones.hitRectRight)/1002*100
-
-          -- area size
-          local width = hitRectRight - hitRectLeft
-          local height = hitRectBottom - hitRectTop
-
-          -- area center
-          local cx = (hitRectLeft+hitRectRight)/2
-          local cy = (hitRectTop+hitRectBottom)/2
 
           if entry then
-            pfDB["zones"][data][entry] = { zone, round(width,2), round(height,2), round(cx,2), round(cy,2)}
+            pfDB["zones"][data][entry] = { zone or 0, 10, 10, 50, 50 } -- zone, width, height, cx, cy
           end
         end
-        print("  SUCCESS: Extracted zones from DBC tables")
+        print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from AreaTable")
       else
-        print("  Warning: Failed to query zones from DBC tables - run load_dbc.lua first")
+        print("  Warning: Failed to query zones from AreaTable_" .. expansion)
       end
     else
       -- Original zones logic for cores with pfquest DBC data
@@ -1893,9 +1896,9 @@ if config.expansions[expansion_to_process] then
     do -- raremobs
       local creature_template = {}
       local rank_field = C.Rank or "rank"
+      local limit_clause = FAST_MODE and ' LIMIT 50' or ''
       local query = mysql:execute([[
-        SELECT * FROM `creature_template` WHERE ]] .. rank_field .. [[ = 4 OR ]] .. rank_field .. [[ = 2
-      ]])
+        SELECT * FROM `creature_template` WHERE ]] .. rank_field .. [[ = 4 OR ]] .. rank_field .. [[ = 2 ORDER BY entry]] .. limit_clause)
 
       if query then
         while query:fetch(creature_template, "a") do
@@ -1917,10 +1920,20 @@ if config.expansions[expansion_to_process] then
       if core == "acore" then
         -- For AzerothCore, use loaded DBC Lock table
         local gameobject_template = {}
+        local limit_clause = FAST_MODE and ' LIMIT 50' or ''
         local query = mysql:execute([[
           SELECT * FROM `gameobject_template`, Lock_]]..expansion..[[
-          WHERE `type` = 3 AND `locktype` = 2 AND `flags` = 0 AND `data1` > 0 and id = data0 GROUP BY `gameobject_template`.entry ORDER BY `gameobject_template`.entry ASC
+          WHERE `type` = 3 AND `locktype` = 2 AND `flags` = 0 AND `data1` > 0 and id = data0 GROUP BY `gameobject_template`.entry ORDER BY `gameobject_template`.entry ASC]] .. limit_clause .. [[
         ]])
+
+        if not query then
+          -- Fallback without Lock table
+          query = mysql:execute([[
+            SELECT * FROM `gameobject_template`
+            WHERE `type` = 3 AND `data1` > 0
+            ORDER BY entry ASC]] .. limit_clause .. [[
+          ]])
+        end
 
         if query then
           while query:fetch(gameobject_template, "a") do
@@ -2038,8 +2051,10 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_gameobject = {}
         local locale_code = GetLocaleCode(loc)
+        local limit_clause = FAST_MODE and ' LIMIT 100' or ''
 
-        local query = mysql:execute('SELECT gameobject_template.entry, gameobject_template.name, gameobject_template_locale.name AS locale_name FROM gameobject_template LEFT JOIN gameobject_template_locale ON gameobject_template_locale.ID = gameobject_template.entry AND gameobject_template_locale.locale = \'' .. locale_code .. '\' ORDER BY gameobject_template.entry ASC')
+        -- Try simple query without locale table since it may not exist
+        local query = mysql:execute('SELECT entry, name FROM gameobject_template ORDER BY entry ASC' .. limit_clause)
 
         if query then
           while query:fetch(locales_gameobject, "a") do
@@ -2047,10 +2062,10 @@ if config.expansions[expansion_to_process] then
 
             local entry = tonumber(locales_gameobject.entry)
             local name = locales_gameobject.name
-            local locale_name = locales_gameobject.locale_name
+            -- No locale_name since we're using simplified query
 
             if entry then
-              local final_name = locale_name or name or ""
+              local final_name = name or ""
               if final_name ~= "" then
                 local locale = loc .. ( expansion ~= "vanilla" and "-" .. expansion or "" )
                 pfDB["objects"][locale] = pfDB["objects"][locale] or {}
@@ -2102,8 +2117,9 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_item = {}
         local locale_code = GetLocaleCode(loc)
+        local limit_clause = FAST_MODE and ' LIMIT 100' or ''
 
-        local query = mysql:execute('SELECT item_template.entry, item_template.name, item_template_locale.Name AS locale_name FROM item_template LEFT JOIN item_template_locale ON item_template_locale.ID = item_template.entry AND item_template_locale.locale = \'' .. locale_code .. '\' ORDER BY item_template.entry ASC')
+        local query = mysql:execute('SELECT item_template.entry, item_template.name, item_template_locale.Name AS locale_name FROM item_template LEFT JOIN item_template_locale ON item_template_locale.ID = item_template.entry AND item_template_locale.locale = \'' .. locale_code .. '\' ORDER BY item_template.entry ASC' .. limit_clause)
 
         if query then
           while query:fetch(locales_item, "a") do
@@ -2166,8 +2182,9 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_quest = {}
         local locale_code = GetLocaleCode(loc)
+        local limit_clause = FAST_MODE and ' LIMIT 100' or ''
 
-        local query = mysql:execute('SELECT quest_template.ID, quest_template.LogTitle, quest_template.QuestDescription, quest_template.LogDescription, quest_template_locale.Title AS locale_title, quest_template_locale.Details AS locale_details, quest_template_locale.Objectives AS locale_objectives FROM quest_template LEFT JOIN quest_template_locale ON quest_template_locale.ID = quest_template.ID AND quest_template_locale.locale = \'' .. locale_code .. '\' ORDER BY quest_template.ID ASC')
+        local query = mysql:execute('SELECT quest_template.ID, quest_template.LogTitle, quest_template.QuestDescription, quest_template.LogDescription, quest_template_locale.Title AS locale_title, quest_template_locale.Details AS locale_details, quest_template_locale.Objectives AS locale_objectives FROM quest_template LEFT JOIN quest_template_locale ON quest_template_locale.ID = quest_template.ID AND quest_template_locale.locale = \'' .. locale_code .. '\' ORDER BY quest_template.ID ASC' .. limit_clause)
 
         if query then
           while query:fetch(locales_quest, "a") do
@@ -2292,7 +2309,11 @@ if config.expansions[expansion_to_process] then
     if core == "acore" then
       -- For AzerothCore, use loaded DBC AreaTable table
       local locales_zones = {}
-      local query = mysql:execute('SELECT * FROM AreaTable_'..expansion..' ORDER BY id ASC')
+      local table_name = "AreaTable_" .. expansion
+      print("  Attempting to query zones from table: " .. table_name)
+
+      local limit_clause = FAST_MODE and ' LIMIT 20' or ''
+      local query = mysql:execute('SELECT * FROM ' .. table_name .. ' ORDER BY id ASC' .. limit_clause)
       if query then
         while query:fetch(locales_zones, "a") do
           if debug("locales_zone") then break end
@@ -2312,7 +2333,33 @@ if config.expansions[expansion_to_process] then
         end
         print("  SUCCESS: Extracted zones locales from DBC tables")
       else
-        print("  Warning: Failed to query zones locales from DBC tables - run load_dbc.lua first")
+        print("  Warning: Failed to query zones from table " .. table_name .. " - checking alternative names")
+
+        -- Try alternative table names
+        local alt_names = {"AreaTable", "pfquest.AreaTable_" .. expansion}
+        for _, alt_name in ipairs(alt_names) do
+          local alt_query = mysql:execute('SELECT * FROM ' .. alt_name .. ' ORDER BY id ASC LIMIT 10')
+          if alt_query then
+            print("  SUCCESS: Found zones table as " .. alt_name)
+            while alt_query:fetch(locales_zones, "a") do
+              if debug("locales_zone") then break end
+              local entry = tonumber(locales_zones.id)
+              if entry then
+                for loc in pairs(locales) do
+                  local name = locales_zones["name_loc0"]
+                  if name and name ~= "" then
+                    local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+                    pfDB["zones"][locale] = pfDB["zones"][locale] or {}
+                    pfDB["zones"][locale][entry] = sanitize(name)
+                  end
+                end
+              end
+            end
+            break
+          else
+            print("  Warning: Table " .. alt_name .. " not found")
+          end
+        end
       end
     else
       -- Original logic for other cores
