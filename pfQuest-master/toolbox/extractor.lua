@@ -188,6 +188,7 @@ end
 
 -- begin of configuration
 local config = {
+  expansion = "vanilla", -- Force use vanilla config for base files
   output = "../db/", -- output folder for database files
   debug = false,      -- false = process all data, true = limit to 100 entries for testing
 
@@ -233,6 +234,13 @@ local config = {
       name = "Wrath of the Lich King",
       locales = { ["deDE"]=3, ["enUS"]=0, ["frFR"]=2, ["esES"]=6, ["ruRU"]=8 },
       prior = "vanilla",
+    },
+    ["vanilla"] = {
+      version = "vanilla",
+      core = "acore",   -- Use the new AzerothCore config
+      name = "Vanilla (AzerothCore WotLK data as base)",
+      locales = { ["enUS"]=0 }, -- Only English for testing
+      database = "acore_world", -- Specify the world database name for AzerothCore
     },
     ["wotlk_ac"] = { -- Added for AzerothCore
       version = "wotlk", -- The pfQuest DB structure will be for WotLK
@@ -453,7 +461,7 @@ end
 
 local pfDB = {}
 -- Process only the specific expansion defined in config.expansion
-local expansion_to_process = config.expansion or "wotlk_ac"
+local expansion_to_process = config.expansion or "vanilla"
 if config.expansions[expansion_to_process] then
   local id = expansion_to_process
   local settings = config.expansions[id]
