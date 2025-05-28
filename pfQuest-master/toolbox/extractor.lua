@@ -3,73 +3,194 @@
 -- map pngs with alpha channel generated with:
 -- `convert $file  -transparent white -resize '100x100!' $file`
 
-local debugsql = {
-  ["areatrigger"] = { "Using only client-data to find areatrigger locations" },
-  --
-  ["units"] = { "Iterate over all creatures using mangos data" },
-  ["units_faction"] = { "Using mangos and client-data to find unit faction" },
-  ["units_coords"] = { "Using mangos and client-data to find unit locations" },
-  ["units_coords_pool"] = { "Only applies to CMaNGOS(TBC) to find pooled unit locations" },
-  ["units_event"] = { "Using mangos data to find spawns from events" },
-  ["units_event_map_object"] = { "Using mangos data to determine map based on object requirements associated with event" },
-  ["units_event_spell"] = { "Using mangos data to find spells associated with spawn" },
-  ["units_event_spell_map_object"] = { "Using mangos data to determine map based on objects associated with spawn spells" },
-  ["units_event_spell_map_item"] = { "Using mangos data to determine map based on items associated with spawn spells" },
-  ["units_summon_fixed"] = { "Using mangos data to find units that summon others and use their map with fixed spawn positions" },
-  ["units_summon_unknown"] = { "Using mangos data to find units that summon others and use their coordinates as target spawn positions" },
-  --
-  ["objects"] = { "Iterate over all gameobjects using mangos data" },
-  ["objects_faction"] = { "Using mangos and client-data to find object faction" },
-  ["objects_coords"] = { "Using mangos and client-data to find unit locations" },
-  --
-  ["items"] = { "Iterate over all items using mangos data" },
-  ["items_container"] = { "Using mangos data to find items that are looted from other items" },
-  ["items_unit"] = { "Using mangos data to find units that drop an item" },
-  ["items_object"] = { "Using mangos data to find objects that drop an item" },
-  ["items_reference"] = { "Using mangos data to query for shared loot lists" },
-  ["items_vendor"] = { "Using mangos data to find vendors for items" },
-  ["items_vendortemplate"] = { "Using mangos data to find vendor templates of the item" },
-  --
-  ["refloot"] = { "Using mangos data to find shared loot lists" },
-  ["refloot_unit"] = { "Using mangos data to find units for shared loot" },
-  ["refloot_object"] = { "Using mangos data to find objects for shared loot" },
-  --
-  ["quests"] = { "Using mangos data to iterate over all quests" },
-  ["quests_events"] = { "Using mangos data to detect event quests" },
-  ["quests_eventscreature"] = { "Using mangos data to detect event quests based on creature" },
-  ["quests_eventsobjects"] = { "Using mangos data to detect event quests based on objects" },
-  ["quests_prequests"] = { "Using mangos data to detect pre-quests based on other quests next entries" },
-  ["quests_prequestchain"] = { "Using mangos data to detect quest-chains based on other quests next entries" },
-  ["quests_questspellobject"] = { "Using mangos data find objects associated with quest_template spell requirements" },
-  ["quests_credit"] = { "Only applies to CMaNGOS(TBC) to find units that give shared credit to the quest" },
-  ["quests_item"] = { "Using mangos data to scan through all items with spell requirements" },
-  ["quests_itemspell"] = { "Using mangos data to scan through spells that apply to the given item" },
-  ["quests_itemspellcreature"] = { "Using mangos data to find all creatures that are a spell target of the given item" },
-  ["quests_itemspellobject"] = { "Using mangos data to find all objects that are a spell target of the given item" },
-  ["quests_itemspellscript"] = { "Using mangos data to find all scripts that are a spell target of the given item" },
-  ["quests_itemobject"] = { "Using mangos database and client data to search for object that can be used via item" },
-  ["quests_itemcreature"] = { "Using mangos database and client data to search for creature that can be target of item" },
-  ["quests_areatrigger"] = { "Using mangos data to find associated areatriggers" },
-  ["quests_starterunit"] = { "Using mangos data to search for quest starter units" },
-  ["quests_starterobject"] = { "Using mangos data to search for quest starter objects" },
-  ["quests_starteritem"] = { "Using mangos data to search for quest starter items" },
-  ["quests_enderunit"] = { "Using mangos data to search for quest ender units" },
-  ["quests_enderobject"] = { "Using mangos data to search for quest ender objects" },
-  --
-  ["zones"] = { "Using client data to read zone data" },
-  --
-  ["minimap"] = { "Using client data to read minimap zoom levels" },
-  --
-  ["meta_taxi"] = { "Using client and mangos data to find flight masters" },
-  ["meta_rares"] = { "Using client and mangos data to find rare mobs" },
-  ["meta_farm"] = { "Using client and mangos data to find chests, herbs and mines" },
-  --
-  ["locales_unit"] = { "Using mangos data to find unit translations" },
-  ["locales_object"] = { "Using mangos data to find object translations" },
-  ["locales_item"] = { "Using mangos data to find item translations" },
-  ["locales_quest"] = { "Using mangos data to find quest translations" },
-  ["locales_profession"] = { "Using client and mangos data to find profession translations" },
-  ["locales_zone"] = { "Using client and mangos data to find zone translations" },
+-- path to the modules
+package.path = package.path .. ';./lua-sql-mysql/src/?.lua;./sha1/?.lua'
+
+-- Определение версии Lua (исправлено)
+local lua_version_string = "Lua 5.1" -- Используем английское имя переменной
+local major, minor = string.match(jit and jit.version or _VERSION, "(%d)%.(%d)")
+
+if major and minor and tonumber(major) >= 5 and tonumber(minor) >= 2 then
+    lua_version_string = "Lua 5.2" -- Обновляем ту же переменную
+    -- basic LUA 5.2 compatibility definitions
+    unpack = table.unpack          -- Эта глобальная переменная может быть не нужна, если unpack уже есть в Lua 5.2+
+    -- но для обратной совместимости скрипт ее определяет.
+    -- Если 'unpack' уже глобально определен в Lua 5.2+, эта строка его просто переопределит тем же значением.
+end
+
+-- Вывод версии для отладки (можно потом убрать)
+print("Detected Lua version string: " .. lua_version_string)
+if jit then
+    print("JIT version: " .. jit.version)
+else
+    print("Standard Lua _VERSION: " .. _VERSION)
+end
+if major and minor then
+    print("Parsed major.minor: " .. major .. "." .. minor)
+else
+    print("Could not parse major.minor from Lua version string.")
+end
+
+
+-- global definitions
+luasql = require("luasql.mysql")
+
+-- Simple sanitize function to replace iconv dependency
+function sanitize(text)
+  if not text then return "" end
+  -- Remove any problematic characters and ensure clean text
+  return tostring(text):gsub("[\0-\31\127-\255]", ""):gsub("%s+", " "):match("^%s*(.-)%s*$") or ""
+end
+
+-- begin of configuration
+local config = {
+  output = "../db/", -- output folder for database files
+  debug = false,      -- true if script should only import first 1000 entries
+
+  mysql = {           -- database settings
+    live = {
+      username = "acore",
+      password = "acore",
+      address = "127.0.0.1",
+      port = 3306,
+    },
+    pfquest = {
+      db = "pfquest",
+      username = "acore",
+      password = "acore",
+      address = "127.0.0.1",
+      port = 3306,
+    },
+  },
+
+  expansions = {      -- list of available expansions
+    -- vanilla is the main database, all further versions will only store the difference to vanilla
+    -- you should always generate 'vanilla' first
+    ["vanilla"] = {
+      version = "vanilla",
+      client = "1.12.1",
+      core = "vmangos", -- core database type (see below)
+      name = "Vanilla",
+      locales = { ["deDE"]=3, ["enUS"]=0, ["frFR"]=2 }, -- list of locales to export
+      prior = nil,      -- version this one is based on (nil for vanilla)
+    },
+    ["tbc"] = {
+      version = "tbc",
+      client = "2.4.3",
+      core = "cmangos",
+      name = "The Burning Crusade",
+      locales = { ["deDE"]=3, ["enUS"]=0, ["frFR"]=2 },
+      prior = "vanilla",
+    },
+    ["wotlk"] = {
+      version = "wotlk",
+      client = "3.3.5",
+      core = "cmangos", -- This would be the setting for a CMaNGOS WotLK core
+      name = "Wrath of the Lich King",
+      locales = { ["deDE"]=3, ["enUS"]=0, ["frFR"]=2, ["esES"]=6, ["ruRU"]=8 },
+      prior = "vanilla",
+    },
+    ["wotlk_ac"] = { -- Added for AzerothCore
+      version = "wotlk", -- The pfQuest DB structure will be for WotLK
+      client = "3.3.5",
+      core = "acore",   -- Use the new AzerothCore config
+      name = "Wrath of the Lich King (AzerothCore)",
+      locales = { ["deDE"]=3, ["enUS"]=0, ["frFR"]=2, ["esES"]=6, ["ruRU"]=8 },
+      prior = "vanilla", -- WotLK data is diffed against Vanilla
+      db = "acore_world", -- Specify the world database name for AzerothCore
+    },
+  },
+
+  cores = {           -- list of available core configurations
+    -- define your table and column names here if they are different from cmangos
+    -- all fields are optional, script will use default names if not defined here.
+    -- a full list of default names can be found in the 'Script Internals' part of the readme.
+    ["vmangos"] = {
+      ["dbscripts_on_event"] = "event_scripts",
+      ["item_template_reagent"] = "item_template_reagents",
+      ["spell_bonus_data"] = "spell_bonus_data",
+      ["spell_required"] = "spell_required",
+      ["spell_template"] = "spell_template",
+      ["spell_chain"] = "spell_chain",
+      ["spell_area"] = "spell_area",
+      ["spell_script_target"] = "spell_script_target",
+      ["spell_effect_override"] = "spell_effect_override",
+      ["Entry"] = "entry",
+      ["Name"] = "name",
+      ["MinLevel"] = "level_min",
+      ["MaxLevel"] = "level_max",
+      ["Rank"] = "rank",
+      ["Faction"] = "faction",
+      ["NpcFlags"] = "npcflag",
+      ["VendorTemplateId"] = "vendor_template_id",
+      ["RequiresSpellFocus"] = "requires_spell_focus",
+      ["EffectTriggerSpell1"] = "effect_trigger_spell_1",
+      ["EffectTriggerSpell2"] = "effect_trigger_spell_2",
+      ["EffectTriggerSpell3"] = "effect_trigger_spell_3",
+      ["Map"] = "map_id",
+      ["startquest"] = "start_quest",
+      ["targetEntry"] = "target_entry",
+      ["dbscripts_on_event_datalong_is_target"] = true, -- if datalong on dbscripts_on_event is a target or count
+    },
+    ["cmangos"] = {
+      -- cmangos uses the default names, so this section is almost empty
+      ["dbscripts_on_event_datalong_is_target"] = true,
+    },
+    ["acore"] = { -- Added for AzerothCore
+      ["world_db_name"] = "acore_world", -- Default AC world DB name, can be overridden by expansion's 'db' setting
+      -- General Mappings
+      ["Entry"] = "ID", -- Default for quest_template.ID, creature_template.entry will need specific handling or script check
+      ["Id"] = "ID", -- For spell_template.ID, quest_template.ID etc. when C.Id is used.
+      ["Name"] = "name",
+      ["MinLevel"] = "MinLevel", -- quest_template.MinLevel; creature_template.minlevel needs specific handling in script if C.MinLevel is used for it.
+      ["MaxLevel"] = "maxlevel", -- creature_template.maxlevel
+      ["QuestLevel"] = "QuestLevel", -- quest_template.QuestLevel
+      ["Rank"] = "rank", -- creature_template.rank
+      ["Faction"] = "faction", -- creature_template.faction, gameobject_template.faction
+      ["NpcFlags"] = "npcflag", -- creature_template.npcflag
+      -- VendorTemplateId: cmangos default is npc_vendor.entry, if AC is different, map here. pfQuest doesn't seem to use C.VendorTemplateId.
+      ["RequiresSpellFocus"] = "RequiresSpellFocus", -- spell_template.RequiresSpellFocus (likely same name)
+      ["EffectTriggerSpell1"] = "EffectTriggerSpell1", -- spell_template.EffectTriggerSpell, etc. (AC uses 1-3)
+      ["EffectTriggerSpell2"] = "EffectTriggerSpell2",
+      ["EffectTriggerSpell3"] = "EffectTriggerSpell3",
+      ["Map"] = "map", -- item_template.map (for map-bound items)
+      ["startquest"] = "startquest", -- item_template.startquest (AC uses this name)
+
+      -- Quest Specific Mappings that differ from script's direct use or cmangos defaults if C.xxx is used
+      ["RequiredClasses"] = "AllowableClasses", -- AC quest_template uses AllowableClasses (bitmask)
+      ["RequiredRaces"] = "AllowableRaces",   -- AC quest_template uses AllowableRaces (bitmask)
+      ["RequiredSkill"] = "RequiredSkillId",  -- AC quest_template uses RequiredSkillId (and RequiredSkillValue)
+      ["SrcItemId"] = "StartItem",          -- AC quest_template.StartItem is the item that starts the quest
+      ["PrevQuestId"] = "PrevQuestId",      -- AC quest_template.PrevQuestId
+      -- NextQuestInChain: Not present in AC. Logic relying on this needs core-specific handling.
+
+      ["ReqCreatureOrGOId"] = "RequiredNpcOrGo", -- Base name for ReqCreatureOrGOId1 -> RequiredNpcOrGo1
+      ["ReqItemId"] = "RequiredItemId",       -- Base name for ReqItemId1 -> RequiredItemId1
+
+      -- Table name mappings
+      ["dbscripts_on_event"] = "smart_scripts", -- AC uses smart_scripts. This will require specific query logic changes.
+      ["creature_ai_scripts"] = "smart_scripts", -- AI logic is in smart_scripts
+      ["creature_ai_summons"] = "smart_scripts", -- Summons are actions in smart_scripts
+      ["spell_script_target"] = "spell_scripts", -- Or potentially handled by spell_template effects / smart_scripts
+      ["locales_creature"] = "creature_template_locale",
+      ["locales_gameobject"] = "gameobject_template_locale",
+      ["locales_item"] = "item_template_locale",
+      ["locales_quest"] = "quest_template_locale",
+      ["creature_questrelation"] = "creature_queststarter",
+      ["gameobject_questrelation"] = "gameobject_queststarter",
+      ["creature_involvedrelation"] = "creature_questender",
+      ["gameobject_involvedrelation"] = "gameobject_questender",
+      ["smart_scripts"] = "smart_scripts", -- Explicitly add smart_scripts itself
+    },
+  },
+
+  expansion = "wotlk_ac", -- define the expansion to build (must be a key of 'expansions' table)
+
+  -- ignore list for object types. These types will not be included into the database
+  -- usually these are herbs, minerals, chests because they have a too wide spawn area
+  object_ignore_types = {
+    -- Add any additional object types you want to ignore here
+  },
 }
 
 -- limit all sql loops
@@ -107,318 +228,6 @@ local all_locales = {
   ["ptBR"] = 10,
 }
 
-local config = {
-  -- known expansions and their config
-  expansions = {
-    {
-      name = "vanilla",
-      core = "vmangos",
-      database = "vmangos",
-      locales = all_locales,
-      custom = false,
-    },
-    {
-      name = "tbc",
-      core = "cmangos",
-      database = "cmangos-tbc",
-      locales = all_locales,
-      custom = false,
-    },
-  },
-
-  -- core-type database column glue tables
-  -- every table column name that differs
-  -- from cmangos should be listed here
-  cores = {
-    ["cmangos"] = setmetatable({}, { __index = function(tab,key)
-      local value = tostring(key)
-      rawset(tab,key,value)
-      return value
-    end }),
-
-    ["vmangos"] = {
-      ["Id"] = "entry",
-      ["Entry"] = "entry",
-      ["Faction"] = "faction",
-      ["Name"] = "name",
-      ["MinLevel"] = "level_min",
-      ["MaxLevel"] = "level_max",
-      ["Rank"] = "rank",
-      ["RequiresSpellFocus"] = "requiresSpellFocus",
-      ["dbscripts_on_event"] = "event_scripts",
-      ["VendorTemplateId"] = "vendor_id",
-      ["NpcFlags"] = "npc_flags",
-      ["EffectTriggerSpell"] = "effectTriggerSpell",
-      ["Map"] = "map_bound",
-      ["startquest"] = "start_quest",
-      ["targetEntry"] = "target_entry",
-    },
-  }
-}
-
-if false then
-  -- add turtle settings to expansions
-  table.insert(config.expansions, {
-    name = "turtle",
-    core = "vmangos",
-    database = "turtle",
-    locales = { ["enUS"] = 0 },
-    custom = true,
-  })
-end
-
-do -- map lookup functions
-  maps = {}
-  package.path = './pngLua/?.lua;' .. package.path
-  require("png")
-
-  function isFile(name)
-    if type(name)~="string" then return false end
-    if not ( os.rename(name,name) and true or false ) then return false end
-    local f = io.open(name)
-    if not f then return false end
-    f:close()
-    return true
-  end
-
-  function isValidMap(map,x,y,expansion)
-    local id = map..expansion
-
-    -- load map if required
-    if not maps[id] then
-      local preferred = string.format("maps/%s/%s.png", expansion, map)
-      local fallback = string.format("maps/%s.png", map)
-
-      if isFile(preferred) then
-        maps[id] = pngImage(preferred)
-      elseif isFile(fallback) then
-        maps[id] = pngImage(fallback)
-      end
-    end
-
-    -- no mapfile means valid map
-    if not maps[id] then return true end
-
-    -- error handling
-    if not maps[id].getPixel then return false end
-    if x == 0 or y == 0 then return false end
-
-    -- check pixel alpha
-    local pixel = maps[id]:getPixel(x,y)
-    if pixel and pixel.A and pixel.A > 0 then
-      return true
-    else
-      return false
-    end
-  end
-end
-
-do -- helper functions
-  function round(input, places)
-    if not places then places = 0 end
-    if type(input) == "number" and type(places) == "number" then
-      local pow = 1
-      for i = 1, places do pow = pow * 10 end
-      local result = math.floor(input * pow + 0.5) / pow
-      return result == math.floor(result) and math.floor(result) or result
-    end
-  end
-
-  function sanitize(str)
-    str = string.gsub(str, "\\", "\\\\")
-    str = string.gsub(str, "\"", "\\\"")
-    str = string.gsub(str, "\'", "\\\'")
-    str = string.gsub(str, "\r", "")
-    str = string.gsub(str, "\n", "")
-    return str
-  end
-
-  -- http://lua-users.org/wiki/SortedIteration
-  function __genOrderedIndex( t )
-    local orderedIndex = {}
-    for key in pairs(t) do
-      table.insert( orderedIndex, key )
-    end
-    table.sort( orderedIndex )
-    return orderedIndex
-  end
-
-  function orderedNext(t, state)
-    local key = nil
-    if state == nil then
-      t.__orderedIndex = __genOrderedIndex( t )
-      key = t.__orderedIndex[1]
-    else
-      for i = 1,#t.__orderedIndex do
-        if t.__orderedIndex[i] == state then
-          key = t.__orderedIndex[i+1]
-        end
-      end
-    end
-
-    if key then
-      return key, t[key]
-    end
-
-    t.__orderedIndex = nil
-    return
-  end
-
-  function opairs(t)
-      return orderedNext, t, nil
-  end
-  --
-
-  function tblsize(tbl)
-    local count = 0
-    for _ in pairs(tbl) do
-      count = count + 1
-    end
-    return count
-  end
-
-  function smalltable(tbl)
-    local size = tblsize(tbl)
-    if size > 10 then return end
-    if size < 1 then return end
-
-    for i=1, size do
-      if not tbl[i] then return end
-      if type(tbl[i]) == "table" then return end
-    end
-
-    return true
-  end
-
-  function trealsize(tbl)
-    local count = 0
-    for _ in pairs(tbl) do
-      count = count + 1
-    end
-    return count
-  end
-
-  local dupehashes = {}
-  function removedupes(tbl)
-    dupehashes = {}
-    local output = {}
-
-    -- [count] = { x, y, zone, respawn }
-    for k, coords in pairs(tbl) do
-      local hash = ""
-      for k, v in pairs(coords) do
-        hash = hash .. v
-      end
-
-      if not dupehashes[hash] then
-        dupehashes[hash] = true
-        table.insert(output, coords)
-      end
-    end
-
-    return output
-  end
-
-  -- return true if the base table or any of its subtables
-  -- has different values than the new table
-  function isdiff(new, base)
-    -- different types
-    if type(new) ~= type(base) then
-      return true
-    end
-
-    -- different values
-    if type(new) ~= "table" then
-      if new ~= base then
-        return true
-      end
-    end
-
-    -- recursive on tables
-    if type(new) == "table" then
-      for k, v in pairs(new) do
-        local result = isdiff(new[k], base[k])
-        if result then return true end
-      end
-    end
-
-    return nil
-  end
-
-  -- create a new table with only those indexes that are
-  -- either different or non-existing in the base table
-  function tablesubstract(new, base)
-    local result = {}
-
-    -- changed value
-    for k, v in pairs(new) do
-      if new[k] and ( not base or not base[k] ) then
-        -- write new entries
-        result[k] = new[k]
-      elseif new[k] and base[k] and isdiff(new[k], base[k]) then
-        -- write different entries
-        result[k] = new[k]
-      end
-    end
-
-    -- remove obsolete entries
-    if base then
-      for k, v in pairs(base) do
-        if base[k] and not new[k] then
-          result[k] = "_"
-        end
-      end
-    end
-
-    return result
-  end
-
-  function serialize(file, name, tbl, spacing, flat)
-    local closehandle = type(file) == "string"
-    local file = type(file) == "string" and io.open(file, "w") or file
-    local spacing = spacing or ""
-
-    if tblsize(tbl) == 0 then
-      file:write(string.format("%s%s = {}%s\n", spacing, name, (spacing == "" and "" or ",")))
-    else
-      file:write(spacing .. name .. " = {\n")
-
-      for k, v in opairs(tbl) do
-        local prefix = "["..k.."]"
-        if type(k) == "string" then
-          prefix = "[\""..k.."\"]"
-        end
-
-        if type(v) == "table" and flat then
-          file:write("  "..spacing..prefix .. " = {},\n")
-        elseif type(v) == "table" and smalltable(v) then
-          local init
-          local line = spacing.."  "..prefix.." = { "
-          for _, v in pairs(v) do
-            line = line .. (init and ", " or "") .. (type(v) == "string" and "\""..v.."\"" or v)
-            if not init then
-              init = true
-            end
-          end
-          line = line .. " },\n"
-          file:write(line)
-
-        elseif type(v) == "table" then
-          serialize(file, prefix, v, spacing .. "  ")
-        elseif type(v) == "string" then
-          file:write("  "..spacing..prefix .. " = " .. "\"" .. v .. "\",\n")
-        elseif type(v) == "number" then
-          file:write("  "..spacing..prefix .. " = " .. v .. ",\n")
-        end
-      end
-
-      file:write(spacing.."}" .. (not closehandle and "," or "") .. "\n")
-    end
-
-    if closehandle then file:close() end
-  end
-end
-
 local pfDB = {}
 for id, settings in pairs(config.expansions) do
   print("Extracting: " .. settings.name)
@@ -434,10 +243,10 @@ for id, settings in pairs(config.expansions) do
   local exp = expansion == "vanilla" and "" or "-"..expansion
   local data = "data".. exp
 
-  do -- database connection
-    luasql = require("luasql.mysql").mysql()
-    mysql = luasql:connect(settings.database, "mangos", "mangos", "127.0.0.1")
-  end
+    do -- database connection
+        luasql = require("luasql.mysql").mysql()
+        mysql = luasql:connect(config.mysql.live.db or "acore_world", config.mysql.live.username, config.mysql.live.password, config.mysql.live.address, config.mysql.live.port)
+    end
 
   do -- database query functions
     function GetAreaTriggerCoords(id)
@@ -1095,19 +904,27 @@ for id, settings in pairs(config.expansions) do
 
     -- iterate over all quests
     local quest_template = {}
-    local query = mysql:execute('SELECT * FROM quest_template GROUP BY quest_template.entry')
+    local quest_pk_column = (core == "acore" and "ID" or "entry") -- Added for AzerothCore
+    local query_string = 'SELECT * FROM quest_template GROUP BY quest_template.' .. quest_pk_column -- Modified for AzerothCore
+    local query = mysql:execute(query_string) -- Modified for AzerothCore
     while query:fetch(quest_template, "a") do
       if debug("quests") then break end
 
-      local entry = tonumber(quest_template.entry)
+      local entry = tonumber(quest_template[quest_pk_column]) -- Modified for AzerothCore
       local minlevel = tonumber(quest_template.MinLevel)
       local questlevel = tonumber(quest_template.QuestLevel)
-      local class = tonumber(quest_template.RequiredClasses)
-      local race = tonumber(quest_template.RequiredRaces)
-      local skill = tonumber(quest_template.RequiredSkill)
-      local chain = tonumber(quest_template.NextQuestInChain)
-      local srcitem = tonumber(quest_template.SrcItemId)
-      local repeatable = tonumber(quest_template.SpecialFlags) & 1
+      local class_column = C.RequiredClasses or "RequiredClasses" -- Default if not in C
+      local race_column = C.RequiredRaces or "AllowableRaces" -- Default to AC if not in C
+      local skill_column = C.RequiredSkill or "RequiredSkillId" -- Default to AC if not in C
+      local srcitem_column = C.SrcItemId or "StartItem" -- Default to AC if not in C
+      local prevquest_column = C.PrevQuestId or "PrevQuestId" -- Default if not in C
+
+      local class = tonumber(quest_template[class_column])
+      local race = tonumber(quest_template[race_column])
+      local skill = tonumber(quest_template[skill_column])
+      local chain = tonumber(quest_template.NextQuestInChain) -- This will be problematic for AC
+      local srcitem = tonumber(quest_template[srcitem_column])
+        local repeatable = (tonumber(quest_template.SpecialFlags or 0) % 2)
       local event = nil
 
       -- try to detect event by quest event entry
@@ -1164,39 +981,59 @@ for id, settings in pairs(config.expansions) do
       local units, objects, items, itemreq, areatrigger, zones, pre = {}, {}, {}, {}, {}, {}, {}
 
       -- add single pre-quests
-      if tonumber(quest_template.PrevQuestId) ~= 0 then
-        pre[math.abs(tonumber(quest_template.PrevQuestId))] = true
+      if tonumber(quest_template[prevquest_column]) ~= 0 then -- Modified for C.PrevQuestId
+        pre[math.abs(tonumber(quest_template[prevquest_column]))] = true
       end
 
       -- add required pre-quests
       local prequests = {}
-      local query = mysql:execute('SELECT quest_template.entry FROM quest_template WHERE NextQuestId = ' .. entry .. ' AND ExclusiveGroup < 0')
+      -- AC doesn't have NextQuestId for this logic, this part of pre-quest finding might be problematic for AC
+      local next_quest_id_column = core == "acore" and "PrevQuestId" or "NextQuestId" -- HACK: AC uses PrevQuestId on the *next* quest. This query is for *current* quest.
+      local exclusive_group_column = core == "acore" and "ExclusiveGroup" or "ExclusiveGroup" -- Assuming same name
+      local pre_query_string = 'SELECT quest_template.' .. quest_pk_column .. ' AS entry FROM quest_template WHERE ' .. next_quest_id_column .. ' = ' .. entry .. ' AND ' .. exclusive_group_column .. ' < 0'
+      local query = mysql:execute(pre_query_string)
       while query:fetch(prequests, "a") do
         if debug("quests_prequests") then break end
         pre[tonumber(prequests["entry"])] = true
       end
 
       -- add pre quests from quest chains
-      local query = mysql:execute('SELECT quest_template.entry FROM quest_template WHERE NextQuestInChain = ' .. entry)
-      while query:fetch(prequests, "a") do
-        if debug("quests_prequestchain") then break end
-        pre[tonumber(prequests["entry"])] = true
+      -- This NextQuestInChain will be an issue for AzerothCore as it does not exist.
+      -- This part of pre-quest detection might not work correctly for AC.
+      if quest_template.NextQuestInChain then -- Check if column exists
+        local pre_chain_query_string = 'SELECT quest_template.' .. quest_pk_column .. ' AS entry FROM quest_template WHERE NextQuestInChain = ' .. entry
+        query = mysql:execute(pre_chain_query_string)
+        while query:fetch(prequests, "a") do
+          if debug("quests_prequestchain") then break end
+          pre[tonumber(prequests["entry"])] = true
+        end
       end
 
       -- temporary add provided quest item
       items[srcitem] = true
 
+      -- Mapping for ReqCreatureOrGOId, ReqItemId, ReqSourceId based on C config or defaults
+      local req_npc_go_id_base = C.ReqCreatureOrGOId or "RequiredNpcOrGo" -- Defaulting to AC naming
+      local req_item_id_base = C.ReqItemId or "RequiredItemId" -- Defaulting to AC naming
+      local req_source_id_base = C.ReqSourceId or "RequiredItemSourceId" -- Placeholder, AC might not have direct ReqSourceId, often covered by loot or quest item spells
+
       for i=1,4 do
-        if quest_template["ReqCreatureOrGOId" .. i] and tonumber(quest_template["ReqCreatureOrGOId" .. i]) > 0 then
-          units[tonumber(quest_template["ReqCreatureOrGOId" .. i])] = true
-        elseif quest_template["ReqCreatureOrGOId" .. i] and tonumber(quest_template["ReqCreatureOrGOId" .. i]) < 0 then
-          objects[math.abs(tonumber(quest_template["ReqCreatureOrGOId" .. i]))] = true
+        local req_npc_go_col = req_npc_go_id_base .. i
+        local req_item_col = req_item_id_base .. i
+        local req_source_col = req_source_id_base .. i -- Might be unused if AC has no direct map
+
+        if quest_template[req_npc_go_col] and tonumber(quest_template[req_npc_go_col]) > 0 then
+          units[tonumber(quest_template[req_npc_go_col])] = true
+        elseif quest_template[req_npc_go_col] and tonumber(quest_template[req_npc_go_col]) < 0 then
+          objects[math.abs(tonumber(quest_template[req_npc_go_col]))] = true
         end
-        if quest_template["ReqItemId" .. i] and tonumber(quest_template["ReqItemId" .. i]) > 0 then
-          items[tonumber(quest_template["ReqItemId" .. i])] = true
+        if quest_template[req_item_col] and tonumber(quest_template[req_item_col]) > 0 then
+          items[tonumber(quest_template[req_item_col])] = true
         end
-        if quest_template["ReqSourceId" .. i] and tonumber(quest_template["ReqSourceId" .. i]) > 0 then
-          items[tonumber(quest_template["ReqSourceId" .. i])] = true
+        -- Handling ReqSourceId needs to be verified for AC. It might involve looking at item loot that starts quests or specific quest flags.
+        -- For now, we attempt to use it if the column exists in the query result.
+        if quest_template[req_source_col] and tonumber(quest_template[req_source_col]) > 0 then
+          items[tonumber(quest_template[req_source_col])] = true
         end
 
         if quest_template["ReqSpellCast" .. i] and tonumber(quest_template["ReqSpellCast" .. i]) > 0 then
@@ -1601,16 +1438,21 @@ for id, settings in pairs(config.expansions) do
     -- load unit locales
     local units_loc = {}
     local locales_creature = {}
-    local query = mysql:execute('SELECT *, creature_template.'..C.Entry..' AS _entry FROM creature_template LEFT JOIN locales_creature ON locales_creature.entry = creature_template.entry GROUP BY creature_template.entry ORDER BY creature_template.entry ASC')
+    local creature_loc_pk_col = (core == "acore" and "ID" or "entry") -- AC creature_template_locale uses ID from creature_template
+    local creature_template_pk_col = (core == "acore" and "ID" or C.Entry or "entry") -- creature_template PK
+
+    local query = mysql:execute('SELECT *, creature_template.'..creature_template_pk_col..' AS _entry FROM creature_template LEFT JOIN ' .. (C.locales_creature or "creature_template_locale") .. ' ON ' .. (C.locales_creature or "creature_template_locale") .. '.' .. creature_loc_pk_col .. ' = creature_template.' .. creature_template_pk_col .. ' GROUP BY creature_template.' .. creature_template_pk_col .. ' ORDER BY creature_template.' .. creature_template_pk_col .. ' ASC')
     while query:fetch(locales_creature, "a") do
       if debug("locales_unit") then break end
 
       local entry = tonumber(locales_creature["_entry"])
-      local name  = locales_creature[C.Name]
+      local name_col_map = (core == "acore" and "Name" or C.Name or "name") -- creature_template.Name / creature_template.name
+      local name  = locales_creature[name_col_map]
 
       if entry then
         for loc in pairs(locales) do
-          local name_loc = locales_creature["name_loc" .. locales[loc]]
+          local name_loc_col = (core == "acore" and "Name_loc" or "name_loc") -- AC uses Name_locX for creature_template_locale
+          local name_loc = locales_creature[name_loc_col .. locales[loc]]
           if not name_loc or name_loc == "" then name_loc = name or "" end
           if name_loc and name_loc ~= "" then
             local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
@@ -1624,16 +1466,22 @@ for id, settings in pairs(config.expansions) do
 
   do -- objects locales
     local locales_gameobject = {}
-    local query = mysql:execute('SELECT *, gameobject_template.entry AS _entry FROM gameobject_template LEFT JOIN locales_gameobject ON locales_gameobject.entry = gameobject_template.entry GROUP BY gameobject_template.entry ORDER BY gameobject_template.entry ASC')
+    local go_loc_pk_col = (core == "acore" and "entry" or "entry") -- gameobject_template_locale uses entry from gameobject_template
+    local go_template_pk_col = (core == "acore" and "entry" or "entry") -- gameobject_template PK
+
+    local query = mysql:execute('SELECT *, gameobject_template.'..go_template_pk_col..' AS _entry FROM gameobject_template LEFT JOIN ' .. (C.locales_gameobject or "gameobject_template_locale") .. ' ON ' .. (C.locales_gameobject or "gameobject_template_locale") .. '.' .. go_loc_pk_col .. ' = gameobject_template.' .. go_template_pk_col .. ' GROUP BY gameobject_template.' .. go_template_pk_col .. ' ORDER BY gameobject_template.' .. go_template_pk_col .. ' ASC')
     while query:fetch(locales_gameobject, "a") do
       if debug("locales_object") then break end
 
       local entry = tonumber(locales_gameobject["_entry"])
-      local name  = locales_gameobject.name
+      local name_col_map = (core == "acore" and "name" or "name") -- gameobject_template.name
+      local name  = locales_gameobject[name_col_map]
+
 
       if entry then
         for loc in pairs(locales) do
-          local name_loc = locales_gameobject["name_loc" .. locales[loc]]
+          local name_loc_col = (core == "acore" and "name_loc" or "name_loc") -- AC uses name_locX for gameobject_template_locale
+          local name_loc = locales_gameobject[name_loc_col .. locales[loc]]
           if not name_loc or name_loc == "" then name_loc = name or "" end
           if name_loc and name_loc ~= "" then
             local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
@@ -1648,16 +1496,21 @@ for id, settings in pairs(config.expansions) do
   do -- items locales
     local items_loc = {}
     local locales_item = {}
-    local query = mysql:execute('SELECT *, item_template.entry AS _entry FROM item_template LEFT JOIN locales_item ON locales_item.entry = item_template.entry GROUP BY item_template.entry ORDER BY item_template.entry ASC')
+    local item_loc_pk_col = (core == "acore" and "ID" or "entry") -- item_template_locale uses ID from item_template
+    local item_template_pk_col = (core == "acore" and "entry" or "entry") -- item_template PK
+
+    local query = mysql:execute('SELECT *, item_template.'..item_template_pk_col..' AS _entry FROM item_template LEFT JOIN ' .. (C.locales_item or "item_template_locale") .. ' ON ' .. (C.locales_item or "item_template_locale") .. '.' .. item_loc_pk_col .. ' = item_template.' .. item_template_pk_col .. ' GROUP BY item_template.' .. item_template_pk_col .. ' ORDER BY item_template.' .. item_template_pk_col .. ' ASC')
     while query:fetch(locales_item, "a") do
       if debug("locales_item") then break end
 
       local entry = tonumber(locales_item["_entry"])
-      local name  = locales_item.name
+      local name_col_map = (core == "acore" and "name" or "name") -- item_template.name
+      local name  = locales_item[name_col_map]
 
       if entry then
         for loc in pairs(locales) do
-          local name_loc = locales_item["name_loc" .. locales[loc]]
+          local name_loc_col = (core == "acore" and "Name_loc" or "name_loc") -- AC uses Name_locX for item_template_locale
+          local name_loc = locales_item[name_loc_col .. locales[loc]]
           if not name_loc or name_loc == "" then name_loc = name or "" end
           if name_loc and name_loc ~= "" then
             local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
@@ -1671,7 +1524,10 @@ for id, settings in pairs(config.expansions) do
 
   do -- quests locales
     local locales_quest = {}
-    local query = mysql:execute('SELECT *, quest_template.entry AS _entry FROM quest_template LEFT JOIN locales_quest ON locales_quest.entry = quest_template.entry GROUP BY quest_template.entry ORDER BY quest_template.entry ASC')
+    local quest_loc_pk_col = (core == "acore" and "ID" or "entry") -- quest_template_locale uses ID from quest_template
+    local quest_template_pk_col = (core == "acore" and "ID" or "entry") -- quest_template PK
+
+    local query = mysql:execute('SELECT *, quest_template.'..quest_template_pk_col..' AS _entry FROM quest_template LEFT JOIN ' .. (C.locales_quest or "quest_template_locale") .. ' ON ' .. (C.locales_quest or "quest_template_locale") ..'.' .. quest_loc_pk_col .. ' = quest_template.' .. quest_template_pk_col .. ' GROUP BY quest_template.' .. quest_template_pk_col .. ' ORDER BY quest_template.' .. quest_template_pk_col .. ' ASC')
     while query:fetch(locales_quest, "a") do
       if debug("locales_quest") then break end
 
@@ -1682,14 +1538,31 @@ for id, settings in pairs(config.expansions) do
           local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
           pfDB["quests"][locale] = pfDB["quests"][locale] or {}
 
-          local title_loc = locales_quest["Title_loc" .. locales[loc]]
-          local details_loc = locales_quest["Details_loc" .. locales[loc]]
-          local objectives_loc = locales_quest["Objectives_loc" .. locales[loc]]
+          -- AC quest_template_locale uses Title, Details, Objectives, EndText, etc.
+          -- The script here uses Title_locX, Details_locX, Objectives_locX. This needs alignment.
+          -- AzerothCore quest_template_locale has: Title, Details, Objectives, OfferRewardText, RequestItemsText, EndText, CompletedText, ObjectiveText1-4, etc. (without _locX suffix in the locale table itself)
+          -- The fallback logic below already handles if Title_locX is not found, it uses locales_quest.Title (which would be from quest_template)
+          -- For AC, we want to directly use Title from quest_template_locale if available for the current locale, or fallback to quest_template.LogTitle
+          local title_loc, details_loc, objectives_loc
 
-          -- fallback to enUS titles
-          if not title_loc or title_loc == "" then title_loc = locales_quest.Title or "" end
-          if not details_loc or details_loc == "" then details_loc = locales_quest.Details or "" end
-          if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest.Objectives or "" end
+          if core == "acore" then
+            title_loc = locales_quest["Title"] -- From quest_template_locale joined table
+            details_loc = locales_quest["Details"]
+            objectives_loc = locales_quest["Objectives"]
+            -- Fallback to base quest_template text if locale specific is empty
+            if not title_loc or title_loc == "" then title_loc = locales_quest["LogTitle"] or "" end -- LogTitle from quest_template
+            if not details_loc or details_loc == "" then details_loc = locales_quest["QuestDescription"] or "" end -- QuestDescription from quest_template
+            if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest["LogDescription"] or "" end -- LogDescription from quest_template (summary of objectives)
+          else
+            title_loc = locales_quest["Title_loc" .. locales[loc]]
+            details_loc = locales_quest["Details_loc" .. locales[loc]]
+            objectives_loc = locales_quest["Objectives_loc" .. locales[loc]]
+            -- fallback to enUS titles (Original script logic)
+            if not title_loc or title_loc == "" then title_loc = locales_quest.Title or "" end
+            if not details_loc or details_loc == "" then details_loc = locales_quest.Details or "" end
+            if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest.Objectives or "" end
+          end
+
 
           pfDB["quests"][locale][entry] = {
             ["T"] = sanitize(title_loc),
