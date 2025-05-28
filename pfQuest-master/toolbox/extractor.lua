@@ -510,7 +510,6 @@ if config.expansions[expansion_to_process] then
 
               local coord = { zone_x, zone_y, zone_id, 0 }
               table.insert(ret, coord)
-              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
             end
           end
         end
@@ -544,7 +543,6 @@ if config.expansions[expansion_to_process] then
           if isValidMap(zone, round(px), round(py), expansion) then
             local coord = { px, py, tonumber(zone) }
             table.insert(ret, coord)
-              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
           end
         end
       end
@@ -586,7 +584,6 @@ if config.expansions[expansion_to_process] then
           if isValidMap(zone, round(px), round(py), expansion) then
             local coord = { px, py, tonumber(zone), 0 }
             table.insert(ret, coord)
-              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
           end
         end
       end
@@ -609,7 +606,6 @@ if config.expansions[expansion_to_process] then
           SELECT creature.position_x, creature.position_y, creature.map, creature.zoneId, creature.areaId
           FROM creature
           WHERE creature.id1 = ]] .. id .. [[
-          LIMIT 50
         ]])
 
         if query then
@@ -636,7 +632,6 @@ if config.expansions[expansion_to_process] then
 
               local coord = { zone_x, zone_y, final_zone, 0 }
               table.insert(ret, coord)
-              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
             end
           end
         end
@@ -785,10 +780,10 @@ if config.expansions[expansion_to_process] then
     local total_creatures = tonumber(count_result.total) or 0
     print("  Processing " .. total_creatures .. " creatures...")
 
-    -- iterate over all creatures (LIMITED FOR TESTING)
+    -- iterate over all creatures
     local processed = 0
     local creature_template = {}
-    local query = mysql:execute('SELECT * FROM creature_template GROUP BY creature_template.entry ORDER BY creature_template.entry LIMIT 1000')
+    local query = mysql:execute('SELECT * FROM creature_template GROUP BY creature_template.entry ORDER BY creature_template.entry')
     while query:fetch(creature_template, "a") do
       if debug("units") then break end
       processed = processed + 1
@@ -1070,9 +1065,9 @@ if config.expansions[expansion_to_process] then
     pfDB["items"] = pfDB["items"] or {}
     pfDB["items"][data] = {}
 
-    -- iterate over all items (LIMITED FOR TESTING)
+    -- iterate over all items
     local item_template = {}
-    local query = mysql:execute('SELECT entry, name FROM item_template ORDER BY entry ASC LIMIT 500')
+    local query = mysql:execute('SELECT entry, name FROM item_template ORDER BY entry ASC')
     if query then
       while query:fetch(item_template, "a") do
       if debug("items") then break end
