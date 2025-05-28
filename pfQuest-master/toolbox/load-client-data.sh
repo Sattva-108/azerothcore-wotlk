@@ -124,31 +124,89 @@ CREATE TABLE \`FactionTemplate_${v}\` (
 
 EOF
 
-  if [ -d $root/$v ] && [ -f $root/$v/FactionTemplate.dbc.csv ]; then
-    cat $root/$v/FactionTemplate.dbc.csv | tail -n +2 | sort -nt ',' -k3 | while read line; do
-      factiontemplate=$(echo $line | cut -d "," -f 1)
-      faction=$(echo $line | cut -d "," -f 2)
-      friendly=$(echo $line | cut -d "," -f 5) # field 5
-      hostile=$(echo $line | cut -d "," -f 6) # field 6
+  local csv_file_path="$root/$v/FactionTemplate.dbc.csv"
+  echo "DEBUG FactionTemplate: Checking for file: [$csv_file_path] for version [$v]"
 
-      if [ $(( 4 & $hostile )) != 0 ] || [ $hostile = 1 ]; then
+  if [ -f "$csv_file_path" ]; then
+    echo "DEBUG FactionTemplate: File FOUND: [$csv_file_path]"
+    echo "DEBUG FactionTemplate: Starting to process file..."
+
+    local line_count=0
+    local processed_count=0
+
+    # Попытка прочитать первую строку данных для проверки cut
+    local first_data_line=$(tail -n +2 "$csv_file_path" | head -n 1)
+    if [ -n "$first_data_line" ]; then
+        echo "DEBUG FactionTemplate: First data line of CSV: [$first_data_line]"
+        local test_factiontemplate_id=$(echo "$first_data_line" | cut -d "," -f 1)
+        local test_faction_id=$(echo "$first_data_line" | cut -d "," -f 2)
+        local test_friendly_group=$(echo "$first_data_line" | cut -d "," -f 5)
+        local test_enemy_group=$(echo "$first_data_line" | cut -d "," -f 6)
+        echo "DEBUG FactionTemplate: Test cut - factiontemplate_id: [$test_factiontemplate_id], faction_id: [$test_faction_id], friendly_group: [$test_friendly_group], enemy_group: [$test_enemy_group]"
+    else
+        echo "DEBUG FactionTemplate: WARNING - Could not read first data line from CSV or CSV is empty (after header)."
+    fi
+
+    # Основной цикл обработки
+    tail -n +2 "$csv_file_path" | sort -nt ',' -k1,1 | while IFS= read -r line; do # Изменено на sort -k1,1, если -k3 было опечаткой
+      line_count=$((line_count + 1))
+      echo "----------------------------------------------------"
+      echo "DEBUG FactionTemplate: Processing line #$line_count: [$line]"
+
+      factiontemplate=$(echo "$line" | cut -d "," -f 1)
+      faction=$(echo "$line" | cut -d "," -f 2)
+      # Убрал кавычки из friendly и hostile, чтобы cut работал с чистыми значениями, если они в кавычках в CSV
+      friendly_raw=$(echo "$line" | cut -d "," -f 5)
+      hostile_raw=$(echo "$line" | cut -d "," -f 6)
+
+      # Удаляем возможные кавычки из извлеченных значений
+      friendly=${friendly_raw//\"/}
+      hostile=${hostile_raw//\"/}
+
+      echo "DEBUG FactionTemplate VARS: factiontemplate=[$factiontemplate], faction=[$faction], friendly_raw=[$friendly_raw], hostile_raw=[$hostile_raw], friendly_clean=[$friendly], hostile_clean=[$hostile]"
+
+      # Проверка, являются ли friendly и hostile числами
+      if ! [[ "$friendly" =~ ^[0-9]+$ ]] || ! [[ "$hostile" =~ ^[0-9]+$ ]]; then
+        echo "DEBUG FactionTemplate: WARNING - Non-numeric value for friendly or hostile. friendly=[$friendly], hostile=[$hostile]. Skipping line."
+        continue # Пропустить эту строку, если значения нечисловые
+      fi
+
+      local alliance=0
+      local horde=0
+
+      # Логика определения Альянса/Орды (та же, что и раньше, но с отладкой)
+      echo "DEBUG FactionTemplate: Checking Horde hostility: hostile_val=[$hostile]"
+      if [ $(( 4 & $hostile )) != 0 ] || [ "$hostile" = "1" ]; then
         horde=-1
-      elif [ $(( 4 & $friendly )) != 0 ] || [ $friendly = 1 ]; then
+        echo "DEBUG FactionTemplate: Horde set to -1 (hostile)"
+      elif [ $(( 4 & $friendly )) != 0 ] || [ "$friendly" = "1" ]; then
         horde=1
+        echo "DEBUG FactionTemplate: Horde set to 1 (friendly)"
       else
         horde=0
+        echo "DEBUG FactionTemplate: Horde set to 0 (neutral)"
       fi
 
-      if [ $(( 2 & $hostile )) != 0 ] || [ $hostile = 1 ]; then
+      echo "DEBUG FactionTemplate: Checking Alliance hostility: hostile_val=[$hostile]"
+      if [ $(( 2 & $hostile )) != 0 ] || [ "$hostile" = "1" ]; then
         alliance=-1
-      elif [ $(( 2 & $friendly )) != 0 ] || [ $friendly = 1 ]; then
+        echo "DEBUG FactionTemplate: Alliance set to -1 (hostile)"
+      elif [ $(( 2 & $friendly )) != 0 ] || [ "$friendly" = "1" ]; then
         alliance=1
+        echo "DEBUG FactionTemplate: Alliance set to 1 (friendly)"
       else
         alliance=0
+        echo "DEBUG FactionTemplate: Alliance set to 0 (neutral)"
       fi
 
+      echo "DEBUG FactionTemplate: Final values for SQL: factiontemplate=[$factiontemplate], faction=[$faction], alliance=[$alliance], horde=[$horde]"
       echo "INSERT INTO \`FactionTemplate_${v}\` VALUES ($factiontemplate, $faction, $alliance, $horde);" >> $rootsql
+      processed_count=$((processed_count + 1))
     done
+    echo "----------------------------------------------------"
+    echo "DEBUG FactionTemplate: Finished processing. Total lines read from CSV (after header): $line_count. Lines inserted into SQL: $processed_count."
+  else
+    echo "DEBUG FactionTemplate: File NOT FOUND: [$csv_file_path]"
   fi
 }
 
@@ -339,3 +397,7 @@ for v in $versions; do
   Run SkillLine
   Run AreaTable
 done
+
+# Добавляем команду read в самом конце, чтобы окно не закрывалось
+echo "Script finished. Press Enter to close."
+read
