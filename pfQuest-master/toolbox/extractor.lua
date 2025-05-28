@@ -174,7 +174,7 @@ end
 -- begin of configuration
 local config = {
   output = "../db/", -- output folder for database files
-  debug = true,      -- true if script should only import first 1000 entries
+  debug = false,      -- false = process all data, true = limit to 100 entries for testing
 
   mysql = {           -- database settings
     live = {
@@ -510,6 +510,7 @@ if config.expansions[expansion_to_process] then
 
               local coord = { zone_x, zone_y, zone_id, 0 }
               table.insert(ret, coord)
+              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
             end
           end
         end
@@ -543,6 +544,7 @@ if config.expansions[expansion_to_process] then
           if isValidMap(zone, round(px), round(py), expansion) then
             local coord = { px, py, tonumber(zone) }
             table.insert(ret, coord)
+              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
           end
         end
       end
@@ -584,6 +586,7 @@ if config.expansions[expansion_to_process] then
           if isValidMap(zone, round(px), round(py), expansion) then
             local coord = { px, py, tonumber(zone), 0 }
             table.insert(ret, coord)
+              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
           end
         end
       end
@@ -619,9 +622,11 @@ if config.expansions[expansion_to_process] then
             local zone_id = tonumber(creature_coords.zoneId)
             local area_id = tonumber(creature_coords.areaId)
 
-            if x and y and zone_id and zone_id > 0 then
+            if x and y and map_id then
+              -- Use area_id if available, otherwise zone_id
+              local final_zone = area_id and area_id > 0 and area_id or zone_id and zone_id > 0 and zone_id or map_id
+
               -- Convert world coordinates to zone percentage (simplified)
-              -- This is a basic conversion - you might need to adjust based on your zone data
               local zone_x = math.floor((x + 17066) / 340 * 100) / 100
               local zone_y = math.floor((y + 17066) / 340 * 100) / 100
 
@@ -629,8 +634,9 @@ if config.expansions[expansion_to_process] then
               zone_x = math.max(0, math.min(100, zone_x))
               zone_y = math.max(0, math.min(100, zone_y))
 
-              local coord = { zone_x, zone_y, zone_id, 0 }
+              local coord = { zone_x, zone_y, final_zone, 0 }
               table.insert(ret, coord)
+              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
             end
           end
         end
@@ -665,7 +671,10 @@ if config.expansions[expansion_to_process] then
             local zone_id = tonumber(object_coords.zoneId)
             local area_id = tonumber(object_coords.areaId)
 
-            if x and y and zone_id and zone_id > 0 then
+            if x and y and map_id then
+              -- Use area_id if available, otherwise zone_id
+              local final_zone = area_id and area_id > 0 and area_id or zone_id and zone_id > 0 and zone_id or map_id
+
               -- Convert world coordinates to zone percentage (simplified)
               local zone_x = math.floor((x + 17066) / 340 * 100) / 100
               local zone_y = math.floor((y + 17066) / 340 * 100) / 100
@@ -674,8 +683,9 @@ if config.expansions[expansion_to_process] then
               zone_x = math.max(0, math.min(100, zone_x))
               zone_y = math.max(0, math.min(100, zone_y))
 
-              local coord = { zone_x, zone_y, zone_id, 0 }
+              local coord = { zone_x, zone_y, final_zone, 0 }
               table.insert(ret, coord)
+              print("DEBUG: Added coord for ID " .. id .. ": " .. zone_x .. "," .. zone_y .. " zone=" .. final_zone)
             end
           end
         end
@@ -696,25 +706,39 @@ if config.expansions[expansion_to_process] then
 
     -- Enable areatrigger for AzerothCore with DBC tables
     if core == "acore" then
-      -- Check if DBC table exists
-      local test_query = mysql:execute('SHOW TABLES LIKE "AreaTrigger_wotlk"')
+      -- Use basic areatrigger_teleport table from AzerothCore instead of DBC
+      local test_query = mysql:execute('SHOW TABLES LIKE "areatrigger_teleport"')
       if test_query and test_query:fetch() then
-        print("  Found AreaTrigger_wotlk table, extracting areatriggers...")
+        print("  Found areatrigger_teleport table, extracting areatriggers...")
         local areatrigger = {}
-        local query = mysql:execute('SELECT * FROM AreaTrigger_' .. expansion .. ' ORDER BY ID')
+        local query = mysql:execute('SELECT ID, target_map, target_position_x, target_position_y FROM areatrigger_teleport ORDER BY ID')
         if query then
           while query:fetch(areatrigger, "a") do
             if debug("areatrigger") then break end
             local entry = tonumber(areatrigger.ID)
             if entry then
-              pfDB["areatrigger"][data][entry] = GetAreaTriggerCoords(entry)
+              pfDB["areatrigger"][data][entry] = {}
+              pfDB["areatrigger"][data][entry]["coords"] = {}
+              -- Basic coordinate data without zone conversion
+              local x = tonumber(areatrigger.target_position_x) or 0
+              local y = tonumber(areatrigger.target_position_y) or 0
+              local map = tonumber(areatrigger.target_map) or 0
+              if x ~= 0 and y ~= 0 and map ~= 0 then
+                -- Simple coordinate conversion
+                local zone_x = math.floor((x + 17066) / 340 * 100) / 100
+                local zone_y = math.floor((y + 17066) / 340 * 100) / 100
+                zone_x = math.max(0, math.min(100, zone_x))
+                zone_y = math.max(0, math.min(100, zone_y))
+                table.insert(pfDB["areatrigger"][data][entry]["coords"], { zone_x, zone_y, map, 0 })
+              end
             end
           end
+          print("  SUCCESS: Extracted areatriggers from areatrigger_teleport")
         else
           print("  Warning: Failed to extract areatriggers")
         end
       else
-        print("  Skipping areatrigger extraction (AreaTrigger_wotlk table not found)")
+        print("  Skipping areatrigger extraction (areatrigger_teleport table not found)")
       end
     else
       -- iterate over all areatriggers
@@ -1561,119 +1585,121 @@ if config.expansions[expansion_to_process] then
         table.insert(pfDB["quests"][data][entry]["pre"], tonumber(id))
       end
 
-      do -- write objectives
-        if tblsize(units) > 0 or tblsize(objects) > 0 or tblsize(items) > 0 or tblsize(itemreq) > 0 or tblsize(areatrigger) > 0 or tblsize(zones) > 0 then
-          pfDB["quests"][data][entry]["obj"] = pfDB["quests"][data][entry]["obj"] or {}
+          do -- write objectives
+              if tblsize(units) > 0 or tblsize(objects) > 0 or tblsize(items) > 0 or tblsize(itemreq) > 0 or tblsize(areatrigger) > 0 or tblsize(zones) > 0 then
+                  pfDB["quests"][data][entry]["obj"] = pfDB["quests"][data][entry]["obj"] or {}
 
-          for id in opairs(units) do
-            pfDB["quests"][data][entry]["obj"]["U"] = pfDB["quests"][data][entry]["obj"]["U"] or {}
-            table.insert(pfDB["quests"][data][entry]["obj"]["U"], tonumber(id))
-          end
+                  for id in opairs(units) do
+                      pfDB["quests"][data][entry]["obj"]["U"] = pfDB["quests"][data][entry]["obj"]["U"] or {}
+                      table.insert(pfDB["quests"][data][entry]["obj"]["U"], tonumber(id))
+                  end
 
-          for id in opairs(objects) do
-            pfDB["quests"][data][entry]["obj"]["O"] = pfDB["quests"][data][entry]["obj"]["O"] or {}
-            table.insert(pfDB["quests"][data][entry]["obj"]["O"], tonumber(id))
-          end
+                  for id in opairs(objects) do
+                      pfDB["quests"][data][entry]["obj"]["O"] = pfDB["quests"][data][entry]["obj"]["O"] or {}
+                      table.insert(pfDB["quests"][data][entry]["obj"]["O"], tonumber(id))
+                  end
 
-          for id in opairs(items) do
-            pfDB["quests"][data][entry]["obj"]["I"] = pfDB["quests"][data][entry]["obj"]["I"] or {}
-            table.insert(pfDB["quests"][data][entry]["obj"]["I"], tonumber(id))
-          end
+                  for id in opairs(items) do
+                      pfDB["quests"][data][entry]["obj"]["I"] = pfDB["quests"][data][entry]["obj"]["I"] or {}
+                      table.insert(pfDB["quests"][data][entry]["obj"]["I"], tonumber(id))
+                  end
 
-          for id in opairs(itemreq) do
-            pfDB["quests"][data][entry]["obj"]["IR"] = pfDB["quests"][data][entry]["obj"]["IR"] or {}
-            table.insert(pfDB["quests"][data][entry]["obj"]["IR"], tonumber(id))
-          end
+                  for id in opairs(itemreq) do
+                      pfDB["quests"][data][entry]["obj"]["IR"] = pfDB["quests"][data][entry]["obj"]["IR"] or {}
+                      table.insert(pfDB["quests"][data][entry]["obj"]["IR"], tonumber(id))
+                  end
 
-          for id in opairs(areatrigger) do
-            pfDB["quests"][data][entry]["obj"]["A"] = pfDB["quests"][data][entry]["obj"]["A"] or {}
-            table.insert(pfDB["quests"][data][entry]["obj"]["A"], tonumber(id))
-          end
+                  for id in opairs(areatrigger) do
+                      pfDB["quests"][data][entry]["obj"]["A"] = pfDB["quests"][data][entry]["obj"]["A"] or {}
+                      table.insert(pfDB["quests"][data][entry]["obj"]["A"], tonumber(id))
+                  end
 
-          for id in opairs(zones) do
-            pfDB["quests"][data][entry]["obj"]["Z"] = pfDB["quests"][data][entry]["obj"]["Z"] or {}
-            table.insert(pfDB["quests"][data][entry]["obj"]["Z"], tonumber(id))
-          end
-        end
-
-        -- quest starter
-        local creature_questrelation = {}
-        local sql = [[
-          SELECT * FROM creature_questrelation WHERE creature_questrelation.quest = ]] .. quest_id
-        local query = mysql:execute(sql)
-        if query then
-          while query:fetch(creature_questrelation, "a") do
-            if debug("quests_starterunit") then break end
-            pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
-            pfDB["quests"][data][entry]["start"]["U"] = pfDB["quests"][data][entry]["start"]["U"] or {}
-            table.insert(pfDB["quests"][data][entry]["start"]["U"], tonumber(creature_questrelation.id))
-          end
-        end
-
-        local gameobject_questrelation = {}
-        local sql = [[
-          SELECT * FROM gameobject_questrelation WHERE gameobject_questrelation.quest = ]] .. quest_id
-        local query = mysql:execute(sql)
-        if query then
-          while query:fetch(gameobject_questrelation, "a") do
-            if debug("quests_starterobject") then break end
-            pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
-            pfDB["quests"][data][entry]["start"]["O"] = pfDB["quests"][data][entry]["start"]["O"] or {}
-            table.insert(pfDB["quests"][data][entry]["start"]["O"], tonumber(gameobject_questrelation.id))
-          end
-        end
-
-        local item_template = {}
-        local sql = [[
-          SELECT entry as id FROM item_template WHERE ]] .. C.startquest .. [[ = ]] .. quest_id
-        local query = mysql:execute(sql)
-        if query then
-          while query:fetch(item_template, "a") do
-          if debug("quests_starteritem") then break end
-
-          -- remove quest start items from objectives
-          if pfDB["quests"][data][entry]["obj"] and pfDB["quests"][data][entry]["obj"]["I"] then
-            for id, objective in pairs(pfDB["quests"][data][entry]["obj"]["I"]) do
-              if objective == tonumber(item_template.id) then
-                pfDB["quests"][data][entry]["obj"]["I"][id] = nil
+                  for id in opairs(zones) do
+                      pfDB["quests"][data][entry]["obj"]["Z"] = pfDB["quests"][data][entry]["obj"]["Z"] or {}
+                      table.insert(pfDB["quests"][data][entry]["obj"]["Z"], tonumber(id))
+                  end
               end
-            end
-          end
 
-          -- add item to quest starters
-          pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
-          pfDB["quests"][data][entry]["start"]["I"] = pfDB["quests"][data][entry]["start"]["I"] or {}
-          table.insert(pfDB["quests"][data][entry]["start"]["I"], tonumber(item_template.id))
-          end
-        end
+              -- quest starter
+              local creature_questrelation = {}
+              local sql = [[
+          SELECT * FROM creature_questrelation WHERE creature_questrelation.quest = ]] .. quest_id
+              local query = mysql:execute(sql)
+              if query then
+                  while query:fetch(creature_questrelation, "a") do
+                      if debug("quests_starterunit") then break end
+                      pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
+                      pfDB["quests"][data][entry]["start"]["U"] = pfDB["quests"][data][entry]["start"]["U"] or {}
+                      table.insert(pfDB["quests"][data][entry]["start"]["U"], tonumber(creature_questrelation.id))
+                  end
+              end
 
-        -- quest ender
-        local creature_involvedrelation = {}
-        local sql = [[
+              local gameobject_questrelation = {}
+              local sql = [[
+          SELECT * FROM gameobject_questrelation WHERE gameobject_questrelation.quest = ]] .. quest_id
+              local query = mysql:execute(sql)
+              if query then
+                  while query:fetch(gameobject_questrelation, "a") do
+                      if debug("quests_starterobject") then break end
+                      pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
+                      pfDB["quests"][data][entry]["start"]["O"] = pfDB["quests"][data][entry]["start"]["O"] or {}
+                      table.insert(pfDB["quests"][data][entry]["start"]["O"], tonumber(gameobject_questrelation.id))
+                  end
+              end
+
+              local item_template = {}
+              local sql = [[
+          SELECT entry as id FROM item_template WHERE ]] .. C.startquest .. [[ = ]] .. quest_id
+              local query = mysql:execute(sql)
+              if query then
+                  while query:fetch(item_template, "a") do
+                      if debug("quests_starteritem") then break end
+
+                      -- remove quest start items from objectives
+                      if pfDB["quests"][data][entry]["obj"] and pfDB["quests"][data][entry]["obj"]["I"] then
+                          for id, objective in pairs(pfDB["quests"][data][entry]["obj"]["I"]) do
+                              if objective == tonumber(item_template.id) then
+                                  pfDB["quests"][data][entry]["obj"]["I"][id] = nil
+                              end
+                          end
+                      end
+
+                      -- add item to quest starters
+                      pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
+                      pfDB["quests"][data][entry]["start"]["I"] = pfDB["quests"][data][entry]["start"]["I"] or {}
+                      table.insert(pfDB["quests"][data][entry]["start"]["I"], tonumber(item_template.id))
+                  end
+              end
+
+              -- quest ender
+              local creature_involvedrelation = {}
+              local sql = [[
           SELECT * FROM creature_involvedrelation WHERE creature_involvedrelation.quest = ]] .. quest_id
-        local query = mysql:execute(sql)
-        if query then
-          while query:fetch(creature_involvedrelation, "a") do
-            if debug("quests_enderunit") then break end
-            pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
-            pfDB["quests"][data][entry]["end"]["U"] = pfDB["quests"][data][entry]["end"]["U"] or {}
-            table.insert(pfDB["quests"][data][entry]["end"]["U"], tonumber(creature_involvedrelation.id))
-          end
-        end
+              local query = mysql:execute(sql)
+              if query then
+                  while query:fetch(creature_involvedrelation, "a") do
+                      if debug("quests_enderunit") then break end
+                      pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
+                      pfDB["quests"][data][entry]["end"]["U"] = pfDB["quests"][data][entry]["end"]["U"] or {}
+                      table.insert(pfDB["quests"][data][entry]["end"]["U"], tonumber(creature_involvedrelation.id))
+                  end
+              end
 
-        local gameobject_involvedrelation = {}
-        local first = true
-        local sql = [[
+              local gameobject_involvedrelation = {}
+              local first = true
+              local sql = [[
           SELECT * FROM gameobject_involvedrelation WHERE gameobject_involvedrelation.quest = ]] .. quest_id
-        local query = mysql:execute(sql)
-        if query then
-          while query:fetch(gameobject_involvedrelation, "a") do
-            if debug("quests_enderobject") then break end
-            pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
-            pfDB["quests"][data][entry]["end"]["O"] = pfDB["quests"][data][entry]["end"]["O"] or {}
-            table.insert(pfDB["quests"][data][entry]["end"]["O"], tonumber(gameobject_involvedrelation.id))
+              local query = mysql:execute(sql)
+              if query then
+                  while query:fetch(gameobject_involvedrelation, "a") do
+                      if debug("quests_enderobject") then break end
+                      pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
+                      pfDB["quests"][data][entry]["end"]["O"] = pfDB["quests"][data][entry]["end"]["O"] or {}
+                      table.insert(pfDB["quests"][data][entry]["end"]["O"], tonumber(gameobject_involvedrelation.id))
+                  end
+              end
           end
-        end
+          end
       end
     end
   end
@@ -1683,35 +1709,72 @@ if config.expansions[expansion_to_process] then
     pfDB["zones"] = pfDB["zones"] or {}
     pfDB["zones"][data] = {}
 
-    local zones = {}
-    local query = mysql:execute('SELECT * FROM pfquest.WorldMapOverlay_'..expansion..' LEFT JOIN pfquest.AreaTable_'..expansion..' ON pfquest.WorldMapOverlay_'..expansion..'.areaID = pfquest.AreaTable_'..expansion..'.id')
-    while query:fetch(zones, "a") do
-      if debug("zones") then break end
-      local entry = tonumber(zones.id)
-      local zone = tonumber(zones.zoneID)
-      local textureWidth = tonumber(zones.textureWidth)
-      local textureHeight = tonumber(zones.textureHeight)
-      local offsetX = tonumber(zones.offsetX)
-      local offsetY = tonumber(zones.offsetY)
+    if core == "acore" then
+      -- For AzerothCore, use loaded DBC tables
+      local zones = {}
+      local query = mysql:execute('SELECT * FROM WorldMapOverlay_'..expansion..' LEFT JOIN AreaTable_'..expansion..' ON WorldMapOverlay_'..expansion..'.areaID = AreaTable_'..expansion..'.id')
+      if query then
+        while query:fetch(zones, "a") do
+          if debug("zones") then break end
+          local entry = tonumber(zones.id)
+          local zone = tonumber(zones.zoneID)
+          local textureWidth = tonumber(zones.textureWidth)
+          local textureHeight = tonumber(zones.textureHeight)
+          local offsetX = tonumber(zones.offsetX)
+          local offsetY = tonumber(zones.offsetY)
 
-      -- convert square to map scale
-      local hitRectTop = tonumber(zones.hitRectTop)/668*100
-      local hitRectLeft = tonumber(zones.hitRectLeft)/1002*100
-      local hitRectBottom = tonumber(zones.hitRectBottom)/668*100
-      local hitRectRight = tonumber(zones.hitRectRight)/1002*100
+          -- convert square to map scale
+          local hitRectTop = tonumber(zones.hitRectTop)/668*100
+          local hitRectLeft = tonumber(zones.hitRectLeft)/1002*100
+          local hitRectBottom = tonumber(zones.hitRectBottom)/668*100
+          local hitRectRight = tonumber(zones.hitRectRight)/1002*100
 
-      -- area size
-      local width = hitRectRight - hitRectLeft
-      local height = hitRectBottom - hitRectTop
+          -- area size
+          local width = hitRectRight - hitRectLeft
+          local height = hitRectBottom - hitRectTop
 
-      -- area center
-      local cx = (hitRectLeft+hitRectRight)/2
-      local cy = (hitRectTop+hitRectBottom)/2
+          -- area center
+          local cx = (hitRectLeft+hitRectRight)/2
+          local cy = (hitRectTop+hitRectBottom)/2
 
-      if entry then
-        pfDB["zones"][data][entry] = { zone, round(width,2), round(height,2), round(cx,2), round(cy,2)}
+          if entry then
+            pfDB["zones"][data][entry] = { zone, round(width,2), round(height,2), round(cx,2), round(cy,2)}
+          end
+        end
+        print("  SUCCESS: Extracted zones from DBC tables")
+      else
+        print("  Warning: Failed to query zones from DBC tables - run load_dbc.lua first")
       end
-    end
+    else
+      -- Original zones logic for cores with pfquest DBC data
+      local zones = {}
+      local query = mysql:execute('SELECT * FROM pfquest.WorldMapOverlay_'..expansion..' LEFT JOIN pfquest.AreaTable_'..expansion..' ON pfquest.WorldMapOverlay_'..expansion..'.areaID = pfquest.AreaTable_'..expansion..'.id')
+      while query:fetch(zones, "a") do
+        if debug("zones") then break end
+        local entry = tonumber(zones.id)
+        local zone = tonumber(zones.zoneID)
+        local textureWidth = tonumber(zones.textureWidth)
+        local textureHeight = tonumber(zones.textureHeight)
+        local offsetX = tonumber(zones.offsetX)
+        local offsetY = tonumber(zones.offsetY)
+
+        -- convert square to map scale
+        local hitRectTop = tonumber(zones.hitRectTop)/668*100
+        local hitRectLeft = tonumber(zones.hitRectLeft)/1002*100
+        local hitRectBottom = tonumber(zones.hitRectBottom)/668*100
+        local hitRectRight = tonumber(zones.hitRectRight)/1002*100
+
+        -- area size
+        local width = hitRectRight - hitRectLeft
+        local height = hitRectBottom - hitRectTop
+
+        -- area center
+        local cx = (hitRectLeft+hitRectRight)/2
+        local cy = (hitRectTop+hitRectBottom)/2
+
+        if entry then
+          pfDB["zones"][data][entry] = { zone, round(width,2), round(height,2), round(cx,2), round(cy,2)}
+        end
       end
     end
   end
@@ -1721,29 +1784,56 @@ if config.expansions[expansion_to_process] then
 
     pfDB["minimap"..exp] = pfDB["minimap"..exp] or {}
 
-    -- Test if pfquest database is available
-    local minimap_size = {}
-    local query = mysql:execute('SELECT * FROM pfquest.WorldMapArea_'..expansion..' ORDER BY areatableID ASC LIMIT 5')
-    if query then
-      print("  SUCCESS: pfquest.WorldMapArea_" .. expansion .. " table found!")
-      while query:fetch(minimap_size, "a") do
-        if debug("minimap") then break end
-        local mapID = minimap_size.mapID
-        local areaID = minimap_size.areatableID
-        local name = minimap_size.name
-        local x_min = minimap_size.x_min
-        local y_min = minimap_size.y_min
-        local x_max = minimap_size.x_max
-        local y_max = minimap_size.y_max
+    if core == "acore" then
+      -- For AzerothCore, use loaded DBC tables
+      local minimap_size = {}
+      local query = mysql:execute('SELECT * FROM WorldMapArea_'..expansion..' ORDER BY areatableID ASC')
+      if query then
+        print("  SUCCESS: WorldMapArea_" .. expansion .. " table found!")
+        while query:fetch(minimap_size, "a") do
+          if debug("minimap") then break end
+          local mapID = minimap_size.mapID
+          local areaID = minimap_size.areatableID
+          local name = minimap_size.name
+          local x_min = minimap_size.x_min
+          local y_min = minimap_size.y_min
+          local x_max = minimap_size.x_max
+          local y_max = minimap_size.y_max
 
-        local x = -1 * x_min + x_max
-        local y = -1 * y_min + y_max
+          local x = -1 * x_min + x_max
+          local y = -1 * y_min + y_max
 
-        pfDB["minimap"..exp][tonumber(areaID)] = { tonumber(y+.0), tonumber(x+.0) }
-        print("    Processed zone: " .. (name or "Unknown") .. " (ID: " .. areaID .. ")")
+          pfDB["minimap"..exp][tonumber(areaID)] = { tonumber(y+.0), tonumber(x+.0) }
+        end
+        print("  SUCCESS: Extracted minimap from DBC tables")
+      else
+        print("  Warning: Failed to query minimap from DBC tables - run load_dbc.lua first")
       end
     else
-      print("  DISABLED: pfquest database not available")
+      -- Test if pfquest database is available
+      local minimap_size = {}
+      local query = mysql:execute('SELECT * FROM pfquest.WorldMapArea_'..expansion..' ORDER BY areatableID ASC LIMIT 5')
+      if query then
+        print("  SUCCESS: pfquest.WorldMapArea_" .. expansion .. " table found!")
+        while query:fetch(minimap_size, "a") do
+          if debug("minimap") then break end
+          local mapID = minimap_size.mapID
+          local areaID = minimap_size.areatableID
+          local name = minimap_size.name
+          local x_min = minimap_size.x_min
+          local y_min = minimap_size.y_min
+          local x_max = minimap_size.x_max
+          local y_max = minimap_size.y_max
+
+          local x = -1 * x_min + x_max
+          local y = -1 * y_min + y_max
+
+          pfDB["minimap"..exp][tonumber(areaID)] = { tonumber(y+.0), tonumber(x+.0) }
+          print("    Processed zone: " .. (name or "Unknown") .. " (ID: " .. areaID .. ")")
+        end
+      else
+        print("  DISABLED: pfquest database not available")
+      end
     end
   end
 
@@ -1829,8 +1919,34 @@ if config.expansions[expansion_to_process] then
     end
 
     do -- gameobject relations
-      -- DISABLED: This section requires pfquest.Lock data which is not available in AzerothCore
-      if core ~= "acore" then
+      if core == "acore" then
+        -- For AzerothCore, use loaded DBC Lock table
+        local gameobject_template = {}
+        local query = mysql:execute([[
+          SELECT * FROM `gameobject_template`, Lock_]]..expansion..[[
+          WHERE `type` = 3 AND `locktype` = 2 AND `flags` = 0 AND `data1` > 0 and id = data0 GROUP BY `gameobject_template`.entry ORDER BY `gameobject_template`.entry ASC
+        ]])
+
+        if query then
+          while query:fetch(gameobject_template, "a") do
+            if debug("meta_farm") then break end
+            local entry   = tonumber(gameobject_template.entry) * -1
+            local data = tonumber(gameobject_template.data)
+            local skill = tonumber(gameobject_template.skill)
+            if data == 1 then
+              pfDB["meta"..exp]["chests"][entry] = skill
+            elseif data == 2 then
+              pfDB["meta"..exp]["herbs"][entry] = skill
+            elseif data == 3 then
+              pfDB["meta"..exp]["mines"][entry] = skill
+            end
+          end
+          print("  SUCCESS: Extracted gameobject relations from DBC tables")
+        else
+          print("  Warning: Failed to query gameobject relations from DBC tables - run load_dbc.lua first")
+        end
+      else
+        -- Original logic for other cores
         local gameobject_template = {}
         local query = mysql:execute([[
           SELECT * FROM `gameobject_template`, pfquest.Lock_]]..expansion..[[
@@ -1852,8 +1968,6 @@ if config.expansions[expansion_to_process] then
             end
           end
         end
-      else
-        print("  Skipping gameobject relations (pfquest Lock data not available in AzerothCore)")
       end
     end
   end
@@ -2129,8 +2243,33 @@ if config.expansions[expansion_to_process] then
   do -- professions locales
     pfDB["professions"] = {}
 
-    -- DISABLED: This section requires pfquest.SkillLine data
-    if core ~= "acore" then
+    if core == "acore" then
+      -- For AzerothCore, use loaded DBC SkillLine table
+      local locales_professions = {}
+      local query = mysql:execute('SELECT * FROM SkillLine_'..expansion..' ORDER BY id ASC')
+      if query then
+        while query:fetch(locales_professions, "a") do
+          if debug("locales_profession") then break end
+
+          local entry = tonumber(locales_professions.id)
+
+          if entry then
+            for loc in pairs(locales) do
+              local name = locales_professions["name_loc0"] -- Only enUS from DBC
+              if name and name ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+                pfDB["professions"][locale] = pfDB["professions"][locale] or {}
+                pfDB["professions"][locale][entry] = sanitize(name)
+              end
+            end
+          end
+        end
+        print("  SUCCESS: Extracted professions locales from DBC tables")
+      else
+        print("  Warning: Failed to query professions locales from DBC tables - run load_dbc.lua first")
+      end
+    else
+      -- Original logic for other cores
       local locales_professions = {}
       local query = mysql:execute('SELECT * FROM pfquest.SkillLine_'..expansion..' ORDER BY id ASC')
       if query then
@@ -2151,14 +2290,37 @@ if config.expansions[expansion_to_process] then
           end
         end
       end
-    else
-      print("  Skipping professions locales (pfquest SkillLine data not available in AzerothCore)")
     end
   end
 
   do -- zones locales
-    -- DISABLED: This section requires pfquest.AreaTable data
-    if core ~= "acore" then
+    if core == "acore" then
+      -- For AzerothCore, use loaded DBC AreaTable table
+      local locales_zones = {}
+      local query = mysql:execute('SELECT * FROM AreaTable_'..expansion..' ORDER BY id ASC')
+      if query then
+        while query:fetch(locales_zones, "a") do
+          if debug("locales_zone") then break end
+
+          local entry = tonumber(locales_zones.id)
+
+          if entry then
+            for loc in pairs(locales) do
+              local name = locales_zones["name_loc0"] -- Only enUS from DBC
+              if name and name ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+                pfDB["zones"][locale] = pfDB["zones"][locale] or {}
+                pfDB["zones"][locale][entry] = sanitize(name)
+              end
+            end
+          end
+        end
+        print("  SUCCESS: Extracted zones locales from DBC tables")
+      else
+        print("  Warning: Failed to query zones locales from DBC tables - run load_dbc.lua first")
+      end
+    else
+      -- Original logic for other cores
       local locales_zones = {}
       local query = mysql:execute('SELECT * FROM pfquest.AreaTable_'..expansion..' ORDER BY id ASC')
       if query then
@@ -2179,8 +2341,6 @@ if config.expansions[expansion_to_process] then
           end
         end
       end
-    else
-      print("  Skipping zones locales (pfquest AreaTable data not available in AzerothCore)")
     end
   end
 
