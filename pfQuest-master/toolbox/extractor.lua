@@ -38,8 +38,9 @@ luasql = require("luasql.mysql")
 -- Simple sanitize function to replace iconv dependency
 function sanitize(text)
   if not text then return "" end
-  -- Remove any problematic characters and ensure clean text
-  return tostring(text):gsub("[\0-\31\127-\255]", ""):gsub("%s+", " "):match("^%s*(.-)%s*$") or ""
+  -- Remove control characters and normalize whitespace
+  local clean = tostring(text):gsub("%c", ""):gsub("%s+", " ")
+  return clean:match("^%s*(.-)%s*$") or ""
 end
 
 -- Function to remove duplicate entries from coordinate arrays
@@ -183,7 +184,7 @@ local config = {
       port = 3306,
     },
     pfquest = {
-      db = "pfquest",
+      db = "acore_world",  -- Use acore_world for DBC tables
       username = "acore",
       password = "acore",
       address = "127.0.0.1",
@@ -223,7 +224,7 @@ local config = {
       client = "3.3.5",
       core = "acore",   -- Use the new AzerothCore config
       name = "Wrath of the Lich King (AzerothCore)",
-      locales = { ["deDE"]=3, ["enUS"]=0, ["frFR"]=2, ["esES"]=6, ["ruRU"]=8 },
+      locales = { ["enUS"]=0 }, -- Only English for testing
       prior = "vanilla", -- WotLK data is diffed against Vanilla
       database = "acore_world", -- Specify the world database name for AzerothCore
     },
@@ -391,7 +392,7 @@ function tblsize(t)
 end
 
 -- limit all sql loops
-local limit = config.debug and 1000 or nil -- Limit to 1000 entries when debug is enabled
+local limit = config.debug and 100 or nil -- Limit to 100 entries when debug is enabled
 function debug(name)
   -- count sql debugs
   if not debugsql[name] then debugsql[name] = {name, 0} end
@@ -424,6 +425,16 @@ local all_locales = {
   ["ruRU"] = 8,
   ["ptBR"] = 10,
 }
+
+-- Convert locale key to AzerothCore locale code
+function GetLocaleCode(locale)
+  return locale or "enUS"
+end
+
+-- Convert locale key to MaNGOS locale number
+function GetLocaleNumber(locale)
+  return all_locales[locale] or 0
+end
 
 local pfDB = {}
 -- Process only the specific expansion defined in config.expansion
@@ -469,9 +480,39 @@ if config.expansions[expansion_to_process] then
       local areatrigger = {}
       local ret = {}
 
-      -- DISABLED: pfquest DBC data not available in AzerothCore
+      -- Enable areatrigger coordinates for AzerothCore
       if core == "acore" then
-        print("  Skipping coordinates for areatrigger " .. id .. " (DBC data missing)")
+        -- AzerothCore with DBC tables (without pfquest prefix)
+        local sql = [[
+          SELECT * FROM AreaTrigger_]]..expansion..[[ LEFT JOIN WorldMapArea_]]..expansion..[[
+          ON ( WorldMapArea_]]..expansion..[[.mapID = AreaTrigger_]]..expansion..[[.MapID
+            AND WorldMapArea_]]..expansion..[[.x_min < AreaTrigger_]]..expansion..[[.X
+            AND WorldMapArea_]]..expansion..[[.x_max > AreaTrigger_]]..expansion..[[.X
+            AND WorldMapArea_]]..expansion..[[.y_min < AreaTrigger_]]..expansion..[[.Y
+            AND WorldMapArea_]]..expansion..[[.y_max > AreaTrigger_]]..expansion..[[.Y
+            AND WorldMapArea_]]..expansion..[[.areatableID > 0)
+          WHERE AreaTrigger_]]..expansion..[[.ID = ]] .. id .. [[ ORDER BY areatableID ]]
+
+        local query = mysql:execute(sql)
+        if query then
+          while query:fetch(areatrigger, "a") do
+            if debug("areatrigger_coords") then break end
+            local zone_id = tonumber(areatrigger.areatableID) or 0
+            local world_x = tonumber(areatrigger.X) or 0
+            local world_y = tonumber(areatrigger.Y) or 0
+
+            if zone_id > 0 then
+              -- Simple coordinate conversion - can be calibrated later
+              local zone_x = math.floor((world_x + 17066) / 340 * 100) / 100
+              local zone_y = math.floor((world_y + 17066) / 340 * 100) / 100
+              zone_x = math.max(0, math.min(100, zone_x))
+              zone_y = math.max(0, math.min(100, zone_y))
+
+              local coord = { zone_x, zone_y, zone_id, 0 }
+              table.insert(ret, coord)
+            end
+          end
+        end
         return ret
       end
 
@@ -653,9 +694,28 @@ if config.expansions[expansion_to_process] then
     pfDB["areatrigger"] = pfDB["areatrigger"] or {}
     pfDB["areatrigger"][data] = {}
 
-    -- DISABLED: pfquest tables not available in AzerothCore
+    -- Enable areatrigger for AzerothCore with DBC tables
     if core == "acore" then
-      print("  Skipping areatrigger extraction (pfquest database not available)")
+      -- Check if DBC table exists
+      local test_query = mysql:execute('SHOW TABLES LIKE "AreaTrigger_wotlk"')
+      if test_query and test_query:fetch() then
+        print("  Found AreaTrigger_wotlk table, extracting areatriggers...")
+        local areatrigger = {}
+        local query = mysql:execute('SELECT * FROM AreaTrigger_' .. expansion .. ' ORDER BY ID')
+        if query then
+          while query:fetch(areatrigger, "a") do
+            if debug("areatrigger") then break end
+            local entry = tonumber(areatrigger.ID)
+            if entry then
+              pfDB["areatrigger"][data][entry] = GetAreaTriggerCoords(entry)
+            end
+          end
+        else
+          print("  Warning: Failed to extract areatriggers")
+        end
+      else
+        print("  Skipping areatrigger extraction (AreaTrigger_wotlk table not found)")
+      end
     else
       -- iterate over all areatriggers
       local areatrigger = {}
@@ -1800,162 +1860,269 @@ if config.expansions[expansion_to_process] then
 
   print("- loading locales...")
   do -- unit locales
-    -- load unit locales
-    local units_loc = {}
-    local locales_creature = {}
-    local creature_loc_pk_col = (core == "acore" and "ID" or "entry") -- AC creature_template_locale uses ID to join with creature_template.entry
-    local creature_template_pk_col = (core == "acore" and "entry" or C.Entry or "entry") -- creature_template PK is 'entry' for AC
+    if core == "acore" then
+      -- AzerothCore uses separate locale records
+      for loc in pairs(locales) do
+        local locales_creature = {}
+        local locale_code = GetLocaleCode(loc)
 
-    local query = mysql:execute('SELECT *, creature_template.'..creature_template_pk_col..' AS _entry FROM creature_template LEFT JOIN ' .. (C.locales_creature or "creature_template_locale") .. ' ON ' .. (C.locales_creature or "creature_template_locale") .. '.' .. creature_loc_pk_col .. ' = creature_template.' .. creature_template_pk_col .. ' GROUP BY creature_template.' .. creature_template_pk_col .. ' ORDER BY creature_template.' .. creature_template_pk_col .. ' ASC')
+        local query = mysql:execute('SELECT creature_template.entry, creature_template.name FROM creature_template ORDER BY creature_template.entry ASC')
 
-    if query then
-      while query:fetch(locales_creature, "a") do
-        if debug("locales_unit") then break end
+        if query then
+          while query:fetch(locales_creature, "a") do
+            if debug("locales_unit") then break end
 
-        local entry = tonumber(locales_creature["_entry"])
-        local name_col_map = (core == "acore" and "name" or C.Name or "name") -- creature_template.name in AC
-        local name  = locales_creature[name_col_map]
+            local entry = tonumber(locales_creature.entry)
+            local name = locales_creature.name
+            local locale_name = locales_creature.locale_name
 
-        if entry then
-          for loc in pairs(locales) do
-            local name_loc_col = (core == "acore" and "Name" or "name_loc") -- AC uses Name (without _locX) in creature_template_locale
-            local name_loc = locales_creature[name_loc_col]
-            if not name_loc or name_loc == "" then name_loc = name or "" end
-            if name_loc and name_loc ~= "" then
-              local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-              pfDB["units"][locale] = pfDB["units"][locale] or { [420] = "Shagu" }
-              pfDB["units"][locale][entry] = sanitize(name_loc)
+            if entry then
+              local final_name = locale_name or name or ""
+              if final_name ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla" and "-" .. expansion or "" )
+                pfDB["units"][locale] = pfDB["units"][locale] or { [420] = "Shagu" }
+                pfDB["units"][locale][entry] = sanitize(final_name)
+              end
             end
           end
+        else
+          print("  Warning: Failed to execute unit locales query for " .. loc)
         end
       end
     else
-      print("  Warning: Failed to execute unit locales query")
+      -- Original MaNGOS logic
+      local locales_creature = {}
+      local creature_loc_pk_col = "entry"
+      local creature_template_pk_col = "entry"
+
+      local query = mysql:execute('SELECT *, creature_template.'..creature_template_pk_col..' AS _entry FROM creature_template LEFT JOIN ' .. (C.locales_creature or "creature_template_locale") .. ' ON ' .. (C.locales_creature or "creature_template_locale") .. '.' .. creature_loc_pk_col .. ' = creature_template.' .. creature_template_pk_col .. ' GROUP BY creature_template.' .. creature_template_pk_col .. ' ORDER BY creature_template.' .. creature_template_pk_col .. ' ASC')
+
+      if query then
+        while query:fetch(locales_creature, "a") do
+          if debug("locales_unit") then break end
+
+          local entry = tonumber(locales_creature["_entry"])
+          local name = locales_creature["name"]
+
+          if entry then
+            for loc in pairs(locales) do
+              local name_loc_col = "name_loc" .. GetLocaleNumber(loc)
+              local name_loc = locales_creature[name_loc_col]
+              if not name_loc or name_loc == "" then name_loc = name or "" end
+              if name_loc and name_loc ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+                pfDB["units"][locale] = pfDB["units"][locale] or { [420] = "Shagu" }
+                pfDB["units"][locale][entry] = sanitize(name_loc)
+              end
+            end
+          end
+        end
+      else
+        print("  Warning: Failed to execute unit locales query")
+      end
     end
   end
 
   do -- objects locales
-    local locales_gameobject = {}
-    local go_loc_pk_col = (core == "acore" and "entry" or "entry") -- gameobject_template_locale uses entry from gameobject_template
-    local go_template_pk_col = (core == "acore" and "entry" or "entry") -- gameobject_template PK
+    if core == "acore" then
+      -- AzerothCore uses separate locale records
+      for loc in pairs(locales) do
+        local locales_gameobject = {}
+        local locale_code = GetLocaleCode(loc)
 
-    local query = mysql:execute('SELECT *, gameobject_template.'..go_template_pk_col..' AS _entry FROM gameobject_template LEFT JOIN ' .. (C.locales_gameobject or "gameobject_template_locale") .. ' ON ' .. (C.locales_gameobject or "gameobject_template_locale") .. '.' .. go_loc_pk_col .. ' = gameobject_template.' .. go_template_pk_col .. ' GROUP BY gameobject_template.' .. go_template_pk_col .. ' ORDER BY gameobject_template.' .. go_template_pk_col .. ' ASC')
+        local query = mysql:execute('SELECT gameobject_template.entry, gameobject_template.name, gameobject_template_locale.name AS locale_name FROM gameobject_template LEFT JOIN gameobject_template_locale ON gameobject_template_locale.ID = gameobject_template.entry AND gameobject_template_locale.locale = \'' .. locale_code .. '\' ORDER BY gameobject_template.entry ASC')
 
-    if query then
-      while query:fetch(locales_gameobject, "a") do
-        if debug("locales_object") then break end
+        if query then
+          while query:fetch(locales_gameobject, "a") do
+            if debug("locales_object") then break end
 
-        local entry = tonumber(locales_gameobject["_entry"])
-        local name_col_map = (core == "acore" and "name" or "name") -- gameobject_template.name
-        local name  = locales_gameobject[name_col_map]
+            local entry = tonumber(locales_gameobject.entry)
+            local name = locales_gameobject.name
+            local locale_name = locales_gameobject.locale_name
 
-
-        if entry then
-          for loc in pairs(locales) do
-            local name_loc_col = (core == "acore" and "name" or "name_loc") -- AC uses name (without _locX) in gameobject_template_locale
-            local name_loc = locales_gameobject[name_loc_col]
-            if not name_loc or name_loc == "" then name_loc = name or "" end
-            if name_loc and name_loc ~= "" then
-              local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-              pfDB["objects"][locale] = pfDB["objects"][locale] or {}
-              pfDB["objects"][locale][entry] = sanitize(name_loc)
+            if entry then
+              local final_name = locale_name or name or ""
+              if final_name ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla" and "-" .. expansion or "" )
+                pfDB["objects"][locale] = pfDB["objects"][locale] or {}
+                pfDB["objects"][locale][entry] = sanitize(final_name)
+              end
             end
           end
+        else
+          print("  Warning: Failed to execute objects locales query for " .. loc)
         end
       end
     else
-      print("  Warning: Failed to execute objects locales query")
+      -- Original MaNGOS logic
+      local locales_gameobject = {}
+      local go_loc_pk_col = "entry"
+      local go_template_pk_col = "entry"
+
+      local query = mysql:execute('SELECT *, gameobject_template.'..go_template_pk_col..' AS _entry FROM gameobject_template LEFT JOIN ' .. (C.locales_gameobject or "gameobject_template_locale") .. ' ON ' .. (C.locales_gameobject or "gameobject_template_locale") .. '.' .. go_loc_pk_col .. ' = gameobject_template.' .. go_template_pk_col .. ' GROUP BY gameobject_template.' .. go_template_pk_col .. ' ORDER BY gameobject_template.' .. go_template_pk_col .. ' ASC')
+
+      if query then
+        while query:fetch(locales_gameobject, "a") do
+          if debug("locales_object") then break end
+
+          local entry = tonumber(locales_gameobject["_entry"])
+          local name = locales_gameobject["name"]
+
+          if entry then
+            for loc in pairs(locales) do
+              local name_loc_col = "name_loc" .. GetLocaleNumber(loc)
+              local name_loc = locales_gameobject[name_loc_col]
+              if not name_loc or name_loc == "" then name_loc = name or "" end
+              if name_loc and name_loc ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+                pfDB["objects"][locale] = pfDB["objects"][locale] or {}
+                pfDB["objects"][locale][entry] = sanitize(name_loc)
+              end
+            end
+          end
+        end
+      else
+        print("  Warning: Failed to execute objects locales query")
+      end
     end
   end
 
   do -- items locales
-    local items_loc = {}
-    local locales_item = {}
-    local item_loc_pk_col = (core == "acore" and "ID" or "entry") -- item_template_locale uses ID from item_template
-    local item_template_pk_col = (core == "acore" and "entry" or "entry") -- item_template PK
+    if core == "acore" then
+      -- AzerothCore uses separate locale records
+      for loc in pairs(locales) do
+        local locales_item = {}
+        local locale_code = GetLocaleCode(loc)
 
-    local query = mysql:execute('SELECT *, item_template.'..item_template_pk_col..' AS _entry FROM item_template LEFT JOIN ' .. (C.locales_item or "item_template_locale") .. ' ON ' .. (C.locales_item or "item_template_locale") .. '.' .. item_loc_pk_col .. ' = item_template.' .. item_template_pk_col .. ' GROUP BY item_template.' .. item_template_pk_col .. ' ORDER BY item_template.' .. item_template_pk_col .. ' ASC')
+        local query = mysql:execute('SELECT item_template.entry, item_template.name, item_template_locale.Name AS locale_name FROM item_template LEFT JOIN item_template_locale ON item_template_locale.ID = item_template.entry AND item_template_locale.locale = \'' .. locale_code .. '\' ORDER BY item_template.entry ASC')
 
-    if query then
-      while query:fetch(locales_item, "a") do
-        if debug("locales_item") then break end
+        if query then
+          while query:fetch(locales_item, "a") do
+            if debug("locales_item") then break end
 
-        local entry = tonumber(locales_item["_entry"])
-        local name_col_map = (core == "acore" and "name" or "name") -- item_template.name
-        local name  = locales_item[name_col_map]
+            local entry = tonumber(locales_item.entry)
+            local name = locales_item.name
+            local locale_name = locales_item.locale_name
 
-        if entry then
-          for loc in pairs(locales) do
-            local name_loc_col = (core == "acore" and "Name" or "name_loc") -- AC uses Name (without _locX) in item_template_locale
-            local name_loc = locales_item[name_loc_col]
-            if not name_loc or name_loc == "" then name_loc = name or "" end
-            if name_loc and name_loc ~= "" then
-              local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-              pfDB["items"][locale] = pfDB["items"][locale] or {}
-              pfDB["items"][locale][entry] = sanitize(name_loc)
+            if entry then
+              local final_name = locale_name or name or ""
+              if final_name ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla" and "-" .. expansion or "" )
+                pfDB["items"][locale] = pfDB["items"][locale] or {}
+                pfDB["items"][locale][entry] = sanitize(final_name)
+              end
             end
           end
+        else
+          print("  Warning: Failed to execute items locales query for " .. loc)
         end
       end
     else
-      print("  Warning: Failed to execute items locales query")
+      -- Original MaNGOS logic
+      local locales_item = {}
+      local item_loc_pk_col = "entry"
+      local item_template_pk_col = "entry"
+
+      local query = mysql:execute('SELECT *, item_template.'..item_template_pk_col..' AS _entry FROM item_template LEFT JOIN ' .. (C.locales_item or "item_template_locale") .. ' ON ' .. (C.locales_item or "item_template_locale") .. '.' .. item_loc_pk_col .. ' = item_template.' .. item_template_pk_col .. ' GROUP BY item_template.' .. item_template_pk_col .. ' ORDER BY item_template.' .. item_template_pk_col .. ' ASC')
+
+      if query then
+        while query:fetch(locales_item, "a") do
+          if debug("locales_item") then break end
+
+          local entry = tonumber(locales_item["_entry"])
+          local name = locales_item["name"]
+
+          if entry then
+            for loc in pairs(locales) do
+              local name_loc_col = "name_loc" .. GetLocaleNumber(loc)
+              local name_loc = locales_item[name_loc_col]
+              if not name_loc or name_loc == "" then name_loc = name or "" end
+              if name_loc and name_loc ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+                pfDB["items"][locale] = pfDB["items"][locale] or {}
+                pfDB["items"][locale][entry] = sanitize(name_loc)
+              end
+            end
+          end
+        end
+      else
+        print("  Warning: Failed to execute items locales query")
+      end
     end
   end
 
   do -- quests locales
-    local locales_quest = {}
-    local quest_loc_pk_col = (core == "acore" and "ID" or "entry") -- quest_template_locale uses ID from quest_template
-    local quest_template_pk_col = (core == "acore" and "ID" or "entry") -- quest_template PK is ID for AC
+    if core == "acore" then
+      -- AzerothCore uses separate locale records
+      for loc in pairs(locales) do
+        local locales_quest = {}
+        local locale_code = GetLocaleCode(loc)
 
-    local query = mysql:execute('SELECT *, quest_template.'..quest_template_pk_col..' AS _entry FROM quest_template LEFT JOIN ' .. (C.locales_quest or "quest_template_locale") .. ' ON ' .. (C.locales_quest or "quest_template_locale") ..'.' .. quest_loc_pk_col .. ' = quest_template.' .. quest_template_pk_col .. ' GROUP BY quest_template.' .. quest_template_pk_col .. ' ORDER BY quest_template.' .. quest_template_pk_col .. ' ASC')
+        local query = mysql:execute('SELECT quest_template.ID, quest_template.LogTitle, quest_template.QuestDescription, quest_template.LogDescription, quest_template_locale.Title AS locale_title, quest_template_locale.Details AS locale_details, quest_template_locale.Objectives AS locale_objectives FROM quest_template LEFT JOIN quest_template_locale ON quest_template_locale.ID = quest_template.ID AND quest_template_locale.locale = \'' .. locale_code .. '\' ORDER BY quest_template.ID ASC')
 
-    if query then
-      while query:fetch(locales_quest, "a") do
-        if debug("locales_quest") then break end
+        if query then
+          while query:fetch(locales_quest, "a") do
+            if debug("locales_quest") then break end
 
-        for loc in pairs(locales) do
-          local entry = tonumber(locales_quest["_entry"])
+            local entry = tonumber(locales_quest.ID)
 
-          if entry then
-            local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-            pfDB["quests"][locale] = pfDB["quests"][locale] or {}
+            if entry then
+              local locale = loc .. ( expansion ~= "vanilla" and "-" .. expansion or "" )
+              pfDB["quests"][locale] = pfDB["quests"][locale] or {}
 
-            -- AC quest_template_locale uses Title, Details, Objectives, EndText, etc.
-            -- The script here uses Title_locX, Details_locX, Objectives_locX. This needs alignment.
-            -- AzerothCore quest_template_locale has: Title, Details, Objectives, OfferRewardText, RequestItemsText, EndText, CompletedText, ObjectiveText1-4, etc. (without _locX suffix in the locale table itself)
-            -- The fallback logic below already handles if Title_locX is not found, it uses locales_quest.Title (which would be from quest_template)
-            -- For AC, we want to directly use Title from quest_template_locale if available for the current locale, or fallback to quest_template.LogTitle
-            local title_loc, details_loc, objectives_loc
+              local title = locales_quest.locale_title or locales_quest.LogTitle or ""
+              local details = locales_quest.locale_details or locales_quest.QuestDescription or ""
+              local objectives = locales_quest.locale_objectives or locales_quest.LogDescription or ""
 
-            if core == "acore" then
-              title_loc = locales_quest["Title"] -- From quest_template_locale joined table
-              details_loc = locales_quest["Details"]
-              objectives_loc = locales_quest["Objectives"]
-              -- Fallback to base quest_template text if locale specific is empty
-              if not title_loc or title_loc == "" then title_loc = locales_quest["LogTitle"] or "" end -- LogTitle from quest_template
-              if not details_loc or details_loc == "" then details_loc = locales_quest["QuestDescription"] or "" end -- QuestDescription from quest_template
-              if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest["LogDescription"] or "" end -- LogDescription from quest_template (summary of objectives)
-            else
-              title_loc = locales_quest["Title_loc" .. locales[loc]]
-              details_loc = locales_quest["Details_loc" .. locales[loc]]
-              objectives_loc = locales_quest["Objectives_loc" .. locales[loc]]
-              -- fallback to enUS titles (Original script logic)
-              if not title_loc or title_loc == "" then title_loc = locales_quest.Title or "" end
-              if not details_loc or details_loc == "" then details_loc = locales_quest.Details or "" end
-              if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest.Objectives or "" end
+              pfDB["quests"][locale][entry] = {
+                ["T"] = sanitize(title),
+                ["O"] = sanitize(objectives),
+                ["D"] = sanitize(details)
+              }
             end
-
-
-            pfDB["quests"][locale][entry] = {
-              ["T"] = sanitize(title_loc),
-              ["O"] = sanitize(objectives_loc),
-              ["D"] = sanitize(details_loc)
-            }
           end
+        else
+          print("  Warning: Failed to execute quests locales query for " .. loc)
         end
       end
     else
-      print("  Warning: Failed to execute quests locales query")
+      -- Original MaNGOS logic
+      local locales_quest = {}
+      local quest_loc_pk_col = "entry"
+      local quest_template_pk_col = "entry"
+
+      local query = mysql:execute('SELECT *, quest_template.'..quest_template_pk_col..' AS _entry FROM quest_template LEFT JOIN ' .. (C.locales_quest or "quest_template_locale") .. ' ON ' .. (C.locales_quest or "quest_template_locale") ..'.' .. quest_loc_pk_col .. ' = quest_template.' .. quest_template_pk_col .. ' GROUP BY quest_template.' .. quest_template_pk_col .. ' ORDER BY quest_template.' .. quest_template_pk_col .. ' ASC')
+
+      if query then
+        while query:fetch(locales_quest, "a") do
+          if debug("locales_quest") then break end
+
+          for loc in pairs(locales) do
+            local entry = tonumber(locales_quest["_entry"])
+
+            if entry then
+              local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+              pfDB["quests"][locale] = pfDB["quests"][locale] or {}
+
+              local title_loc = locales_quest["Title_loc" .. locales[loc]]
+              local details_loc = locales_quest["Details_loc" .. locales[loc]]
+              local objectives_loc = locales_quest["Objectives_loc" .. locales[loc]]
+
+              if not title_loc or title_loc == "" then title_loc = locales_quest.Title or "" end
+              if not details_loc or details_loc == "" then details_loc = locales_quest.Details or "" end
+              if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest.Objectives or "" end
+
+              pfDB["quests"][locale][entry] = {
+                ["T"] = sanitize(title_loc),
+                ["O"] = sanitize(objectives_loc),
+                ["D"] = sanitize(details_loc)
+              }
+            end
+          end
+        end
+      else
+        print("  Warning: Failed to execute quests locales query")
+      end
     end
   end
 
