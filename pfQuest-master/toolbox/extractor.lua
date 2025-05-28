@@ -60,10 +60,120 @@ function removedupes(coords)
   return result
 end
 
+-- Round function for floating point numbers
+function round(num, decimals)
+  local mult = 10^(decimals or 0)
+  return math.floor(num * mult + 0.5) / mult
+end
+
+-- Serialize function to write Lua data to files
+function serialize(filename, varname, data, indent, raw)
+  indent = indent or 0
+  if not data then return end
+
+  local file = io.open(filename, "w")
+  if not file then
+    print("Error: Cannot open file " .. filename .. " for writing")
+    return
+  end
+
+  if raw then
+    file:write(varname .. " = " .. tostring(data) .. "\n")
+  else
+    file:write(varname .. " = ")
+    serialize_value(file, data, indent)
+    file:write("\n")
+  end
+
+  file:close()
+end
+
+-- Helper function for serialize
+function serialize_value(file, value, indent)
+  local t = type(value)
+  indent = indent or 0
+
+  if t == "table" then
+    file:write("{\n")
+    local keys = {}
+    for k in pairs(value) do
+      table.insert(keys, k)
+    end
+    table.sort(keys, function(a, b)
+      local ta, tb = type(a), type(b)
+      if ta == tb then
+        return tostring(a) < tostring(b)
+      else
+        return ta < tb
+      end
+    end)
+
+    for _, k in ipairs(keys) do
+      local v = value[k]
+      for i = 1, indent + 1 do file:write("  ") end
+
+      if type(k) == "string" and k:match("^[%a_][%w_]*$") then
+        file:write(k)
+      else
+        file:write("[")
+        serialize_value(file, k, indent + 1)
+        file:write("]")
+      end
+
+      file:write(" = ")
+      serialize_value(file, v, indent + 1)
+      file:write(",\n")
+    end
+
+    for i = 1, indent do file:write("  ") end
+    file:write("}")
+  elseif t == "string" then
+    file:write(string.format("%q", value))
+  elseif t == "number" or t == "boolean" then
+    file:write(tostring(value))
+  else
+    file:write("nil")
+  end
+end
+
+-- Table subtraction function
+function tablesubstract(t1, t2)
+  if not t1 or not t2 then return t1 or {} end
+  local result = {}
+  for k, v in pairs(t1) do
+    if not t2[k] or (type(v) == "table" and type(t2[k]) == "table") then
+      if type(v) == "table" and type(t2[k]) == "table" then
+        local sub = tablesubstract(v, t2[k])
+        if next(sub) then
+          result[k] = sub
+        end
+      elseif not t2[k] then
+        result[k] = v
+      end
+    elseif v ~= t2[k] then
+      result[k] = v
+    end
+  end
+  return result
+end
+
+-- Map validation function (placeholder)
+function isValidMap(zone, x, y, expansion)
+  -- Basic validation - always return true for now
+  return zone and x and y and x >= 0 and x <= 100 and y >= 0 and y <= 100
+end
+
+-- Cross-platform directory creation
+function mkdir(path)
+  local isWindows = package.config:sub(1,1) == '\\'
+  local cmd = isWindows and ("mkdir \"" .. path:gsub("/", "\\") .. "\" 2>nul") or ("mkdir -p \"" .. path .. "\"")
+  os.execute(cmd)
+end
+
 -- begin of configuration
 local config = {
   output = "../db/", -- output folder for database files
-  debug = false,      -- true if script should only import first 1000 entries
+  debug = true,      -- true if script should only import first 1000 entries
 
   mysql = {           -- database settings
     live = {
@@ -281,11 +391,11 @@ function tblsize(t)
 end
 
 -- limit all sql loops
-local limit = nil
+local limit = config.debug and 1000 or nil -- Limit to 1000 entries when debug is enabled
 function debug(name)
   -- count sql debugs
   if not debugsql[name] then debugsql[name] = {name, 0} end
-  debugsql[name][2] = debugsql[name][2] + 1
+  debugsql[name][2] = (debugsql[name][2] or 0) + 1
 
   -- abort here when no debug limit is set
   if not limit then return nil end
@@ -316,7 +426,11 @@ local all_locales = {
 }
 
 local pfDB = {}
-for id, settings in pairs(config.expansions) do
+-- Process only the specific expansion defined in config.expansion
+local expansion_to_process = config.expansion or "wotlk_ac"
+if config.expansions[expansion_to_process] then
+  local id = expansion_to_process
+  local settings = config.expansions[id]
   print("Extracting: " .. settings.name)
 
   local expansion = settings.version
@@ -442,21 +556,94 @@ for id, settings in pairs(config.expansions) do
     end
 
     function GetCreatureCoords(id)
-      -- DISABLED: DBC data not available in AzerothCore
+      local ret = {}
+
       if core == "acore" then
+        -- For AzerothCore, get coordinates from creature table
+        local creature_coords = {}
+        local query = mysql:execute([[
+          SELECT creature.position_x, creature.position_y, creature.map, creature.zoneId, creature.areaId
+          FROM creature
+          WHERE creature.id1 = ]] .. id .. [[
+          LIMIT 50
+        ]])
+
+        if query then
+          while query:fetch(creature_coords, "a") do
+            if debug("creature_coords") then break end
+
+            local x = tonumber(creature_coords.position_x)
+            local y = tonumber(creature_coords.position_y)
+            local map_id = tonumber(creature_coords.map)
+            local zone_id = tonumber(creature_coords.zoneId)
+            local area_id = tonumber(creature_coords.areaId)
+
+            if x and y and zone_id and zone_id > 0 then
+              -- Convert world coordinates to zone percentage (simplified)
+              -- This is a basic conversion - you might need to adjust based on your zone data
+              local zone_x = math.floor((x + 17066) / 340 * 100) / 100
+              local zone_y = math.floor((y + 17066) / 340 * 100) / 100
+
+              -- Clamp to 0-100 range
+              zone_x = math.max(0, math.min(100, zone_x))
+              zone_y = math.max(0, math.min(100, zone_y))
+
+              local coord = { zone_x, zone_y, zone_id, 0 }
+              table.insert(ret, coord)
+            end
+          end
+        end
+
+        return ret
+      else
+        -- Original function code for other cores would go here
         return {}
       end
-      -- Original function code would go here for other cores
-      return {}
     end
 
     function GetGameObjectCoords(id)
-      -- DISABLED: DBC data not available in AzerothCore
+      local ret = {}
+
       if core == "acore" then
+        -- For AzerothCore, get coordinates from gameobject table
+        local object_coords = {}
+        local query = mysql:execute([[
+          SELECT gameobject.position_x, gameobject.position_y, gameobject.map, gameobject.zoneId, gameobject.areaId
+          FROM gameobject
+          WHERE gameobject.id = ]] .. id .. [[
+          LIMIT 50
+        ]])
+
+        if query then
+          while query:fetch(object_coords, "a") do
+            if debug("object_coords") then break end
+
+            local x = tonumber(object_coords.position_x)
+            local y = tonumber(object_coords.position_y)
+            local map_id = tonumber(object_coords.map)
+            local zone_id = tonumber(object_coords.zoneId)
+            local area_id = tonumber(object_coords.areaId)
+
+            if x and y and zone_id and zone_id > 0 then
+              -- Convert world coordinates to zone percentage (simplified)
+              local zone_x = math.floor((x + 17066) / 340 * 100) / 100
+              local zone_y = math.floor((y + 17066) / 340 * 100) / 100
+
+              -- Clamp to 0-100 range
+              zone_x = math.max(0, math.min(100, zone_x))
+              zone_y = math.max(0, math.min(100, zone_y))
+
+              local coord = { zone_x, zone_y, zone_id, 0 }
+              table.insert(ret, coord)
+            end
+          end
+        end
+
+        return ret
+      else
+        -- Original function code for other cores would go here
         return {}
       end
-      -- Original function code would go here for other cores
-      return {}
     end
   end
 
@@ -493,7 +680,7 @@ for id, settings in pairs(config.expansions) do
         do -- coordinates
           pfDB["areatrigger"][data][entry]["coords"] = {}
           for id, coords in pairs(GetAreaTriggerCoords(entry)) do
-            local x, y, zone, respawn = table.unpack(coords)
+            local x, y, zone, respawn = unpack(coords)
             table.insert(pfDB["areatrigger"][data][entry]["coords"], { x, y, zone, respawn })
           end
         end
@@ -565,14 +752,14 @@ for id, settings in pairs(config.expansions) do
         pfDB["units"][data][entry]["coords"] = {}
 
         for id, coords in pairs(GetCreatureCoords(entry)) do
-          local x, y, zone, respawn = table.unpack(coords)
+          local x, y, zone, respawn = unpack(coords)
           if debug("units_coords") then break end
           table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
         end
 
         if core ~= "vmangos" then
           for id, coords in pairs(GetCreatureCoordsPool(entry)) do
-            local x, y, zone, respawn = table.unpack(coords)
+            local x, y, zone, respawn = unpack(coords)
             if debug("units_coords_pool") then break end
             table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
           end
@@ -653,7 +840,7 @@ for id, settings in pairs(config.expansions) do
 
             if map then -- in case we found a map, add the coordinates
               for id, coords in pairs(GetCustomCoords(map, x, y)) do
-                local x, y, zone, respawn = table.unpack(coords)
+                local x, y, zone, respawn = unpack(coords)
                 table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
               end
             end
@@ -683,7 +870,7 @@ for id, settings in pairs(config.expansions) do
           while query:fetch(creature_ai_scripts, "a") do
             if debug("units_summon_fixed") then break end
             for id, coords in pairs(GetCustomCoords(tonumber(creature_ai_scripts.map), tonumber(creature_ai_scripts.x), tonumber(creature_ai_scripts.y))) do
-              local x, y, zone, respawn = table.unpack(coords)
+              local x, y, zone, respawn = unpack(coords)
               table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
             end
           end
@@ -707,13 +894,13 @@ for id, settings in pairs(config.expansions) do
           while query:fetch(creature_ai_scripts, "a") do
             if debug("units_summon_unknown") then break end
             for id, coords in pairs(GetCreatureCoords(tonumber(creature_ai_scripts.summoner))) do
-              local x, y, zone, respawn = table.unpack(coords)
+              local x, y, zone, respawn = unpack(coords)
               table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
             end
 
             if core ~= "vmangos" then
               for id, coords in pairs(GetCreatureCoordsPool(tonumber(creature_ai_scripts.summoner))) do
-                local x, y, zone, respawn = table.unpack(coords)
+                local x, y, zone, respawn = unpack(coords)
                 table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
               end
             end
@@ -782,7 +969,7 @@ for id, settings in pairs(config.expansions) do
 
         for id,coords in pairs(GetGameObjectCoords(entry)) do
           if debug("objects_coords") then break end
-          local x, y, zone, respawn = table.unpack(coords)
+          local x, y, zone, respawn = unpack(coords)
           table.insert(pfDB["objects"][data][entry]["coords"], { x, y, zone, respawn })
         end
       end
@@ -1514,57 +1701,99 @@ for id, settings in pairs(config.expansions) do
     do -- flightmasters
       local mask = core == "vmangos" and 8 or 8192
       local creature_template = {}
-      local query = mysql:execute([[
-        SELECT Entry, A, H FROM `creature_template`, `pfquest`.FactionTemplate_]]..expansion..[[
-        WHERE pfquest.FactionTemplate_]]..expansion..[[.factiontemplateID = creature_template.]] .. C.Faction .. [[
-        AND ( ]] .. C.NpcFlags .. [[ & ]]..mask..[[) > 1
-      ]])
 
-      while query:fetch(creature_template, "a") do
-        if debug("meta_taxi") then break end
-        local fac = ""
-        local entry = tonumber(creature_template.Entry)
-        local A = tonumber(creature_template.A)
-        local H = tonumber(creature_template.H)
-        if A >= 0 then fac = fac .. "A" end
-        if H >= 0 then fac = fac .. "H" end
-        pfDB["meta"..exp]["flight"][entry] = fac
+      if core == "acore" then
+        -- For AzerothCore, get flightmasters without faction detection
+        local npcflag_field = C.NpcFlags or "npcflag"
+        local entry_field = C.Entry or "entry"
+        local query = mysql:execute([[
+          SELECT ]] .. entry_field .. [[ FROM `creature_template`
+          WHERE ( ]] .. npcflag_field .. [[ & ]]..mask..[[) > 0
+        ]])
+
+        if query then
+          while query:fetch(creature_template, "a") do
+            if debug("meta_taxi") then break end
+            local entry = tonumber(creature_template[entry_field])
+            if entry then
+              pfDB["meta"..exp]["flight"][entry] = "AH" -- Default to both factions for AC
+            end
+          end
+        else
+          print("  Warning: Failed to execute flightmasters query")
+        end
+      else
+        -- Original logic for other cores
+        local query = mysql:execute([[
+          SELECT Entry, A, H FROM `creature_template`, `pfquest`.FactionTemplate_]]..expansion..[[
+          WHERE pfquest.FactionTemplate_]]..expansion..[[.factiontemplateID = creature_template.]] .. C.Faction .. [[
+          AND ( ]] .. C.NpcFlags .. [[ & ]]..mask..[[) > 1
+        ]])
+
+        if query then
+          while query:fetch(creature_template, "a") do
+            if debug("meta_taxi") then break end
+            local fac = ""
+            local entry = tonumber(creature_template.Entry)
+            local A = tonumber(creature_template.A)
+            local H = tonumber(creature_template.H)
+            if A >= 0 then fac = fac .. "A" end
+            if H >= 0 then fac = fac .. "H" end
+            pfDB["meta"..exp]["flight"][entry] = fac
+          end
+        end
       end
     end
 
     do -- raremobs
       local creature_template = {}
+      local rank_field = C.Rank or "rank"
       local query = mysql:execute([[
-        SELECT * FROM `creature_template` WHERE ]] .. C.Rank .. [[ = 4 OR ]] .. C.Rank .. [[ = 2
+        SELECT * FROM `creature_template` WHERE ]] .. rank_field .. [[ = 4 OR ]] .. rank_field .. [[ = 2
       ]])
 
-      while query:fetch(creature_template, "a") do
-        if debug("meta_rares") then break end
-        local entry = tonumber(creature_template[C.Entry])
-        local level = tonumber(creature_template[C.MinLevel])
-        pfDB["meta"..exp].rares[entry] = level
+      if query then
+        while query:fetch(creature_template, "a") do
+          if debug("meta_rares") then break end
+          local entry_field = C.Entry or "entry"
+          local minlevel_field = C.MinLevel or "minlevel"
+          local entry = tonumber(creature_template[entry_field])
+          local level = tonumber(creature_template[minlevel_field])
+          if entry and level then
+            pfDB["meta"..exp].rares[entry] = level
+          end
+        end
+      else
+        print("  Warning: Failed to execute raremobs query")
       end
     end
 
     do -- gameobject relations
-      local gameobject_template = {}
-      local query = mysql:execute([[
-        SELECT * FROM `gameobject_template`, pfquest.Lock_]]..expansion..[[
-        WHERE `type` = 3 AND `locktype` = 2 AND `flags` = 0 AND `data1` > 0 and id = data0 GROUP BY `gameobject_template`.entry ORDER BY `gameobject_template`.entry ASC
-      ]])
+      -- DISABLED: This section requires pfquest.Lock data which is not available in AzerothCore
+      if core ~= "acore" then
+        local gameobject_template = {}
+        local query = mysql:execute([[
+          SELECT * FROM `gameobject_template`, pfquest.Lock_]]..expansion..[[
+          WHERE `type` = 3 AND `locktype` = 2 AND `flags` = 0 AND `data1` > 0 and id = data0 GROUP BY `gameobject_template`.entry ORDER BY `gameobject_template`.entry ASC
+        ]])
 
-      while query:fetch(gameobject_template, "a") do
-        if debug("meta_farm") then break end
-        local entry   = tonumber(gameobject_template.entry) * -1
-        local data = tonumber(gameobject_template.data)
-        local skill = tonumber(gameobject_template.skill)
-        if data == 1 then
-          pfDB["meta"..exp]["chests"][entry] = skill
-        elseif data == 2 then
-          pfDB["meta"..exp]["herbs"][entry] = skill
-        elseif data == 3 then
-          pfDB["meta"..exp]["mines"][entry] = skill
+        if query then
+          while query:fetch(gameobject_template, "a") do
+            if debug("meta_farm") then break end
+            local entry   = tonumber(gameobject_template.entry) * -1
+            local data = tonumber(gameobject_template.data)
+            local skill = tonumber(gameobject_template.skill)
+            if data == 1 then
+              pfDB["meta"..exp]["chests"][entry] = skill
+            elseif data == 2 then
+              pfDB["meta"..exp]["herbs"][entry] = skill
+            elseif data == 3 then
+              pfDB["meta"..exp]["mines"][entry] = skill
+            end
+          end
         end
+      else
+        print("  Skipping gameobject relations (pfquest Lock data not available in AzerothCore)")
       end
     end
   end
@@ -1574,29 +1803,34 @@ for id, settings in pairs(config.expansions) do
     -- load unit locales
     local units_loc = {}
     local locales_creature = {}
-    local creature_loc_pk_col = (core == "acore" and "ID" or "entry") -- AC creature_template_locale uses ID from creature_template
-    local creature_template_pk_col = (core == "acore" and "ID" or C.Entry or "entry") -- creature_template PK
+    local creature_loc_pk_col = (core == "acore" and "ID" or "entry") -- AC creature_template_locale uses ID to join with creature_template.entry
+    local creature_template_pk_col = (core == "acore" and "entry" or C.Entry or "entry") -- creature_template PK is 'entry' for AC
 
     local query = mysql:execute('SELECT *, creature_template.'..creature_template_pk_col..' AS _entry FROM creature_template LEFT JOIN ' .. (C.locales_creature or "creature_template_locale") .. ' ON ' .. (C.locales_creature or "creature_template_locale") .. '.' .. creature_loc_pk_col .. ' = creature_template.' .. creature_template_pk_col .. ' GROUP BY creature_template.' .. creature_template_pk_col .. ' ORDER BY creature_template.' .. creature_template_pk_col .. ' ASC')
-    while query:fetch(locales_creature, "a") do
-      if debug("locales_unit") then break end
 
-      local entry = tonumber(locales_creature["_entry"])
-      local name_col_map = (core == "acore" and "Name" or C.Name or "name") -- creature_template.Name / creature_template.name
-      local name  = locales_creature[name_col_map]
+    if query then
+      while query:fetch(locales_creature, "a") do
+        if debug("locales_unit") then break end
 
-      if entry then
-        for loc in pairs(locales) do
-          local name_loc_col = (core == "acore" and "Name_loc" or "name_loc") -- AC uses Name_locX for creature_template_locale
-          local name_loc = locales_creature[name_loc_col .. locales[loc]]
-          if not name_loc or name_loc == "" then name_loc = name or "" end
-          if name_loc and name_loc ~= "" then
-            local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-            pfDB["units"][locale] = pfDB["units"][locale] or { [420] = "Shagu" }
-            pfDB["units"][locale][entry] = sanitize(name_loc)
+        local entry = tonumber(locales_creature["_entry"])
+        local name_col_map = (core == "acore" and "name" or C.Name or "name") -- creature_template.name in AC
+        local name  = locales_creature[name_col_map]
+
+        if entry then
+          for loc in pairs(locales) do
+            local name_loc_col = (core == "acore" and "Name" or "name_loc") -- AC uses Name (without _locX) in creature_template_locale
+            local name_loc = locales_creature[name_loc_col]
+            if not name_loc or name_loc == "" then name_loc = name or "" end
+            if name_loc and name_loc ~= "" then
+              local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+              pfDB["units"][locale] = pfDB["units"][locale] or { [420] = "Shagu" }
+              pfDB["units"][locale][entry] = sanitize(name_loc)
+            end
           end
         end
       end
+    else
+      print("  Warning: Failed to execute unit locales query")
     end
   end
 
@@ -1606,26 +1840,31 @@ for id, settings in pairs(config.expansions) do
     local go_template_pk_col = (core == "acore" and "entry" or "entry") -- gameobject_template PK
 
     local query = mysql:execute('SELECT *, gameobject_template.'..go_template_pk_col..' AS _entry FROM gameobject_template LEFT JOIN ' .. (C.locales_gameobject or "gameobject_template_locale") .. ' ON ' .. (C.locales_gameobject or "gameobject_template_locale") .. '.' .. go_loc_pk_col .. ' = gameobject_template.' .. go_template_pk_col .. ' GROUP BY gameobject_template.' .. go_template_pk_col .. ' ORDER BY gameobject_template.' .. go_template_pk_col .. ' ASC')
-    while query:fetch(locales_gameobject, "a") do
-      if debug("locales_object") then break end
 
-      local entry = tonumber(locales_gameobject["_entry"])
-      local name_col_map = (core == "acore" and "name" or "name") -- gameobject_template.name
-      local name  = locales_gameobject[name_col_map]
+    if query then
+      while query:fetch(locales_gameobject, "a") do
+        if debug("locales_object") then break end
+
+        local entry = tonumber(locales_gameobject["_entry"])
+        local name_col_map = (core == "acore" and "name" or "name") -- gameobject_template.name
+        local name  = locales_gameobject[name_col_map]
 
 
-      if entry then
-        for loc in pairs(locales) do
-          local name_loc_col = (core == "acore" and "name_loc" or "name_loc") -- AC uses name_locX for gameobject_template_locale
-          local name_loc = locales_gameobject[name_loc_col .. locales[loc]]
-          if not name_loc or name_loc == "" then name_loc = name or "" end
-          if name_loc and name_loc ~= "" then
-            local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-            pfDB["objects"][locale] = pfDB["objects"][locale] or {}
-            pfDB["objects"][locale][entry] = sanitize(name_loc)
+        if entry then
+          for loc in pairs(locales) do
+            local name_loc_col = (core == "acore" and "name" or "name_loc") -- AC uses name (without _locX) in gameobject_template_locale
+            local name_loc = locales_gameobject[name_loc_col]
+            if not name_loc or name_loc == "" then name_loc = name or "" end
+            if name_loc and name_loc ~= "" then
+              local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+              pfDB["objects"][locale] = pfDB["objects"][locale] or {}
+              pfDB["objects"][locale][entry] = sanitize(name_loc)
+            end
           end
         end
       end
+    else
+      print("  Warning: Failed to execute objects locales query")
     end
   end
 
@@ -1636,120 +1875,145 @@ for id, settings in pairs(config.expansions) do
     local item_template_pk_col = (core == "acore" and "entry" or "entry") -- item_template PK
 
     local query = mysql:execute('SELECT *, item_template.'..item_template_pk_col..' AS _entry FROM item_template LEFT JOIN ' .. (C.locales_item or "item_template_locale") .. ' ON ' .. (C.locales_item or "item_template_locale") .. '.' .. item_loc_pk_col .. ' = item_template.' .. item_template_pk_col .. ' GROUP BY item_template.' .. item_template_pk_col .. ' ORDER BY item_template.' .. item_template_pk_col .. ' ASC')
-    while query:fetch(locales_item, "a") do
-      if debug("locales_item") then break end
 
-      local entry = tonumber(locales_item["_entry"])
-      local name_col_map = (core == "acore" and "name" or "name") -- item_template.name
-      local name  = locales_item[name_col_map]
+    if query then
+      while query:fetch(locales_item, "a") do
+        if debug("locales_item") then break end
 
-      if entry then
-        for loc in pairs(locales) do
-          local name_loc_col = (core == "acore" and "Name_loc" or "name_loc") -- AC uses Name_locX for item_template_locale
-          local name_loc = locales_item[name_loc_col .. locales[loc]]
-          if not name_loc or name_loc == "" then name_loc = name or "" end
-          if name_loc and name_loc ~= "" then
-            local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-            pfDB["items"][locale] = pfDB["items"][locale] or {}
-            pfDB["items"][locale][entry] = sanitize(name_loc)
+        local entry = tonumber(locales_item["_entry"])
+        local name_col_map = (core == "acore" and "name" or "name") -- item_template.name
+        local name  = locales_item[name_col_map]
+
+        if entry then
+          for loc in pairs(locales) do
+            local name_loc_col = (core == "acore" and "Name" or "name_loc") -- AC uses Name (without _locX) in item_template_locale
+            local name_loc = locales_item[name_loc_col]
+            if not name_loc or name_loc == "" then name_loc = name or "" end
+            if name_loc and name_loc ~= "" then
+              local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+              pfDB["items"][locale] = pfDB["items"][locale] or {}
+              pfDB["items"][locale][entry] = sanitize(name_loc)
+            end
           end
         end
       end
+    else
+      print("  Warning: Failed to execute items locales query")
     end
   end
 
   do -- quests locales
     local locales_quest = {}
     local quest_loc_pk_col = (core == "acore" and "ID" or "entry") -- quest_template_locale uses ID from quest_template
-    local quest_template_pk_col = (core == "acore" and "ID" or "entry") -- quest_template PK
+    local quest_template_pk_col = (core == "acore" and "ID" or "entry") -- quest_template PK is ID for AC
 
     local query = mysql:execute('SELECT *, quest_template.'..quest_template_pk_col..' AS _entry FROM quest_template LEFT JOIN ' .. (C.locales_quest or "quest_template_locale") .. ' ON ' .. (C.locales_quest or "quest_template_locale") ..'.' .. quest_loc_pk_col .. ' = quest_template.' .. quest_template_pk_col .. ' GROUP BY quest_template.' .. quest_template_pk_col .. ' ORDER BY quest_template.' .. quest_template_pk_col .. ' ASC')
-    while query:fetch(locales_quest, "a") do
-      if debug("locales_quest") then break end
 
-      for loc in pairs(locales) do
-        local entry = tonumber(locales_quest["_entry"])
+    if query then
+      while query:fetch(locales_quest, "a") do
+        if debug("locales_quest") then break end
 
-        if entry then
-          local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-          pfDB["quests"][locale] = pfDB["quests"][locale] or {}
+        for loc in pairs(locales) do
+          local entry = tonumber(locales_quest["_entry"])
 
-          -- AC quest_template_locale uses Title, Details, Objectives, EndText, etc.
-          -- The script here uses Title_locX, Details_locX, Objectives_locX. This needs alignment.
-          -- AzerothCore quest_template_locale has: Title, Details, Objectives, OfferRewardText, RequestItemsText, EndText, CompletedText, ObjectiveText1-4, etc. (without _locX suffix in the locale table itself)
-          -- The fallback logic below already handles if Title_locX is not found, it uses locales_quest.Title (which would be from quest_template)
-          -- For AC, we want to directly use Title from quest_template_locale if available for the current locale, or fallback to quest_template.LogTitle
-          local title_loc, details_loc, objectives_loc
+          if entry then
+            local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+            pfDB["quests"][locale] = pfDB["quests"][locale] or {}
 
-          if core == "acore" then
-            title_loc = locales_quest["Title"] -- From quest_template_locale joined table
-            details_loc = locales_quest["Details"]
-            objectives_loc = locales_quest["Objectives"]
-            -- Fallback to base quest_template text if locale specific is empty
-            if not title_loc or title_loc == "" then title_loc = locales_quest["LogTitle"] or "" end -- LogTitle from quest_template
-            if not details_loc or details_loc == "" then details_loc = locales_quest["QuestDescription"] or "" end -- QuestDescription from quest_template
-            if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest["LogDescription"] or "" end -- LogDescription from quest_template (summary of objectives)
-          else
-            title_loc = locales_quest["Title_loc" .. locales[loc]]
-            details_loc = locales_quest["Details_loc" .. locales[loc]]
-            objectives_loc = locales_quest["Objectives_loc" .. locales[loc]]
-            -- fallback to enUS titles (Original script logic)
-            if not title_loc or title_loc == "" then title_loc = locales_quest.Title or "" end
-            if not details_loc or details_loc == "" then details_loc = locales_quest.Details or "" end
-            if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest.Objectives or "" end
+            -- AC quest_template_locale uses Title, Details, Objectives, EndText, etc.
+            -- The script here uses Title_locX, Details_locX, Objectives_locX. This needs alignment.
+            -- AzerothCore quest_template_locale has: Title, Details, Objectives, OfferRewardText, RequestItemsText, EndText, CompletedText, ObjectiveText1-4, etc. (without _locX suffix in the locale table itself)
+            -- The fallback logic below already handles if Title_locX is not found, it uses locales_quest.Title (which would be from quest_template)
+            -- For AC, we want to directly use Title from quest_template_locale if available for the current locale, or fallback to quest_template.LogTitle
+            local title_loc, details_loc, objectives_loc
+
+            if core == "acore" then
+              title_loc = locales_quest["Title"] -- From quest_template_locale joined table
+              details_loc = locales_quest["Details"]
+              objectives_loc = locales_quest["Objectives"]
+              -- Fallback to base quest_template text if locale specific is empty
+              if not title_loc or title_loc == "" then title_loc = locales_quest["LogTitle"] or "" end -- LogTitle from quest_template
+              if not details_loc or details_loc == "" then details_loc = locales_quest["QuestDescription"] or "" end -- QuestDescription from quest_template
+              if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest["LogDescription"] or "" end -- LogDescription from quest_template (summary of objectives)
+            else
+              title_loc = locales_quest["Title_loc" .. locales[loc]]
+              details_loc = locales_quest["Details_loc" .. locales[loc]]
+              objectives_loc = locales_quest["Objectives_loc" .. locales[loc]]
+              -- fallback to enUS titles (Original script logic)
+              if not title_loc or title_loc == "" then title_loc = locales_quest.Title or "" end
+              if not details_loc or details_loc == "" then details_loc = locales_quest.Details or "" end
+              if not objectives_loc or objectives_loc == "" then objectives_loc = locales_quest.Objectives or "" end
+            end
+
+
+            pfDB["quests"][locale][entry] = {
+              ["T"] = sanitize(title_loc),
+              ["O"] = sanitize(objectives_loc),
+              ["D"] = sanitize(details_loc)
+            }
           end
-
-
-          pfDB["quests"][locale][entry] = {
-            ["T"] = sanitize(title_loc),
-            ["O"] = sanitize(objectives_loc),
-            ["D"] = sanitize(details_loc)
-          }
         end
       end
+    else
+      print("  Warning: Failed to execute quests locales query")
     end
   end
 
   do -- professions locales
     pfDB["professions"] = {}
-    local locales_professions = {}
-    local query = mysql:execute('SELECT * FROM pfquest.SkillLine_'..expansion..' ORDER BY id ASC')
-    while query:fetch(locales_professions, "a") do
-      if debug("locales_profession") then break end
 
-      local entry = tonumber(locales_professions.id)
+    -- DISABLED: This section requires pfquest.SkillLine data
+    if core ~= "acore" then
+      local locales_professions = {}
+      local query = mysql:execute('SELECT * FROM pfquest.SkillLine_'..expansion..' ORDER BY id ASC')
+      if query then
+        while query:fetch(locales_professions, "a") do
+          if debug("locales_profession") then break end
 
-      if entry then
-        for loc in pairs(locales) do
-          local name = locales_professions["name_loc" .. locales[loc]]
-          if name and name ~= "" then
-            local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-            pfDB["professions"][locale] = pfDB["professions"][locale] or {}
-            pfDB["professions"][locale][entry] = sanitize(name)
+          local entry = tonumber(locales_professions.id)
+
+          if entry then
+            for loc in pairs(locales) do
+              local name = locales_professions["name_loc" .. locales[loc]]
+              if name and name ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+                pfDB["professions"][locale] = pfDB["professions"][locale] or {}
+                pfDB["professions"][locale][entry] = sanitize(name)
+              end
+            end
           end
         end
       end
+    else
+      print("  Skipping professions locales (pfquest SkillLine data not available in AzerothCore)")
     end
   end
 
   do -- zones locales
-    local locales_zones = {}
-    local query = mysql:execute('SELECT * FROM pfquest.AreaTable_'..expansion..' ORDER BY id ASC')
-    while query:fetch(locales_zones, "a") do
-      if debug("locales_zone") then break end
+    -- DISABLED: This section requires pfquest.AreaTable data
+    if core ~= "acore" then
+      local locales_zones = {}
+      local query = mysql:execute('SELECT * FROM pfquest.AreaTable_'..expansion..' ORDER BY id ASC')
+      if query then
+        while query:fetch(locales_zones, "a") do
+          if debug("locales_zone") then break end
 
-      local entry = tonumber(locales_zones.id)
+          local entry = tonumber(locales_zones.id)
 
-      if entry then
-        for loc in pairs(locales) do
-          local name = locales_zones["name_loc" .. locales[loc]]
-          if name and name ~= "" then
-            local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-            pfDB["zones"][locale] = pfDB["zones"][locale] or {}
-            pfDB["zones"][locale][entry] = sanitize(name)
+          if entry then
+            for loc in pairs(locales) do
+              local name = locales_zones["name_loc" .. locales[loc]]
+              if name and name ~= "" then
+                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+                pfDB["zones"][locale] = pfDB["zones"][locale] or {}
+                pfDB["zones"][locale][entry] = sanitize(name)
+              end
+            end
           end
         end
       end
+    else
+      print("  Skipping zones locales (pfquest AreaTable data not available in AzerothCore)")
     end
   end
 
@@ -1783,7 +2047,7 @@ for id, settings in pairs(config.expansions) do
   print("- writing database...")
   local output = settings.custom and "output/custom/" or "output/"
 
-  os.execute("mkdir -p " .. output)
+  mkdir(output)
   serialize(output .. string.format("areatrigger%s.lua", exp), "pfDB[\"areatrigger\"][\""..data.."\"]", pfDB["areatrigger"][data])
   serialize(output .. string.format("units%s.lua", exp), "pfDB[\"units\"][\""..data.."\"]", pfDB["units"][data])
   serialize(output .. string.format("objects%s.lua", exp), "pfDB[\"objects\"][\""..data.."\"]", pfDB["objects"][data])
@@ -1798,7 +2062,7 @@ for id, settings in pairs(config.expansions) do
   for loc in pairs(locales) do
     local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
 
-    os.execute("mkdir -p " .. output .. loc)
+    mkdir(output .. loc)
     serialize(output .. string.format("%s/units%s.lua", loc, exp), "pfDB[\"units\"][\""..locale.."\"]", pfDB["units"][locale])
     serialize(output .. string.format("%s/objects%s.lua", loc, exp), "pfDB[\"objects\"][\""..locale.."\"]", pfDB["objects"][locale])
     serialize(output .. string.format("%s/items%s.lua", loc, exp), "pfDB[\"items\"][\""..locale.."\"]", pfDB["items"][locale])
@@ -1812,6 +2076,8 @@ for id, settings in pairs(config.expansions) do
   end
 
   debug_statistics()
+else
+  print("Error: Expansion '" .. expansion_to_process .. "' not found in config.expansions")
 end
 
--- Close main for loop
+-- Close main processing
