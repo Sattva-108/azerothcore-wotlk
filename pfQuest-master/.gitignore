@@ -1,3 +1,9 @@
-toolbox/git
-release/
-TODO
+# Ignore db folder - manually maintained
+db/
+!db/.gitkeep
+
+# Ignore backup folders
+db-backup-*/
+
+# Allow toolbox output for reference only
+!toolbox/output/
