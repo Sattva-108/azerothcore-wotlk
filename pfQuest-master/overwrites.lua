@@ -7,6 +7,6 @@
 -- [[ Quest: Great Bear Spirit ]]
 -- Unit: Great Bear Spirit (11956)
 -- Type: Talk/Gossip Menu Requirement
-pfDB["quests"]["data"][5929]["obj"] = { ["U"] = { 11956 } }
-pfDB["quests"]["data"][5930]["obj"] = { ["U"] = { 11956 } }
+--pfDB["quests"]["data"][5929]["obj"] = { ["U"] = { 11956 } }
+--pfDB["quests"]["data"][5930]["obj"] = { ["U"] = { 11956 } }
 
