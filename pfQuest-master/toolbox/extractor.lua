@@ -3,6 +3,31 @@
 -- map pngs with alpha channel generated with:
 -- `convert $file  -transparent white -resize '100x100!' $file`
 
+-- ================================================================
+-- EXTRACTION CONTROL PANEL
+-- ================================================================
+
+-- Main extraction settings
+local FULL_EXTRACTION = false      -- true = extract everything, false = use limits
+local DEBUG_EXTRACTION = true      -- true = enable debug limits, false = no limits
+local ENTRY_LIMIT = 108            -- Number of entries to process (when DEBUG_EXTRACTION = true)
+
+-- Progress display settings
+local SHOW_PROGRESS = true          -- Show progress for quests/items/creatures
+local PROGRESS_STEP = 100           -- Show progress every N entries
+
+print("================================================================")
+print("pfQuest Extraction Settings:")
+print("   Full Extraction: " .. tostring(FULL_EXTRACTION))
+print("   Debug Mode: " .. tostring(DEBUG_EXTRACTION))
+print("   Entry Limit: " .. (DEBUG_EXTRACTION and ENTRY_LIMIT or "UNLIMITED"))
+print("   Show Progress: " .. tostring(SHOW_PROGRESS))
+print("================================================================")
+
+-- ================================================================
+-- END CONTROL PANEL - Script continues below
+-- ================================================================
+
 -- path to the modules
 package.path = package.path .. ';./lua-sql-mysql/src/?.lua;./sha1/?.lua'
 
@@ -30,11 +55,6 @@ if major and minor then
 else
     print("Could not parse major.minor from Lua version string.")
 end
-
--- FAST_MODE для ускорения разработки
-local FAST_MODE = true  -- true = быстро (1000 записей), false = полная экстракция
-print("FAST_MODE enabled: " .. tostring(FAST_MODE))
-
 
 -- global definitions
 luasql = require("luasql.mysql")
@@ -190,7 +210,7 @@ end
 local config = {
   expansion = "vanilla", -- Force use vanilla config for base files
   output = "../db/", -- output folder for database files
-  debug = true,       -- false = process all data, true = limit to 1000 entries for testing
+  debug = false,       -- false = process all data, true = limit to 1000 entries for testing
 
   mysql = {           -- database settings
     live = {
@@ -408,8 +428,10 @@ function tblsize(t)
   return count
 end
 
--- limit all sql loops
-local limit = config.debug and 1000 or nil -- Limit to 1000 entries when debug is enabled
+-- limit all sql loops using new control panel settings
+local limit = (not FULL_EXTRACTION and DEBUG_EXTRACTION) and ENTRY_LIMIT or nil
+print("Applied limit: " .. (limit and tostring(limit) or "NONE"))
+
 function debug(name)
   -- count sql debugs
   if not debugsql[name] then debugsql[name] = {name, 0} end
@@ -622,7 +644,7 @@ if config.expansions[expansion_to_process] then
         local query = mysql:execute([[
           SELECT creature.position_x, creature.position_y, creature.map, creature.zoneId, creature.areaId
           FROM creature
-          WHERE creature.id = ]] .. id .. [[
+          WHERE creature.id1 = ]] .. id .. [[
         ]])
 
         if query then
@@ -800,7 +822,7 @@ if config.expansions[expansion_to_process] then
     -- iterate over all creatures
     local processed = 0
     local creature_template = {}
-    local limit_clause = FAST_MODE and ' LIMIT 100' or ''
+    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
     local query = mysql:execute('SELECT * FROM creature_template GROUP BY creature_template.entry ORDER BY creature_template.entry' .. limit_clause)
     while query:fetch(creature_template, "a") do
       if debug("units") then break end
@@ -1055,7 +1077,7 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all objects (LIMITED FOR TESTING)
     local gameobject_template = {}
-    local limit_clause = FAST_MODE and ' LIMIT 50' or ' LIMIT 100'
+    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
     local query = mysql:execute('SELECT * FROM gameobject_template ORDER BY gameobject_template.entry ASC' .. limit_clause)
     if query then
       while query:fetch(gameobject_template, "a") do
@@ -1099,7 +1121,7 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all items
     local item_template = {}
-    local limit_clause = FAST_MODE and ' LIMIT 50' or ''
+    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
     local query = mysql:execute('SELECT entry, name FROM item_template ORDER BY entry ASC' .. limit_clause)
     if query then
       while query:fetch(item_template, "a") do
@@ -1221,7 +1243,7 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all reference loots (LIMITED FOR TESTING)
     local reference_loot_template = {}
-    local limit_clause = FAST_MODE and ' LIMIT 50' or ' LIMIT 100'
+    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
     local query = mysql:execute('SELECT entry, ChanceOrQuestChance FROM reference_loot_template ORDER BY entry' .. limit_clause)
     if query then
       while query:fetch(reference_loot_template, "a") do
@@ -1457,7 +1479,9 @@ if config.expansions[expansion_to_process] then
           local query = mysql:execute('SELECT * FROM creature_template WHERE KillCredit1 = ' .. id .. ' or KillCredit2 = ' .. id)
           while query:fetch(creature_template, "a") do
             if debug("quests_credit") then break end
-            units[tonumber(creature_template["Entry"])] = true
+            if creature_template["Entry"] and tonumber(creature_template["Entry"]) then
+              units[tonumber(creature_template["Entry"])] = true
+            end
           end
         end
       end
@@ -1914,7 +1938,7 @@ if config.expansions[expansion_to_process] then
     do -- raremobs
       local creature_template = {}
       local rank_field = C.Rank or "rank"
-      local limit_clause = FAST_MODE and ' LIMIT 50' or ''
+      local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
       local query = mysql:execute([[
         SELECT * FROM `creature_template` WHERE ]] .. rank_field .. [[ = 4 OR ]] .. rank_field .. [[ = 2 ORDER BY entry]] .. limit_clause)
 
@@ -2330,7 +2354,7 @@ if config.expansions[expansion_to_process] then
       local table_name = "AreaTable_" .. expansion
       print("  Attempting to query zones from table: " .. table_name)
 
-      local limit_clause = FAST_MODE and ' LIMIT 20' or ''
+      local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. math.min(ENTRY_LIMIT, 50)) or ''
       local query = mysql:execute('SELECT * FROM ' .. table_name .. ' ORDER BY id ASC' .. limit_clause)
       if query then
         while query:fetch(locales_zones, "a") do
@@ -2458,8 +2482,27 @@ if config.expansions[expansion_to_process] then
     serialize(output .. string.format("%s/zones%s.lua", loc, exp), "pfDB[\"zones\"][\""..locale.."\"]", pfDB["zones"][locale])
   end
 
+  -- Create minimal empty init.lua to avoid 'block too big' error
   if not settings.custom then
-    serialize(output .. "init.lua", "pfDB", pfDB, nil, true)
+    local init_file = io.open(output .. "init.lua", "w")
+    if init_file then
+      init_file:write([[pfDB = {
+  ["areatrigger"] = {},
+  ["items"] = {},
+  ["meta"] = {},
+  ["minimap"] = {},
+  ["objects"] = {},
+  ["professions"] = {},
+  ["quests"] = {},
+  ["quests-itemreq"] = {},
+  ["refloot"] = {},
+  ["units"] = {},
+  ["zones"] = {},
+}
+]])
+      init_file:close()
+      print("Created empty init.lua")
+    end
   end
 
   debug_statistics()
