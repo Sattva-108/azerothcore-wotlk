@@ -29,5 +29,5 @@ init\zhTW-tbc.xml
 init\esES-tbc.xml
 init\ruRU-tbc.xml
 init\ptBR-tbc.xml
-
+debug.lua
 init\addon.xml
