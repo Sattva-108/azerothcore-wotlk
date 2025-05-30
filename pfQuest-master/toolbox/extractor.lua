@@ -32,7 +32,7 @@ else
 end
 
 -- FAST_MODE для ускорения разработки
-local FAST_MODE = true  -- true = быстро (100 записей), false = полная экстракция
+local FAST_MODE = true  -- true = быстро (1000 записей), false = полная экстракция
 print("FAST_MODE enabled: " .. tostring(FAST_MODE))
 
 
@@ -190,7 +190,7 @@ end
 local config = {
   expansion = "vanilla", -- Force use vanilla config for base files
   output = "../db/", -- output folder for database files
-  debug = false,      -- false = process all data, true = limit to 100 entries for testing
+  debug = true,       -- false = process all data, true = limit to 1000 entries for testing
 
   mysql = {           -- database settings
     live = {
@@ -214,9 +214,10 @@ local config = {
     ["vanilla"] = {
       version = "vanilla",
       client = "1.12.1",
-      core = "vmangos", -- core database type (see below)
-      name = "Vanilla",
-      locales = { ["deDE"]=3, ["enUS"]=0, ["frFR"]=2 }, -- list of locales to export
+      core = "acore", -- Use AzerothCore for this project
+      name = "Vanilla (AzerothCore WotLK data as base)",
+      locales = { ["enUS"]=0 }, -- Only English for testing
+      database = "acore_world", -- Specify the world database name for AzerothCore
       prior = nil,      -- version this one is based on (nil for vanilla)
     },
     ["tbc"] = {
@@ -234,13 +235,6 @@ local config = {
       name = "Wrath of the Lich King",
       locales = { ["deDE"]=3, ["enUS"]=0, ["frFR"]=2, ["esES"]=6, ["ruRU"]=8 },
       prior = "vanilla",
-    },
-    ["vanilla"] = {
-      version = "vanilla",
-      core = "acore",   -- Use the new AzerothCore config
-      name = "Vanilla (AzerothCore WotLK data as base)",
-      locales = { ["enUS"]=0 }, -- Only English for testing
-      database = "acore_world", -- Specify the world database name for AzerothCore
     },
     ["wotlk_ac"] = { -- Added for AzerothCore
       version = "wotlk", -- The pfQuest DB structure will be for WotLK
@@ -345,7 +339,7 @@ local config = {
     },
   },
 
-  expansion = "wotlk_ac", -- define the expansion to build (must be a key of 'expansions' table)
+  expansion = "vanilla", -- define the expansion to build (must be a key of 'expansions' table)
 
   -- ignore list for object types. These types will not be included into the database
   -- usually these are herbs, minerals, chests because they have a too wide spawn area
@@ -415,7 +409,7 @@ function tblsize(t)
 end
 
 -- limit all sql loops
-local limit = config.debug and 100 or nil -- Limit to 100 entries when debug is enabled
+local limit = config.debug and 1000 or nil -- Limit to 1000 entries when debug is enabled
 function debug(name)
   -- count sql debugs
   if not debugsql[name] then debugsql[name] = {name, 0} end
@@ -628,7 +622,7 @@ if config.expansions[expansion_to_process] then
         local query = mysql:execute([[
           SELECT creature.position_x, creature.position_y, creature.map, creature.zoneId, creature.areaId
           FROM creature
-          WHERE creature.id1 = ]] .. id .. [[
+          WHERE creature.id = ]] .. id .. [[
         ]])
 
         if query then
@@ -819,10 +813,10 @@ if config.expansions[expansion_to_process] then
 
       local entry   = tonumber(creature_template[C.Entry])
       local name    = creature_template[C.Name]
-      local minlvl  = creature_template[C.MinLevel]
-      local maxlvl  = creature_template[C.MaxLevel]
-      local rnk     = creature_template[C.Rank]
-      local lvl     = (minlvl == maxlvl) and minlvl or minlvl .. "-" .. maxlvl
+      local minlvl  = tonumber(creature_template[C.MinLevel]) or 1
+      local maxlvl  = tonumber(creature_template[C.MaxLevel]) or minlvl or 1
+      local rnk     = tonumber(creature_template[C.Rank]) or 0
+      local lvl     = (minlvl == maxlvl) and tostring(minlvl) or tostring(minlvl) .. "-" .. tostring(maxlvl)
 
       pfDB["units"][data][entry] = {}
       pfDB["units"][data][entry]["lvl"] = lvl
@@ -839,11 +833,13 @@ if config.expansions[expansion_to_process] then
           AND creature_template.]] .. C.Entry .. [[ = ]] .. creature_template[C.Entry]
 
         local query = mysql:execute(sql)
-        while query:fetch(faction, "a") do
-          if debug("units_faction") then break end
-          local A, H = faction.A, faction.H
-          if A == "1" and not string.find(fac, "A") then fac = fac .. "A" end
-          if H == "1" and not string.find(fac, "H") then fac = fac .. "H" end
+        if query then
+          while query:fetch(faction, "a") do
+            if debug("units_faction") then break end
+            local A, H = faction.A, faction.H
+            if A == "1" and not string.find(fac, "A") then fac = fac .. "A" end
+            if H == "1" and not string.find(fac, "H") then fac = fac .. "H" end
+          end
         end
 
         if fac ~= "" then
@@ -954,7 +950,7 @@ if config.expansions[expansion_to_process] then
         -- [Verog Derwisch:3395]
         if core ~= "acore" then
           local creature_ai_scripts = {}
-          local query = mysql:execute(core == "vmangos" and [[
+          local sql = core == "vmangos" and [[
             SELECT creature.map AS map, x AS x, y AS y FROM creature_ai_scripts, creature_ai_events, creature
             WHERE creature.id = creature_ai_events.creature_id
               AND creature_ai_scripts.command = 10
@@ -969,14 +965,23 @@ if config.expansions[expansion_to_process] then
             WHERE action2_type = 32
               AND action2_param1 = ]]..entry..[[
             GROUP BY map
-          ]])
-          while query:fetch(creature_ai_scripts, "a") do
-            if debug("units_summon_fixed") then break end
-            for id, coords in pairs(GetCustomCoords(tonumber(creature_ai_scripts.map), tonumber(creature_ai_scripts.x), tonumber(creature_ai_scripts.y))) do
-              local x, y, zone, respawn = unpack(coords)
-              table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
+          ]]
+
+          print("DEBUG: Executing AI summons query for entry " .. entry .. " with core " .. core)
+          local query = mysql:execute(sql)
+          if query then
+            while query:fetch(creature_ai_scripts, "a") do
+              if debug("units_summon_fixed") then break end
+              for id, coords in pairs(GetCustomCoords(tonumber(creature_ai_scripts.map), tonumber(creature_ai_scripts.x), tonumber(creature_ai_scripts.y))) do
+                local x, y, zone, respawn = unpack(coords)
+                table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
+              end
             end
+          else
+            print("DEBUG: AI summons query failed for entry " .. entry)
           end
+        else
+          -- Skip AI summons for AzerothCore (no debug message needed)
         end
 
         -- search for AI summons (summoner position) - DISABLED for AzerothCore compatibility
@@ -994,17 +999,19 @@ if config.expansions[expansion_to_process] then
             LEFT JOIN creature_ai_scripts ON action1_type = 11 AND action1_param1 = spell_template.Id
             WHERE spell_template.Effect1 = 28 AND creature_id > 0 AND spell_template.EffectMiscValue1 = ]]..entry..[[
           ]])
-          while query:fetch(creature_ai_scripts, "a") do
-            if debug("units_summon_unknown") then break end
-            for id, coords in pairs(GetCreatureCoords(tonumber(creature_ai_scripts.summoner))) do
-              local x, y, zone, respawn = unpack(coords)
-              table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
-            end
-
-            if core ~= "vmangos" then
-              for id, coords in pairs(GetCreatureCoordsPool(tonumber(creature_ai_scripts.summoner))) do
+          if query then
+            while query:fetch(creature_ai_scripts, "a") do
+              if debug("units_summon_unknown") then break end
+              for id, coords in pairs(GetCreatureCoords(tonumber(creature_ai_scripts.summoner))) do
                 local x, y, zone, respawn = unpack(coords)
                 table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
+              end
+
+              if core ~= "vmangos" then
+                for id, coords in pairs(GetCreatureCoordsPool(tonumber(creature_ai_scripts.summoner))) do
+                  local x, y, zone, respawn = unpack(coords)
+                  table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
+                end
               end
             end
           end
@@ -1272,7 +1279,7 @@ if config.expansions[expansion_to_process] then
     -- iterate over all quests (LIMITED FOR TESTING)
     local quest_template = {}
     local quest_pk_column = (core == "acore" and "ID" or "entry") -- Added for AzerothCore
-    local limit_clause = FAST_MODE and ' LIMIT 50' or ' LIMIT 200'
+    local limit_clause = config.debug and ' LIMIT 1000' or ''
     local query_string = 'SELECT * FROM quest_template ORDER BY quest_template.' .. quest_pk_column .. limit_clause
     local query = mysql:execute(query_string) -- Modified for AzerothCore
     if query then
@@ -1733,23 +1740,26 @@ if config.expansions[expansion_to_process] then
     pfDB["zones"][data] = {}
 
     if core == "acore" then
-      -- For AzerothCore, use AreaTable_wotlk directly for basic zone data
+      -- For AzerothCore, extract zones from creature spawns since AreaTable_vanilla is empty
       local zones = {}
-      local limit_clause = FAST_MODE and ' LIMIT 50' or ''
-      local query = mysql:execute('SELECT * FROM AreaTable_'..expansion .. ' ORDER BY id' .. limit_clause)
+      local limit_clause = config.debug and ' LIMIT 100' or ' LIMIT 500'
+      local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0' .. limit_clause)
       if query then
         while query:fetch(zones, "a") do
           if debug("zones") then break end
-          local entry = tonumber(zones.id)
-          local zone = tonumber(zones.zoneID)
+          local zone_id = tonumber(zones.zoneId)
+          local area_id = tonumber(zones.areaId)
 
-          if entry then
-            pfDB["zones"][data][entry] = { zone or 0, 10, 10, 50, 50 } -- zone, width, height, cx, cy
+          if zone_id and zone_id > 0 then
+            pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 } -- zone, width, height, cx, cy
+          end
+          if area_id and area_id > 0 and area_id ~= zone_id then
+            pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
           end
         end
-        print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from AreaTable")
+        print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from creature spawns")
       else
-        print("  Warning: Failed to query zones from AreaTable_" .. expansion)
+        print("  Warning: Failed to query zones from creature table")
       end
     else
       -- Original zones logic for cores with pfquest DBC data
