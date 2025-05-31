@@ -7,36 +7,104 @@
 -- EXTRACTION CONTROL PANEL
 -- ================================================================
 
--- Main extraction settings
-local FULL_EXTRACTION = false      -- true = extract everything, false = use limits
-local DEBUG_EXTRACTION = true      -- true = enable debug limits, false = no limits
-local ENTRY_LIMIT = 108            -- Number of entries to process (when DEBUG_EXTRACTION = true)
+-- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
--- Specific limits for different data types (only used when DEBUG_EXTRACTION = true)
-local QUEST_LIMIT = 50             -- Quests are critical for map display
-local UNITS_LIMIT = 200            -- Units needed for quest objectives
-local OBJECTS_LIMIT = 15           -- Objects less important for basic testing
-local ITEMS_LIMIT = 15             -- Items less important for basic testing
-local AREATRIGGER_LIMIT = 15       -- Areatriggers less important
-local REFLOOT_LIMIT = 15           -- Reference loot less important
+local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
+local OTHER_LIMIT = 15             -- Лимит для всего остального
+local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
+
+-- ================================================================
+-- АВТОМАТИЧЕСКАЯ НАСТРОЙКА (не трогай)
+-- ================================================================
+
+-- Категории данных и их зависимости
+local CATEGORIES = {
+  quests = {
+    name = "Quests",
+    deps = {"units"},  -- Квестам нужны только NPC и предметы, НЕ объекты
+        priority = 1
+  },
+  units = {
+    name = "Units/NPCs",
+    deps = {},
+    priority = 2
+  },
+  items = {
+    name = "Items",
+    deps = {},
+    priority = 3
+  },
+  objects = {
+    name = "Objects",
+    deps = {},
+    priority = 4
+  },
+  areatrigger = {
+    name = "AreaTriggers",
+    deps = {},
+    priority = 5
+  },
+  refloot = {
+    name = "Reference Loot",
+    deps = {},
+    priority = 6
+  }
+}
+
+-- Функция определения лимита
+function get_limit(category)
+  if FULL_EXTRACTION then return nil end
+
+  -- Проверяем если категория в фокусе
+  for _, focus in ipairs(FOCUS_ON) do
+    if category == focus then
+      return FOCUS_LIMIT
+    end
+    -- Проверяем зависимости фокусной категории
+    local focus_cat = CATEGORIES[focus]
+    if focus_cat then
+      for _, dep in ipairs(focus_cat.deps) do
+        if category == dep then
+          return FOCUS_LIMIT  -- Зависимости тоже получают focus лимит
+        end
+      end
+    end
+  end
+
+  return OTHER_LIMIT
+end
+
+-- Применяем лимиты
+local QUEST_LIMIT = get_limit("quests")
+local UNITS_LIMIT = get_limit("units")
+local OBJECTS_LIMIT = get_limit("objects")
+local ITEMS_LIMIT = get_limit("items")
+local AREATRIGGER_LIMIT = get_limit("areatrigger")
+local REFLOOT_LIMIT = get_limit("refloot")
+
+-- Логика экстракции
+local DEBUG_EXTRACTION = not FULL_EXTRACTION
 
 -- Progress display settings
-local SHOW_PROGRESS = true          -- Show progress for quests/items/creatures
-local PROGRESS_STEP = 100           -- Show progress every N entries
+local SHOW_PROGRESS = true
+local PROGRESS_STEP = 100
 
+-- Вывод настроек
 print("================================================================")
 print("pfQuest Extraction Settings:")
-print("   Full Extraction: " .. tostring(FULL_EXTRACTION))
-print("   Debug Mode: " .. tostring(DEBUG_EXTRACTION))
-if DEBUG_EXTRACTION then
-  print("   Quest Limit: " .. QUEST_LIMIT)
-  print("   Units Limit: " .. UNITS_LIMIT)
-  print("   Objects Limit: " .. OBJECTS_LIMIT)
-  print("   Items Limit: " .. ITEMS_LIMIT)
+if FULL_EXTRACTION then
+  print("   Mode: FULL EXTRACTION")
 else
-  print("   Entry Limit: " .. (DEBUG_EXTRACTION and ENTRY_LIMIT or "UNLIMITED"))
+  print("   Focus: " .. table.concat(FOCUS_ON, ", ") .. " (" .. FOCUS_LIMIT .. ")")
+  print("   Others: " .. OTHER_LIMIT)
 end
-print("   Show Progress: " .. tostring(SHOW_PROGRESS))
+print("   Quests: " .. (QUEST_LIMIT or "UNLIMITED") .. (QUEST_LIMIT == FOCUS_LIMIT and " [FOCUS]" or ""))
+print("   Units: " .. (UNITS_LIMIT or "UNLIMITED") .. (UNITS_LIMIT == FOCUS_LIMIT and " [FOCUS]" or ""))
+print("   Objects: " .. (OBJECTS_LIMIT or "UNLIMITED") .. (OBJECTS_LIMIT == FOCUS_LIMIT and " [FOCUS]" or ""))
+print("   Items: " .. (ITEMS_LIMIT or "UNLIMITED") .. (ITEMS_LIMIT == FOCUS_LIMIT and " [FOCUS]" or ""))
+print("   AreaTriggers: " .. (AREATRIGGER_LIMIT or "UNLIMITED"))
+print("   RefLoot: " .. (REFLOOT_LIMIT or "UNLIMITED"))
 print("================================================================")
 
 -- ================================================================
@@ -145,6 +213,8 @@ function serialize_value(file, value, indent)
   if t == "table" then
     -- Check if this is a small table that can be serialized compactly
     local is_small = smalltable(value)
+    local is_coords = is_coords_table(value)
+    local is_unit = is_unit_table(value)
 
     if is_small then
       local init
@@ -156,6 +226,76 @@ function serialize_value(file, value, indent)
         end
       end
       line = line .. " }"
+      file:write(line)
+    elseif is_coords then
+      -- Serialize coords table compactly: {[1]={x,y,z},[2]={x,y,z}}
+      local init
+      local line = "{"
+      for i = 1, tblsize(value) do
+        if value[i] then
+          line = line .. (init and "," or "") .. "[" .. i .. "]="
+          local coord_line = "{"
+          local coord_init
+          for _, v in ipairs(value[i]) do
+            coord_line = coord_line .. (coord_init and "," or "") .. (type(v) == "string" and string.format("%q", v) or tostring(v))
+            if not coord_init then
+              coord_init = true
+            end
+          end
+          coord_line = coord_line .. "}"
+          line = line .. coord_line
+          if not init then
+            init = true
+          end
+        end
+      end
+      line = line .. "}"
+      file:write(line)
+    elseif is_unit then
+      -- Serialize unit table compactly: {["coords"]={...},["lvl"]="...",["fac"]="..."}
+      local init
+      local line = "{"
+      local keys = {}
+      for k in pairs(value) do
+        table.insert(keys, k)
+      end
+      table.sort(keys)
+
+      for _, k in ipairs(keys) do
+        local v = value[k]
+        line = line .. (init and "," or "") .. "[" .. string.format("%q", k) .. "]="
+        if type(v) == "table" then
+          -- Handle coords table inside unit
+          if is_coords_table(v) then
+            local coord_line = "{"
+            local coord_init
+            for i = 1, tblsize(v) do
+              if v[i] then
+                coord_line = coord_line .. (coord_init and "," or "") .. "[" .. i .. "]="
+                local inner_coord = "{"
+                local inner_init
+                for _, coord_val in ipairs(v[i]) do
+                  inner_coord = inner_coord .. (inner_init and "," or "") .. tostring(coord_val)
+                  if not inner_init then inner_init = true end
+                end
+                inner_coord = inner_coord .. "}"
+                coord_line = coord_line .. inner_coord
+                if not coord_init then coord_init = true end
+              end
+            end
+            coord_line = coord_line .. "}"
+            line = line .. coord_line
+          else
+            line = line .. "{}"
+          end
+        else
+          line = line .. string.format("%q", tostring(v))
+        end
+        if not init then
+          init = true
+        end
+      end
+      line = line .. "}"
       file:write(line)
     else
       -- Use the standard multi-line format for complex tables
@@ -219,6 +359,41 @@ function smalltable(tbl)
   for i=1, size do
     if not tbl[i] then return end
     if type(tbl[i]) == "table" then return end
+  end
+
+  return true
+end
+
+-- Check if table is coords-like structure: {[1]={...}, [2]={...}, ...}
+-- where all values are smalltables and all keys are sequential numbers
+function is_coords_table(tbl)
+  local size = tblsize(tbl)
+  if size < 1 then return false end
+
+  -- Check if all keys are sequential numbers starting from 1
+  for i = 1, size do
+    if not tbl[i] then return false end
+    if type(tbl[i]) ~= "table" then return false end
+    if not smalltable(tbl[i]) then return false end
+  end
+
+  return true
+end
+
+-- Check if table is unit-like structure: { coords = {...}, lvl = "...", fac = "..." }
+-- Should be serialized compactly on one line
+function is_unit_table(tbl)
+  local size = tblsize(tbl)
+  if size < 1 or size > 5 then return false end
+
+  -- Check that it only contains known unit fields
+  for k, v in pairs(tbl) do
+    if k ~= "coords" and k ~= "lvl" and k ~= "fac" and k ~= "rnk" and k ~= "name" then
+      return false
+    end
+    -- coords should be a table, others should be strings or numbers
+    if k == "coords" and type(v) ~= "table" then return false end
+    if k ~= "coords" and type(v) ~= "string" and type(v) ~= "number" then return false end
   end
 
   return true
@@ -419,7 +594,7 @@ local config = {
     },
   },
 
-  expansion = "wotlk_ac", -- define the expansion to build (must be a key of 'expansions' table)
+  expansion = "vanilla", -- define the expansion to build (use vanilla to avoid -wotlk suffix) (must be a key of 'expansions' table)
 
   -- ignore list for object types. These types will not be included into the database
   -- usually these are herbs, minerals, chests because they have a too wide spawn area
@@ -489,7 +664,7 @@ function tblsize(t)
 end
 
 -- limit all sql loops using new control panel settings
-local limit = (not FULL_EXTRACTION and DEBUG_EXTRACTION) and ENTRY_LIMIT or nil
+local limit = nil  -- Removed old ENTRY_LIMIT logic - use specific limits instead
 print("Applied limit: " .. (limit and tostring(limit) or "NONE"))
 
 function debug(name)
@@ -699,6 +874,14 @@ if config.expansions[expansion_to_process] then
       local ret = {}
 
       if core == "acore" then
+        -- HARDCODED ZONE MAPPING for AzerothCore (since zoneId/areaId are empty)
+        local zone_map = {
+          [0] = 1519,    -- Eastern Kingdoms -> Stormwind City zone (testing)
+          [1] = 1637,    -- Kalimdor -> Orgrimmar zone (testing)
+          [530] = 3520,  -- Outland -> Hellfire Peninsula
+          [571] = 65     -- Northrend -> Dragonblight
+        }
+
         -- For AzerothCore, get coordinates from creature table
         local creature_coords = {}
         local query = mysql:execute([[
@@ -718,8 +901,8 @@ if config.expansions[expansion_to_process] then
             local area_id = tonumber(creature_coords.areaId)
 
             if x and y and map_id then
-              -- Use area_id if available, otherwise zone_id
-              local final_zone = area_id and area_id > 0 and area_id or zone_id and zone_id > 0 and zone_id or map_id
+              -- Use hardcoded zone mapping
+              local final_zone = zone_map[map_id] or map_id
 
               -- Convert world coordinates to zone percentage (simplified)
               local zone_x = math.floor((x + 17066) / 340 * 100) / 100
@@ -910,8 +1093,8 @@ if config.expansions[expansion_to_process] then
         local fac = ""
         local faction = {}
         local sql = [[
-          SELECT A, H FROM creature_template, pfquest.factiontemplate_]]..expansion..[[
-          WHERE pfquest.factiontemplate_]]..expansion..[[.factiontemplateID = creature_template.]] .. C.Faction .. [[
+          SELECT A, H FROM creature_template, pfquest.factiontemplate_wotlk
+          WHERE pfquest.factiontemplate_wotlk.factiontemplateID = creature_template.]] .. C.Faction .. [[
           AND creature_template.]] .. C.Entry .. [[ = ]] .. creature_template[C.Entry] .. [[
         ]]
 
@@ -1182,7 +1365,7 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all items
     local item_template = {}
-    local limit_clause = ' LIMIT 50' or ''
+    local limit_clause = ITEMS_LIMIT and (' LIMIT ' .. ITEMS_LIMIT) or ''
     local query = mysql:execute('SELECT entry, name FROM item_template ORDER BY entry ASC' .. limit_clause)
     if query then
       while query:fetch(item_template, "a") do
@@ -1304,7 +1487,7 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all reference loots (LIMITED FOR TESTING)
     local reference_loot_template = {}
-    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+    local limit_clause = REFLOOT_LIMIT and (' LIMIT ' .. REFLOOT_LIMIT) or ''
     local query = mysql:execute('SELECT entry, ChanceOrQuestChance FROM reference_loot_template ORDER BY entry' .. limit_clause)
     if query then
       while query:fetch(reference_loot_template, "a") do
@@ -1827,8 +2010,7 @@ if config.expansions[expansion_to_process] then
     if core == "acore" then
       -- For AzerothCore, extract zones from creature spawns since AreaTable_vanilla is empty
       local zones = {}
-      local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
-      local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0' .. limit_clause)
+      local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0')  -- NO LIMIT for zones
       if query then
         while query:fetch(zones, "a") do
           if debug("zones") then break end
@@ -1999,7 +2181,7 @@ if config.expansions[expansion_to_process] then
     do -- raremobs
       local creature_template = {}
       local rank_field = C.Rank or "rank"
-      local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+      local limit_clause = UNITS_LIMIT and (' LIMIT ' .. UNITS_LIMIT) or ''  -- Use UNITS_LIMIT for raremobs
       local query = mysql:execute([[
         SELECT * FROM `creature_template` WHERE ]] .. rank_field .. [[ = 4 OR ]] .. rank_field .. [[ = 2 ORDER BY entry]] .. limit_clause)
 
@@ -2023,7 +2205,7 @@ if config.expansions[expansion_to_process] then
       if core == "acore" then
         -- For AzerothCore, use loaded DBC Lock table
         local gameobject_template = {}
-        local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+        local limit_clause = OBJECTS_LIMIT and (' LIMIT ' .. OBJECTS_LIMIT) or ''  -- Use OBJECTS_LIMIT for gameobjects
         local query = mysql:execute([[
           SELECT * FROM `gameobject_template`, Lock_]]..expansion..[[
           WHERE `type` = 3 AND `locktype` = 2 AND `flags` = 0 AND `data1` > 0 and id = data0 GROUP BY `gameobject_template`.entry ORDER BY `gameobject_template`.entry ASC]] .. limit_clause .. [[
@@ -2154,7 +2336,7 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_gameobject = {}
         local locale_code = GetLocaleCode(loc)
-        local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+        local limit_clause = OBJECTS_LIMIT and (' LIMIT ' .. OBJECTS_LIMIT) or ''  -- Use OBJECTS_LIMIT
 
         -- Try simple query without locale table since it may not exist
         local query = mysql:execute('SELECT entry, name FROM gameobject_template ORDER BY entry ASC' .. limit_clause)
@@ -2220,7 +2402,7 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_item = {}
         local locale_code = GetLocaleCode(loc)
-        local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+        local limit_clause = ITEMS_LIMIT and (' LIMIT ' .. ITEMS_LIMIT) or ''  -- Use ITEMS_LIMIT
 
         local query = mysql:execute('SELECT item_template.entry, item_template.name, item_template_locale.Name AS locale_name FROM item_template LEFT JOIN item_template_locale ON item_template_locale.ID = item_template.entry AND item_template_locale.locale = \'' .. locale_code .. '\' ORDER BY item_template.entry ASC' .. limit_clause)
 
@@ -2285,7 +2467,7 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_quest = {}
         local locale_code = GetLocaleCode(loc)
-        local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+        local limit_clause = QUEST_LIMIT and (' LIMIT ' .. QUEST_LIMIT) or ''  -- Use QUEST_LIMIT
 
         local query = mysql:execute('SELECT quest_template.ID, quest_template.LogTitle, quest_template.QuestDescription, quest_template.LogDescription, quest_template_locale.Title AS locale_title, quest_template_locale.Details AS locale_details, quest_template_locale.Objectives AS locale_objectives FROM quest_template LEFT JOIN quest_template_locale ON quest_template_locale.ID = quest_template.ID AND quest_template_locale.locale = \'' .. locale_code .. '\' ORDER BY quest_template.ID ASC' .. limit_clause)
 
@@ -2415,8 +2597,7 @@ if config.expansions[expansion_to_process] then
       local table_name = "AreaTable_" .. expansion
       print("  Attempting to query zones from table: " .. table_name)
 
-      local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
-      local query = mysql:execute('SELECT * FROM ' .. table_name .. ' ORDER BY id ASC' .. limit_clause)
+      local query = mysql:execute('SELECT * FROM ' .. table_name .. ' ORDER BY id ASC')  -- NO LIMIT for zones
       if query then
         while query:fetch(locales_zones, "a") do
           if debug("locales_zone") then break end

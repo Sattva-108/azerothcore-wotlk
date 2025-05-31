@@ -76,11 +76,65 @@ function pfQuestDebug()
     if #workingQuests > 0 then
         print("✅ Found " .. #workingQuests .. " working quests:")
         for i, questId in ipairs(workingQuests) do
+            -- Get quest name, handle if it's a table
             local questName = "Quest " .. questId
             if pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][questId] then
-                questName = pfDB["quests"]["loc"][questId] or questName
+                local questData = pfDB["quests"]["loc"][questId]
+                if type(questData) == "table" and questData.T then
+                    questName = questData.T  -- Title from table
+                elseif type(questData) == "string" then
+                    questName = questData
+                end
             end
-            print("   " .. questId .. ": " .. questName)
+
+            -- Get quest info for race and zones
+            local quest = pfDB["quests"]["data"][questId]
+            local raceInfo = ""
+            local zoneInfo = ""
+
+            if quest then
+                -- Race info (fixed codes)
+                if quest.race then
+                    if quest.race == 1101 then raceInfo = " [Alliance]"
+                    elseif quest.race == 690 then raceInfo = " [Horde]"
+                    elseif quest.race == 77 then raceInfo = " [Alliance-old]"
+                    elseif quest.race == 178 then raceInfo = " [Horde-old]"
+                    else raceInfo = " [Race:" .. quest.race .. "]" end
+                else
+                    raceInfo = " [Both factions]"
+                end
+
+                -- Zone info from starter NPCs with names
+                if quest.start and quest.start.U then
+                    for unitId, _ in pairs(quest.start.U) do
+                        if pfDB["units"]["data"][unitId] and pfDB["units"]["data"][unitId].coords then
+                            for _, coord in ipairs(pfDB["units"]["data"][unitId].coords) do
+                                local zoneId = coord[3]
+                                if zoneId == 1519 then zoneInfo = " (Stormwind City)"
+                                elseif zoneId == 1637 then zoneInfo = " (Orgrimmar)"
+                                elseif zoneId == 3520 then zoneInfo = " (Hellfire Peninsula)"
+                                elseif zoneId == 65 then zoneInfo = " (Dragonblight)"
+                                else
+                                    -- Try to get zone name from pfDB
+                                    if pfDB["zones"] and pfDB["zones"]["enUS"] and pfDB["zones"]["enUS"][zoneId] then
+                                        zoneInfo = " (" .. pfDB["zones"]["enUS"][zoneId] .. ")"
+                                    else
+                                        zoneInfo = " (Zone:" .. zoneId .. ")"
+                                    end
+                                end
+                                break
+                            end
+                            break
+                        else
+                            zoneInfo = " (Unit " .. unitId .. " no coords)"
+                        end
+                    end
+                else
+                    zoneInfo = " (No start NPC)"
+                end
+            end
+
+            print("   " .. questId .. ": " .. questName .. raceInfo .. zoneInfo)
         end
 
         print("")
@@ -111,9 +165,15 @@ function pfQuestTestQuest(questId)
     end
 
     -- Get quest name
+    -- Get quest name, handle if it's a table
     local questName = "Quest " .. questId
     if pfDB["quests"]["loc"] and pfDB["quests"]["loc"][questId] then
-        questName = pfDB["quests"]["loc"][questId]
+        local questData = pfDB["quests"]["loc"][questId]
+        if type(questData) == "table" and questData.T then
+            questName = questData.T  -- Title from table
+        elseif type(questData) == "string" then
+            questName = questData
+        end
     end
 
     print("📜 " .. questName)
