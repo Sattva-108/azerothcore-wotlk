@@ -8,9 +8,17 @@
 -- ================================================================
 
 -- Main extraction settings
-local FULL_EXTRACTION = true      -- true = extract everything, false = use limits
-local DEBUG_EXTRACTION = false      -- true = enable debug limits, false = no limits
+local FULL_EXTRACTION = false      -- true = extract everything, false = use limits
+local DEBUG_EXTRACTION = true      -- true = enable debug limits, false = no limits
 local ENTRY_LIMIT = 108            -- Number of entries to process (when DEBUG_EXTRACTION = true)
+
+-- Specific limits for different data types (only used when DEBUG_EXTRACTION = true)
+local QUEST_LIMIT = 50             -- Quests are critical for map display
+local UNITS_LIMIT = 200            -- Units needed for quest objectives
+local OBJECTS_LIMIT = 15           -- Objects less important for basic testing
+local ITEMS_LIMIT = 15             -- Items less important for basic testing
+local AREATRIGGER_LIMIT = 15       -- Areatriggers less important
+local REFLOOT_LIMIT = 15           -- Reference loot less important
 
 -- Progress display settings
 local SHOW_PROGRESS = true          -- Show progress for quests/items/creatures
@@ -20,7 +28,14 @@ print("================================================================")
 print("pfQuest Extraction Settings:")
 print("   Full Extraction: " .. tostring(FULL_EXTRACTION))
 print("   Debug Mode: " .. tostring(DEBUG_EXTRACTION))
-print("   Entry Limit: " .. (DEBUG_EXTRACTION and ENTRY_LIMIT or "UNLIMITED"))
+if DEBUG_EXTRACTION then
+  print("   Quest Limit: " .. QUEST_LIMIT)
+  print("   Units Limit: " .. UNITS_LIMIT)
+  print("   Objects Limit: " .. OBJECTS_LIMIT)
+  print("   Items Limit: " .. ITEMS_LIMIT)
+else
+  print("   Entry Limit: " .. (DEBUG_EXTRACTION and ENTRY_LIMIT or "UNLIMITED"))
+end
 print("   Show Progress: " .. tostring(SHOW_PROGRESS))
 print("================================================================")
 
@@ -128,39 +143,56 @@ function serialize_value(file, value, indent)
   indent = indent or 0
 
   if t == "table" then
-    file:write("{\n")
-    local keys = {}
-    for k in pairs(value) do
-      table.insert(keys, k)
-    end
-    table.sort(keys, function(a, b)
-      local ta, tb = type(a), type(b)
-      if ta == tb then
-        return tostring(a) < tostring(b)
-      else
-        return ta < tb
+    -- Check if this is a small table that can be serialized compactly
+    local is_small = smalltable(value)
+
+    if is_small then
+      local init
+      local line = "{ "
+      for _, v in ipairs(value) do  -- Use ipairs for array-like tables
+        line = line .. (init and ", " or "") .. (type(v) == "string" and string.format("%q", v) or tostring(v))
+        if not init then
+          init = true
+        end
       end
-    end)
+      line = line .. " }"
+      file:write(line)
+    else
+      -- Use the standard multi-line format for complex tables
+      file:write("{\n")
+      local keys = {}
+      for k in pairs(value) do
+        table.insert(keys, k)
+      end
+      table.sort(keys, function(a, b)
+        local ta, tb = type(a), type(b)
+        if ta == tb then
+          return tostring(a) < tostring(b)
+        else
+          return ta < tb
+        end
+      end)
 
-    for _, k in ipairs(keys) do
-      local v = value[k]
-      for i = 1, indent + 1 do file:write("  ") end
+      for _, k in ipairs(keys) do
+        local v = value[k]
+        for i = 1, indent + 1 do file:write("  ") end
 
-      if type(k) == "string" and k:match("^[%a_][%w_]*$") then
-        file:write(k)
-      else
-        file:write("[")
-        serialize_value(file, k, indent + 1)
-        file:write("]")
+        if type(k) == "string" and k:match("^[%a_][%w_]*$") then
+          file:write(k)
+        else
+          file:write("[")
+          serialize_value(file, k, indent + 1)
+          file:write("]")
+        end
+
+        file:write(" = ")
+        serialize_value(file, v, indent + 1)
+        file:write(",\n")
       end
 
-      file:write(" = ")
-      serialize_value(file, v, indent + 1)
-      file:write(",\n")
+      for i = 1, indent do file:write("  ") end
+      file:write("}")
     end
-
-    for i = 1, indent do file:write("  ") end
-    file:write("}")
   elseif t == "string" then
     file:write(string.format("%q", value))
   elseif t == "number" or t == "boolean" then
@@ -168,6 +200,28 @@ function serialize_value(file, value, indent)
   else
     file:write("nil")
   end
+end
+
+-- Helper functions for compact serialization
+function tblsize(tbl)
+  local count = 0
+  for _ in pairs(tbl) do
+    count = count + 1
+  end
+  return count
+end
+
+function smalltable(tbl)
+  local size = tblsize(tbl)
+  if size > 10 then return end
+  if size < 1 then return end
+
+  for i=1, size do
+    if not tbl[i] then return end
+    if type(tbl[i]) == "table" then return end
+  end
+
+  return true
 end
 
 -- Table subtraction function
@@ -365,7 +419,7 @@ local config = {
     },
   },
 
-  expansion = "vanilla", -- define the expansion to build (must be a key of 'expansions' table)
+  expansion = "wotlk_ac", -- define the expansion to build (must be a key of 'expansions' table)
 
   -- ignore list for object types. These types will not be included into the database
   -- usually these are herbs, minerals, chests because they have a too wide spawn area
@@ -828,7 +882,7 @@ if config.expansions[expansion_to_process] then
     -- iterate over all creatures
     local processed = 0
     local creature_template = {}
-    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. UNITS_LIMIT) or ''
     local query = mysql:execute('SELECT * FROM creature_template GROUP BY creature_template.entry ORDER BY creature_template.entry' .. limit_clause)
     while query:fetch(creature_template, "a") do
       if debug("units") then break end
@@ -856,9 +910,10 @@ if config.expansions[expansion_to_process] then
         local fac = ""
         local faction = {}
         local sql = [[
-          SELECT A, H FROM creature_template, pfquest.FactionTemplate_]]..expansion..[[
-          WHERE pfquest.FactionTemplate_]]..expansion..[[.factiontemplateID = creature_template.]] .. C.Faction .. [[
-          AND creature_template.]] .. C.Entry .. [[ = ]] .. creature_template[C.Entry]
+          SELECT A, H FROM creature_template, pfquest.factiontemplate_]]..expansion..[[
+          WHERE pfquest.factiontemplate_]]..expansion..[[.factiontemplateID = creature_template.]] .. C.Faction .. [[
+          AND creature_template.]] .. C.Entry .. [[ = ]] .. creature_template[C.Entry] .. [[
+        ]]
 
         local query = mysql:execute(sql)
         if query then
@@ -1083,7 +1138,7 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all objects (LIMITED FOR TESTING)
     local gameobject_template = {}
-    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. OBJECTS_LIMIT) or ''
     local query = mysql:execute('SELECT * FROM gameobject_template ORDER BY gameobject_template.entry ASC' .. limit_clause)
     if query then
       while query:fetch(gameobject_template, "a") do
@@ -1307,7 +1362,7 @@ if config.expansions[expansion_to_process] then
     -- iterate over all quests (LIMITED FOR TESTING)
     local quest_template = {}
     local quest_pk_column = (core == "acore" and "ID" or "entry") -- Added for AzerothCore
-    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
     local query_string = 'SELECT * FROM quest_template ORDER BY quest_template.' .. quest_pk_column .. limit_clause
     local query = mysql:execute(query_string) -- Modified for AzerothCore
     if query then
