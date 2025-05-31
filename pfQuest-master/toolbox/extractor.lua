@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 50           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 5000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
@@ -315,6 +315,37 @@ function serialize_value(file, value, indent)
                 end
                 inner_small = inner_small .. "}"
                 nested_line = nested_line .. inner_small
+              elseif type(nv) == "table" then
+                -- Handle any other table type compactly
+                local inner_table = "{"
+                local inner_init
+                local inner_keys = {}
+                for ink in pairs(nv) do table.insert(inner_keys, ink) end
+                table.sort(inner_keys)
+                for _, ink in ipairs(inner_keys) do
+                  local inv = nv[ink]
+                  inner_table = inner_table .. (inner_init and "," or "")
+                  if type(ink) == "string" then
+                    inner_table = inner_table .. "[" .. string.format("%q", ink) .. "]="
+                  else
+                    inner_table = inner_table .. "[" .. tostring(ink) .. "]="
+                  end
+                  if type(inv) == "table" and smalltable(inv) then
+                    local small_array = "{"
+                    local small_init
+                    for _, sav in ipairs(inv) do
+                      small_array = small_array .. (small_init and "," or "") .. tostring(sav)
+                      if not small_init then small_init = true end
+                    end
+                    small_array = small_array .. "}"
+                    inner_table = inner_table .. small_array
+                  else
+                    inner_table = inner_table .. (type(inv) == "string" and string.format("%q", inv) or tostring(inv))
+                  end
+                  if not inner_init then inner_init = true end
+                end
+                inner_table = inner_table .. "}"
+                nested_line = nested_line .. inner_table
               else
                 nested_line = nested_line .. (type(nv) == "string" and string.format("%q", nv) or tostring(nv))
               end
@@ -494,6 +525,149 @@ function parse_float(val)
     val = val:gsub(",", ".")
   end
   return tonumber(val)
+end
+
+-- Загрузка worldmap_areas из worldmaparea_wotlk
+function load_worldmap_areas()
+  local areas = {}
+  local query = mysql:execute("SELECT mapID, areatableID, name, x_min, x_max, y_min, y_max FROM worldmaparea_wotlk")
+  local row = {}
+  while query:fetch(row, "a") do
+    table.insert(areas, {
+      mapID = tonumber(row.mapID),
+      areatableID = tonumber(row.areatableID),
+      name = row.name,
+      x_min = tonumber(row.x_min),
+      x_max = tonumber(row.x_max),
+      y_min = tonumber(row.y_min),
+      y_max = tonumber(row.y_max)
+    })
+  end
+  return areas
+end
+
+-- worldmap_areas будет инициализирован после подключения к базе
+local worldmap_areas = nil
+
+-- Поиск зоны и пересчёт координат
+-- Поиск зоны по areatableID (zoneID)
+function find_zone_by_zoneid(zoneid, worldmap_areas)
+  for _, area in ipairs(worldmap_areas) do
+    if tonumber(area.areatableID) == tonumber(zoneid) then
+      return area
+    end
+  end
+  return nil
+end
+
+function find_zone_and_convert(map, pos_x, pos_y, worldmap_areas, zoneid)
+  print(string.format("DEBUG: find_zone_and_convert(map=%s, pos_x=%s, pos_y=%s, zoneid=%s)", tostring(map), tostring(pos_x), tostring(pos_y), tostring(zoneid)))
+
+  -- Специальный дебаг для GameObject 30
+  local is_debug_object = (pos_x and pos_y and
+                          math.abs(tonumber(pos_x) - (-5066.09)) < 0.1 and
+                          math.abs(tonumber(pos_y) - (-804.047)) < 0.1)
+  if is_debug_object then
+    print("*** SPECIAL DEBUG for GameObject 30 coordinates ***")
+  end
+
+  -- Сначала ищем по zoneid (areatableID), если он есть
+  if zoneid and tonumber(zoneid) > 0 then
+    local area = find_zone_by_zoneid(zoneid, worldmap_areas)
+    if area then
+      local x1 = tonumber(area.x_min)
+      local x2 = tonumber(area.x_max)
+      local y1 = tonumber(area.y_min)
+      local y2 = tonumber(area.y_max)
+      print(string.format("  [zoneid] Checking zone: areatableID=%s, name=%s, x_min=%s, x_max=%s, y_min=%s, y_max=%s", tostring(area.areatableID), tostring(area.name), tostring(x1), tostring(x2), tostring(y1), tostring(y2)))
+      if pos_x >= x1 and pos_x <= x2 and pos_y >= y1 and pos_y <= y2 then
+        print("    -> [zoneid] Coordinates INSIDE this zone!")
+        local areaX = ((pos_x - x1) / (x2 - x1)) * 100
+        local areaY = ((pos_y - y1) / (y2 - y1)) * 100
+        print(string.format("    -> [zoneid] Returning areatableID=%s, areaX=%.2f, areaY=%.2f", tostring(area.areatableID), areaX, areaY))
+        return area.areatableID, areaX, areaY
+      else
+        print("    -> [zoneid] Coordinates NOT in this zone!")
+      end
+    end
+  end
+  -- Если не нашли по zoneid, ищем по mapID+координаты (старый способ)
+  local fallback = nil
+  local matches_found = 0
+  for _, area in ipairs(worldmap_areas) do
+    if tonumber(area.mapID) == tonumber(map) then
+      local x1 = tonumber(area.x_min)
+      local x2 = tonumber(area.x_max)
+      local y1 = tonumber(area.y_min)
+      local y2 = tonumber(area.y_max)
+
+      if is_debug_object then
+        print(string.format("  [DEBUG] Checking zone: areatableID=%s, name=%s, x_min=%s, x_max=%s, y_min=%s, y_max=%s", tostring(area.areatableID), tostring(area.name), tostring(x1), tostring(x2), tostring(y1), tostring(y2)))
+      else
+        print(string.format("  Checking zone: areatableID=%s, name=%s, x_min=%s, x_max=%s, y_min=%s, y_max=%s", tostring(area.areatableID), tostring(area.name), tostring(x1), tostring(x2), tostring(y1), tostring(y2)))
+      end
+
+      if pos_x >= x1 and pos_x <= x2 and pos_y >= y1 and pos_y <= y2 then
+        matches_found = matches_found + 1
+        if is_debug_object then
+          print(string.format("    -> [DEBUG] Coordinates INSIDE this zone! (match #%d)", matches_found))
+        else
+          print("    -> Coordinates INSIDE this zone!")
+        end
+
+        if tonumber(area.areatableID) > 0 then
+          local areaX = ((pos_x - x1) / (x2 - x1)) * 100
+          local areaY = ((pos_y - y1) / (y2 - y1)) * 100
+          if is_debug_object then
+            print(string.format("    -> [DEBUG] Returning areatableID=%s, areaX=%.2f, areaY=%.2f", tostring(area.areatableID), areaX, areaY))
+          else
+            print(string.format("    -> Returning areatableID=%s, areaX=%.2f, areaY=%.2f", tostring(area.areatableID), areaX, areaY))
+          end
+          return area.areatableID, areaX, areaY
+        else
+          if is_debug_object then
+            print("    -> [DEBUG] This is a global zone (areatableID=0), saving as fallback.")
+          else
+            print("    -> This is a global zone (areatableID=0), saving as fallback.")
+          end
+          fallback = area
+        end
+      else
+        if is_debug_object then
+          if not (pos_x >= x1 and pos_x <= x2) then
+            print(string.format("    -> [DEBUG] pos_x=%s NOT in [%s, %s]", tostring(pos_x), tostring(x1), tostring(x2)))
+          end
+          if not (pos_y >= y1 and pos_y <= y2) then
+            print(string.format("    -> [DEBUG] pos_y=%s NOT in [%s, %s]", tostring(pos_y), tostring(y1), tostring(y2)))
+          end
+        else
+          if not (pos_x >= x1 and pos_x <= x2) then
+            print(string.format("    -> pos_x=%s NOT in [%s, %s]", tostring(pos_x), tostring(x1), tostring(x2)))
+          end
+          if not (pos_y >= y1 and pos_y <= y2) then
+            print(string.format("    -> pos_y=%s NOT in [%s, %s]", tostring(pos_y), tostring(y1), tostring(y2)))
+          end
+        end
+      end
+    end
+  end
+
+  if is_debug_object then
+    print(string.format("*** DEBUG SUMMARY: Found %d matches for GameObject 30 ***", matches_found))
+  end
+
+  if fallback then
+    local x1 = tonumber(fallback.x_min)
+    local x2 = tonumber(fallback.x_max)
+    local y1 = tonumber(fallback.y_min)
+    local y2 = tonumber(fallback.y_max)
+    local areaX = ((pos_x - x1) / (x2 - x1)) * 100
+    local areaY = ((pos_y - y1) / (y2 - y1)) * 100
+    print(string.format("    -> Using fallback global zone: areatableID=0, areaX=%.2f, areaY=%.2f", areaX, areaY))
+    return fallback.areatableID, areaX, areaY
+  end
+  print("    -> No zone found for these coordinates!")
+  return nil, nil, nil
 end
 
 -- Map validation function (placeholder)
@@ -840,6 +1014,8 @@ if config.expansions[expansion_to_process] then
             error("Database connection failed: " .. (err or "unknown error"))
         end
         print("Database connection successful!")
+        -- Теперь можно загрузить зоны
+        worldmap_areas = load_worldmap_areas()
     end
 
   do -- database query functions
@@ -1035,9 +1211,6 @@ if config.expansions[expansion_to_process] then
                       print("DEBUG: Found zone " .. final_zone .. " via WorldMapArea for NPC 3139")
                     end
                   else
-                    if id == 3139 then
-                      print("DEBUG: No WorldMapArea zone found for NPC 3139 coords:", x, y, "map:", map_id)
-                    end
                     -- No valid zone found, skip this coordinate and print a warning
                     print("WARNING: No valid zone/area found for NPC " .. id .. " at coords:", x, y, "map:", map_id)
                     final_zone = nil
@@ -1052,16 +1225,41 @@ if config.expansions[expansion_to_process] then
 
               -- Only add coordinate if final_zone is valid
               if final_zone then
-                -- Convert world coordinates to zone percentage (simplified)
-                local zone_x = math.floor((x + 17066) / 340 * 100) / 100
-                local zone_y = math.floor((y + 17066) / 340 * 100) / 100
+                -- Get zone boundaries for coordinate conversion
+                local zone_query = mysql:execute([[
+                  SELECT x_min, x_max, y_min, y_max FROM worldmaparea_wotlk
+                  WHERE areatableID = ]] .. final_zone .. [[
+                  LIMIT 1
+                ]])
 
-                -- Clamp to 0-100 range
-                zone_x = math.max(0, math.min(100, zone_x))
-                zone_y = math.max(0, math.min(100, zone_y))
+                if zone_query then
+                  local zone_data = {}
+                  if zone_query:fetch(zone_data, "a") then
+                    local x_min = tonumber(zone_data.x_min)
+                    local x_max = tonumber(zone_data.x_max)
+                    local y_min = tonumber(zone_data.y_min)
+                    local y_max = tonumber(zone_data.y_max)
 
-                local coord = { zone_x, zone_y, final_zone, 0 }
-                table.insert(ret, coord)
+                    if x_min and x_max and y_min and y_max then
+                      -- Convert using proper WorldMapArea boundaries (TrinityCore formula)
+                      local zone_x = ((x - x_min) / (x_max - x_min)) * 100
+                      local zone_y = ((y - y_min) / (y_max - y_min)) * 100
+
+                      -- Clamp to 0-100 range
+                      zone_x = math.max(0, math.min(100, zone_x))
+                      zone_y = math.max(0, math.min(100, zone_y))
+
+                      local coord = { zone_x, zone_y, final_zone, 0 }
+                      table.insert(ret, coord)
+                    else
+                      print("WARNING: Invalid zone boundaries for areatableID " .. final_zone)
+                    end
+                  else
+                    print("WARNING: Could not get zone boundaries for areatableID " .. final_zone)
+                  end
+                else
+                  print("WARNING: Zone boundary query failed for areatableID " .. final_zone)
+                end
               else
                 print("WARNING: Skipping NPC " .. id .. " due to missing valid zone/area.")
               end
@@ -1103,19 +1301,81 @@ if config.expansions[expansion_to_process] then
               -- Use area_id if available, otherwise zone_id
               local final_zone = area_id and area_id > 0 and area_id or zone_id and zone_id > 0 and zone_id or nil
 
+              -- If no zone info, try to find it via WorldMapArea DBC
+              if not final_zone then
+                local worldmap_query = mysql:execute([[
+                  SELECT areatableID FROM worldmaparea_wotlk
+                  WHERE mapID = ]] .. map_id .. [[
+                    AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
+                    AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
+                    AND areatableID > 0
+                  ORDER BY (x_max - x_min) * (y_max - y_min) ASC
+                  LIMIT 1
+                ]])
+                if worldmap_query then
+                  local worldmap_result = {}
+                  if worldmap_query:fetch(worldmap_result, "a") then
+                    final_zone = tonumber(worldmap_result.areatableID)
+                    -- Debug for GameObject 30
+                    if id == 195200 then
+                      print("DEBUG: Found zone " .. final_zone .. " via WorldMapArea for GameObject " .. id)
+                    end
+                  else
+                    -- Check if coordinates are in any global zone (areatableID=0)
+                    local global_query = mysql:execute([[
+                      SELECT areatableID FROM worldmaparea_wotlk
+                      WHERE mapID = ]] .. map_id .. [[
+                        AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
+                        AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
+                        AND areatableID = 0
+                      LIMIT 1
+                    ]])
+                    if global_query then
+                      local global_result = {}
+                      if global_query:fetch(global_result, "a") then
+                        final_zone = 0  -- Use global zone as fallback
+                        if id == 195200 then
+                          print("DEBUG: Using global zone for GameObject " .. id)
+                        end
+                      else
+                        print("WARNING: No valid zone/area for GameObject " .. id .. " at coords:", x, y, "map:", map_id)
+                        final_zone = nil
+                      end
+                    end
+                  end
+                end
+              end
+
               if final_zone then
-                -- Convert world coordinates to zone percentage (simplified)
-                local zone_x = math.floor((x + 17066) / 340 * 100) / 100
-                local zone_y = math.floor((y + 17066) / 340 * 100) / 100
+                -- Get zone boundaries for coordinate conversion
+                local zone_query = mysql:execute([[
+                  SELECT x_min, x_max, y_min, y_max FROM worldmaparea_wotlk
+                  WHERE areatableID = ]] .. final_zone .. [[
+                  LIMIT 1
+                ]])
 
-                -- Clamp to 0-100 range
-                zone_x = math.max(0, math.min(100, zone_x))
-                zone_y = math.max(0, math.min(100, zone_y))
+                if zone_query then
+                  local zone_data = {}
+                  if zone_query:fetch(zone_data, "a") then
+                    local x_min = tonumber(zone_data.x_min)
+                    local x_max = tonumber(zone_data.x_max)
+                    local y_min = tonumber(zone_data.y_min)
+                    local y_max = tonumber(zone_data.y_max)
 
-                local coord = { zone_x, zone_y, final_zone, 0 }
-                table.insert(ret, coord)
-              else
-                print("WARNING: No valid zone/area for GameObject " .. id .. " at coords:", x, y, "map:", map_id)
+                    if x_min and x_max and y_min and y_max then
+                      -- Convert using proper WorldMapArea boundaries (TrinityCore formula)
+                      local zone_x = ((x - x_min) / (x_max - x_min)) * 100
+                      local zone_y = ((y - y_min) / (y_max - y_min)) * 100
+
+                      -- Clamp to 0-100 range
+                      zone_x = math.max(0, math.min(100, zone_x))
+                      zone_y = math.max(0, math.min(100, zone_y))
+
+                      local coord = { zone_x, zone_y, final_zone, 0 }
+                      table.insert(ret, coord)
+                    end
+                  end
+                end
               end
             end
           end
@@ -1272,8 +1532,12 @@ if config.expansions[expansion_to_process] then
 
         for id, coords in pairs(GetCreatureCoords(entry)) do
           local x, y, zone, respawn = unpack(coords)
+          -- GetCreatureCoords уже возвращает правильные координаты в зонном формате (0-100)
+          -- и правильный areatableID, поэтому просто добавляем их без дополнительной обработки
           if debug("units_coords") then break end
-          table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
+          if zone and x and y then -- Добавляем только если есть валидные данные
+            table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
+          end
         end
 
         if core ~= "vmangos" then
@@ -1501,7 +1765,12 @@ if config.expansions[expansion_to_process] then
         for id,coords in pairs(GetGameObjectCoords(entry)) do
           if debug("objects_coords") then break end
           local x, y, zone, respawn = unpack(coords)
-          table.insert(pfDB["objects"][data][entry]["coords"], { x, y, zone, respawn })
+          -- Проверяем есть ли валидная зона
+          if zone and zone >= 0 then -- Разрешаем зону 0 (глобальная зона)
+            table.insert(pfDB["objects"][data][entry]["coords"], { x, y, zone, respawn })
+          else
+            print(string.format("WARNING: GameObject %s has no valid zone at x=%s, y=%s", tostring(entry), tostring(x), tostring(y)))
+          end
         end
       end
 
@@ -2098,7 +2367,8 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_starterunit") then break end
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["U"] = pfDB["quests"][data][entry]["start"]["U"] or {}
-                      table.insert(pfDB["quests"][data][entry]["start"]["U"], tonumber(creature_questrelation.id))
+                      local npc_id = tonumber(creature_questrelation.id)
+                      table.insert(pfDB["quests"][data][entry]["start"]["U"], npc_id)
                   end
               end
 
@@ -2151,7 +2421,8 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_enderunit") then break end
                       pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
                       pfDB["quests"][data][entry]["end"]["U"] = pfDB["quests"][data][entry]["end"]["U"] or {}
-                      table.insert(pfDB["quests"][data][entry]["end"]["U"], tonumber(creature_involvedrelation.id))
+                      local npc_id = tonumber(creature_involvedrelation.id)
+                      table.insert(pfDB["quests"][data][entry]["end"]["U"], npc_id)
                   end
               end
 
@@ -2887,16 +3158,7 @@ if config.expansions[expansion_to_process] then
   serialize(output .. string.format("objects%s.lua", exp), "pfDB[\"objects\"][\""..data.."\"]", pfDB["objects"][data])
   serialize(output .. string.format("items%s.lua", exp), "pfDB[\"items\"][\""..data.."\"]", pfDB["items"][data])
   serialize(output .. string.format("refloot%s.lua", exp), "pfDB[\"refloot\"][\""..data.."\"]", pfDB["refloot"][data])
-  -- Очистка некорректных U-таблиц перед сериализацией квестов
-for _, quest in pairs(pfDB["quests"][data]) do
-  if quest.start and type(quest.start.U) == "table" and (not next(quest.start.U) or tostring(quest.start.U):find('table:')) then
-    quest.start.U = {}
-  end
-  if quest["end"] and type(quest["end"].U) == "table" and (not next(quest["end"].U) or tostring(quest["end"].U):find('table:')) then
-    quest["end"].U = {}
-  end
-end
-serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
+  serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
   serialize(output .. string.format("quests-itemreq%s.lua", exp), "pfDB[\"quests-itemreq\"][\""..data.."\"]", pfDB["quests-itemreq"][data])
   serialize(output .. string.format("zones%s.lua", exp), "pfDB[\"zones\"][\""..data.."\"]", pfDB["zones"][data])
   serialize(output .. string.format("minimap%s.lua", exp), "pfDB[\"minimap"..exp.."\"]", pfDB["minimap"..exp])
