@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 15000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
@@ -215,6 +215,7 @@ function serialize_value(file, value, indent)
     local is_small = smalltable(value)
     local is_coords = is_coords_table(value)
     local is_unit = is_unit_table(value)
+    local is_quest = is_quest_table(value)
 
     if is_small then
       local init
@@ -251,8 +252,8 @@ function serialize_value(file, value, indent)
       end
       line = line .. "}"
       file:write(line)
-    elseif is_unit then
-      -- Serialize unit table compactly: {["coords"]={...},["lvl"]="...",["fac"]="..."}
+    elseif is_unit or is_quest then
+      -- Serialize unit/quest table compactly: {["coords"]={...},["lvl"]="...",["fac"]="..."}
       local init
       local line = "{"
       local keys = {}
@@ -265,7 +266,7 @@ function serialize_value(file, value, indent)
         local v = value[k]
         line = line .. (init and "," or "") .. "[" .. string.format("%q", k) .. "]="
         if type(v) == "table" then
-          -- Handle coords table inside unit
+          -- Handle nested tables recursively but compactly
           if is_coords_table(v) then
             local coord_line = "{"
             local coord_init
@@ -285,11 +286,45 @@ function serialize_value(file, value, indent)
             end
             coord_line = coord_line .. "}"
             line = line .. coord_line
+          elseif smalltable(v) then
+            -- Handle small arrays like {20000} or {16305,16305}
+            local small_line = "{"
+            local small_init
+            for _, sv in ipairs(v) do
+              small_line = small_line .. (small_init and "," or "") .. tostring(sv)
+              if not small_init then small_init = true end
+            end
+            small_line = small_line .. "}"
+            line = line .. small_line
           else
-            line = line .. "{}"
+            -- Handle other nested tables compactly
+            local nested_line = "{"
+            local nested_init
+            local nested_keys = {}
+            for nk in pairs(v) do table.insert(nested_keys, nk) end
+            table.sort(nested_keys)
+            for _, nk in ipairs(nested_keys) do
+              local nv = v[nk]
+              nested_line = nested_line .. (nested_init and "," or "") .. "[" .. string.format("%q", tostring(nk)) .. "]="
+              if type(nv) == "table" and smalltable(nv) then
+                local inner_small = "{"
+                local inner_init
+                for _, isv in ipairs(nv) do
+                  inner_small = inner_small .. (inner_init and "," or "") .. tostring(isv)
+                  if not inner_init then inner_init = true end
+                end
+                inner_small = inner_small .. "}"
+                nested_line = nested_line .. inner_small
+              else
+                nested_line = nested_line .. (type(nv) == "string" and string.format("%q", nv) or tostring(nv))
+              end
+              if not nested_init then nested_init = true end
+            end
+            nested_line = nested_line .. "}"
+            line = line .. nested_line
           end
         else
-          line = line .. string.format("%q", tostring(v))
+          line = line .. (type(v) == "string" and string.format("%q", tostring(v)) or (type(v) == "boolean" and tostring(v) or tostring(v)))
         end
         if not init then
           init = true
@@ -394,6 +429,24 @@ function is_unit_table(tbl)
     -- coords should be a table, others should be strings or numbers
     if k == "coords" and type(v) ~= "table" then return false end
     if k ~= "coords" and type(v) ~= "string" and type(v) ~= "number" then return false end
+  end
+
+  return true
+end
+
+-- Check if table is quest-like structure: { class = ..., lvl = ..., obj = {...}, etc }
+-- Should be serialized compactly on one line
+function is_quest_table(tbl)
+  local size = tblsize(tbl)
+  if size < 1 then return false end
+
+  -- Check that it only contains known quest fields
+  for k, v in pairs(tbl) do
+    if k ~= "class" and k ~= "lvl" and k ~= "min" and k ~= "obj" and k ~= "race" and
+       k ~= "skill" and k ~= "end" and k ~= "start" and k ~= "pre" and k ~= "chain" and
+       k ~= "event" and k ~= "repeatable" and k ~= "srcitem" then
+      return false
+    end
   end
 
   return true
@@ -1547,10 +1600,25 @@ if config.expansions[expansion_to_process] then
     local quest_pk_column = (core == "acore" and "ID" or "entry") -- Added for AzerothCore
     local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
     local query_string = 'SELECT * FROM quest_template ORDER BY quest_template.' .. quest_pk_column .. limit_clause
+
+    -- Count total quests first for progress
+    local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template' .. limit_clause)
+    local count_result = {}
+    count_query:fetch(count_result, "a")
+    local total_quests = tonumber(count_result.total) or 0
+    print("  Processing " .. total_quests .. " quests...")
+
     local query = mysql:execute(query_string) -- Modified for AzerothCore
     if query then
+      local processed = 0
       while query:fetch(quest_template, "a") do
       if debug("quests") then break end
+
+        processed = processed + 1
+        -- Show progress every 1000 quests
+        if processed % 1000 == 0 then
+          print("  Processed " .. processed .. "/" .. total_quests .. " quests (" .. math.floor(processed/total_quests*100) .. "%)")
+        end
 
         local entry = tonumber(quest_template[quest_pk_column]) -- Modified for AzerothCore
         local quest_id = quest_template[quest_pk_column] or quest_template.entry -- For SQL queries
@@ -1920,8 +1988,9 @@ if config.expansions[expansion_to_process] then
 
               -- quest starter
               local creature_questrelation = {}
+              local starter_table = (core == "acore" and "creature_queststarter" or "creature_questrelation")
               local sql = [[
-          SELECT * FROM creature_questrelation WHERE creature_questrelation.quest = ]] .. quest_id
+          SELECT * FROM ]] .. starter_table .. [[ WHERE ]] .. starter_table .. [[.quest = ]] .. quest_id
               local query = mysql:execute(sql)
               if query then
                   while query:fetch(creature_questrelation, "a") do
@@ -1933,8 +2002,9 @@ if config.expansions[expansion_to_process] then
               end
 
               local gameobject_questrelation = {}
+              local go_starter_table = (core == "acore" and "gameobject_queststarter" or "gameobject_questrelation")
               local sql = [[
-          SELECT * FROM gameobject_questrelation WHERE gameobject_questrelation.quest = ]] .. quest_id
+          SELECT * FROM ]] .. go_starter_table .. [[ WHERE ]] .. go_starter_table .. [[.quest = ]] .. quest_id
               local query = mysql:execute(sql)
               if query then
                   while query:fetch(gameobject_questrelation, "a") do
@@ -1971,8 +2041,9 @@ if config.expansions[expansion_to_process] then
 
               -- quest ender
               local creature_involvedrelation = {}
+              local ender_table = (core == "acore" and "creature_questender" or "creature_involvedrelation")
               local sql = [[
-          SELECT * FROM creature_involvedrelation WHERE creature_involvedrelation.quest = ]] .. quest_id
+          SELECT * FROM ]] .. ender_table .. [[ WHERE ]] .. ender_table .. [[.quest = ]] .. quest_id
               local query = mysql:execute(sql)
               if query then
                   while query:fetch(creature_involvedrelation, "a") do
@@ -1985,8 +2056,9 @@ if config.expansions[expansion_to_process] then
 
               local gameobject_involvedrelation = {}
               local first = true
+              local go_ender_table = (core == "acore" and "gameobject_questender" or "gameobject_involvedrelation")
               local sql = [[
-          SELECT * FROM gameobject_involvedrelation WHERE gameobject_involvedrelation.quest = ]] .. quest_id
+          SELECT * FROM ]] .. go_ender_table .. [[ WHERE ]] .. go_ender_table .. [[.quest = ]] .. quest_id
               local query = mysql:execute(sql)
               if query then
                   while query:fetch(gameobject_involvedrelation, "a") do
