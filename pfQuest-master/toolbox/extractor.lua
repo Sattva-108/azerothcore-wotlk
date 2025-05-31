@@ -8,8 +8,8 @@
 -- ================================================================
 
 -- Main extraction settings
-local FULL_EXTRACTION = false      -- true = extract everything, false = use limits
-local DEBUG_EXTRACTION = true      -- true = enable debug limits, false = no limits
+local FULL_EXTRACTION = true      -- true = extract everything, false = use limits
+local DEBUG_EXTRACTION = false      -- true = enable debug limits, false = no limits
 local ENTRY_LIMIT = 108            -- Number of entries to process (when DEBUG_EXTRACTION = true)
 
 -- Progress display settings
@@ -30,6 +30,12 @@ print("================================================================")
 
 -- path to the modules
 package.path = package.path .. ';./lua-sql-mysql/src/?.lua;./sha1/?.lua'
+
+---@diagnostic disable-next-line: undefined-global
+local jit = jit
+
+local jit_version = jit and jit.version or "Not available"
+print("JIT version: " .. jit_version)
 
 -- Определение версии Lua (исправлено)
 local lua_version_string = "Lua 5.1" -- Используем английское имя переменной
@@ -1121,7 +1127,7 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all items
     local item_template = {}
-    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
+    local limit_clause = ' LIMIT 50' or ''
     local query = mysql:execute('SELECT entry, name FROM item_template ORDER BY entry ASC' .. limit_clause)
     if query then
       while query:fetch(item_template, "a") do
@@ -1301,7 +1307,7 @@ if config.expansions[expansion_to_process] then
     -- iterate over all quests (LIMITED FOR TESTING)
     local quest_template = {}
     local quest_pk_column = (core == "acore" and "ID" or "entry") -- Added for AzerothCore
-    local limit_clause = config.debug and ' LIMIT 1000' or ''
+    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
     local query_string = 'SELECT * FROM quest_template ORDER BY quest_template.' .. quest_pk_column .. limit_clause
     local query = mysql:execute(query_string) -- Modified for AzerothCore
     if query then
@@ -1766,7 +1772,7 @@ if config.expansions[expansion_to_process] then
     if core == "acore" then
       -- For AzerothCore, extract zones from creature spawns since AreaTable_vanilla is empty
       local zones = {}
-      local limit_clause = config.debug and ' LIMIT 100' or ' LIMIT 500'
+      local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
       local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0' .. limit_clause)
       if query then
         while query:fetch(zones, "a") do
@@ -1962,7 +1968,7 @@ if config.expansions[expansion_to_process] then
       if core == "acore" then
         -- For AzerothCore, use loaded DBC Lock table
         local gameobject_template = {}
-        local limit_clause = FAST_MODE and ' LIMIT 50' or ''
+        local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
         local query = mysql:execute([[
           SELECT * FROM `gameobject_template`, Lock_]]..expansion..[[
           WHERE `type` = 3 AND `locktype` = 2 AND `flags` = 0 AND `data1` > 0 and id = data0 GROUP BY `gameobject_template`.entry ORDER BY `gameobject_template`.entry ASC]] .. limit_clause .. [[
@@ -2093,7 +2099,7 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_gameobject = {}
         local locale_code = GetLocaleCode(loc)
-        local limit_clause = FAST_MODE and ' LIMIT 100' or ''
+        local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
 
         -- Try simple query without locale table since it may not exist
         local query = mysql:execute('SELECT entry, name FROM gameobject_template ORDER BY entry ASC' .. limit_clause)
@@ -2159,7 +2165,7 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_item = {}
         local locale_code = GetLocaleCode(loc)
-        local limit_clause = FAST_MODE and ' LIMIT 100' or ''
+        local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
 
         local query = mysql:execute('SELECT item_template.entry, item_template.name, item_template_locale.Name AS locale_name FROM item_template LEFT JOIN item_template_locale ON item_template_locale.ID = item_template.entry AND item_template_locale.locale = \'' .. locale_code .. '\' ORDER BY item_template.entry ASC' .. limit_clause)
 
@@ -2224,7 +2230,7 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_quest = {}
         local locale_code = GetLocaleCode(loc)
-        local limit_clause = FAST_MODE and ' LIMIT 100' or ''
+        local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
 
         local query = mysql:execute('SELECT quest_template.ID, quest_template.LogTitle, quest_template.QuestDescription, quest_template.LogDescription, quest_template_locale.Title AS locale_title, quest_template_locale.Details AS locale_details, quest_template_locale.Objectives AS locale_objectives FROM quest_template LEFT JOIN quest_template_locale ON quest_template_locale.ID = quest_template.ID AND quest_template_locale.locale = \'' .. locale_code .. '\' ORDER BY quest_template.ID ASC' .. limit_clause)
 
@@ -2354,7 +2360,7 @@ if config.expansions[expansion_to_process] then
       local table_name = "AreaTable_" .. expansion
       print("  Attempting to query zones from table: " .. table_name)
 
-      local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. math.min(ENTRY_LIMIT, 50)) or ''
+      local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. ENTRY_LIMIT) or ''
       local query = mysql:execute('SELECT * FROM ' .. table_name .. ' ORDER BY id ASC' .. limit_clause)
       if query then
         while query:fetch(locales_zones, "a") do
