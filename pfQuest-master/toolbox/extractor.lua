@@ -906,8 +906,26 @@ if config.expansions[expansion_to_process] then
       local worldmap = {}
       local ret = {}
 
-      -- DISABLED: pfquest DBC data not available in AzerothCore
+      -- Try pfquest DBC data first, then fall back to basic coordinate conversion
       if core == "acore" then
+        -- Basic coordinate conversion for AzerothCore without pfquest
+        local zone_map = {
+          [0] = 12,      -- Eastern Kingdoms -> Elwynn Forest
+          [1] = 14,      -- Kalimdor -> Durotar
+          [530] = 3520,  -- Outland -> Hellfire Peninsula
+          [571] = 65     -- Northrend -> Dragonblight
+        }
+
+        local zone_id = zone_map[m] or m
+        if zone_id and x and y then
+          -- Simple world to zone coordinate conversion
+          local zone_x = ((x + 17066.666) / 533.33333) * 100
+          local zone_y = ((y + 17066.666) / 533.33333) * 100
+          zone_x = math.max(0, math.min(100, zone_x))
+          zone_y = math.max(0, math.min(100, zone_y))
+          local coord = { zone_x, zone_y, zone_id, 0 }
+          table.insert(ret, coord)
+        end
         return ret
       end
 
