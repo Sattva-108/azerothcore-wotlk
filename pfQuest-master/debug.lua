@@ -82,8 +82,18 @@ SlashCmdList["PFTEST"] = function()
     local workingQuests = findWorkingQuests()
 
     if #workingQuests > 0 then
-        print("✅ Found " .. #workingQuests .. " working quests:")
-        for i, questId in ipairs(workingQuests) do
+        print("✅ Found " .. #workingQuests .. " working quests!")
+
+        -- Show only first 10 as examples
+        local maxToShow = math.min(10, #workingQuests)
+        if maxToShow < #workingQuests then
+            print("📋 Showing first " .. maxToShow .. " examples:")
+        else
+            print("📋 Complete list:")
+        end
+
+        for i = 1, maxToShow do
+            local questId = workingQuests[i]
             -- Get quest name, handle if it's a table
             local questName = "Quest " .. questId
             if pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][questId] then

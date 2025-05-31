@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
@@ -324,7 +324,22 @@ function serialize_value(file, value, indent)
             line = line .. nested_line
           end
         else
-          line = line .. (type(v) == "string" and string.format("%q", tostring(v)) or (type(v) == "boolean" and tostring(v) or tostring(v)))
+          -- Debug: log when we encounter unhandled table structures
+          if type(v) == "table" then
+            print("WARNING: Unhandled table structure in quest " .. (entry or "unknown") .. ", field '" .. tostring(k) .. "' - using empty table fallback")
+            -- Optional: print more details about the problematic table
+            local table_info = "Table size: " .. tblsize(v) .. ", keys: "
+            local key_sample = {}
+            local count = 0
+            for tk, tv in pairs(v) do
+              count = count + 1
+              if count <= 3 then -- Show first 3 keys
+                table.insert(key_sample, tostring(tk) .. "=" .. type(tv))
+              end
+            end
+            print("  " .. table_info .. table.concat(key_sample, ", ") .. (count > 3 and "..." or ""))
+          end
+          line = line .. (type(v) == "string" and string.format("%q", tostring(v)) or (type(v) == "boolean" and tostring(v) or (type(v) == "table" and "{}" or tostring(v))))
         end
         if not init then
           init = true
@@ -664,10 +679,20 @@ function removedupes(tab)
   local _vals = {}
   local result = {}
   for _, k in pairs(tab) do
-    local key = table.concat(k, ",")  -- Create a unique key for each coordinate set
-    if not _vals[key] then
-      _vals[key] = true
-      table.insert(result, k)
+    -- Check if coordinate array is valid (no nil values)
+    if k and #k >= 3 and k[1] and k[2] and k[3] then
+      local key = table.concat(k, ",")  -- Create a unique key for each coordinate set
+      if not _vals[key] then
+        _vals[key] = true
+        table.insert(result, k)
+      end
+    else
+      -- Skip invalid coordinates with safer error reporting
+      if k then
+        print("WARNING: Skipping invalid coordinate array, length:", #k, "values:", tostring(k[1]), tostring(k[2]), tostring(k[3]))
+      else
+        print("WARNING: Skipping nil coordinate")
+      end
     end
   end
   return result
@@ -929,8 +954,8 @@ if config.expansions[expansion_to_process] then
       if core == "acore" then
         -- HARDCODED ZONE MAPPING for AzerothCore (since zoneId/areaId are empty)
         local zone_map = {
-          [0] = 1519,    -- Eastern Kingdoms -> Stormwind City zone (testing)
-          [1] = 1637,    -- Kalimdor -> Orgrimmar zone (testing)
+          [0] = 12,      -- Eastern Kingdoms -> Elwynn Forest
+          [1] = 14,      -- Kalimdor -> Durotar (correct zone for quest 784!)
           [530] = 3520,  -- Outland -> Hellfire Peninsula
           [571] = 65     -- Northrend -> Dragonblight
         }
@@ -954,8 +979,50 @@ if config.expansions[expansion_to_process] then
             local area_id = tonumber(creature_coords.areaId)
 
             if x and y and map_id then
-              -- Use hardcoded zone mapping
-              local final_zone = zone_map[map_id] or map_id
+              -- Use real zoneId/areaId from creature table, NO hardcoded mapping
+              local final_zone = area_id and area_id > 0 and area_id or
+                                zone_id and zone_id > 0 and zone_id or
+                                nil -- Let it be nil if no zone info
+
+              -- If no zone info, try to find it via WorldMapArea DBC
+              if not final_zone then
+                local worldmap_query = mysql:execute([[
+                  SELECT areatableID FROM worldmaparea_wotlk
+                  WHERE mapID = ]] .. map_id .. [[
+                    AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
+                    AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
+                  LIMIT 1
+                ]])
+                if worldmap_query then
+                  local worldmap_result = {}
+                  if worldmap_query:fetch(worldmap_result, "a") then
+                    final_zone = tonumber(worldmap_result.areatableID)
+                    if id == 3139 then
+                      print("DEBUG: Found zone " .. final_zone .. " via WorldMapArea for NPC 3139")
+                    end
+                  else
+                    if id == 3139 then
+                      print("DEBUG: No WorldMapArea zone found for NPC 3139 coords:", x, y, "map:", map_id)
+                    end
+                    -- Fallback zones for all maps
+                    if map_id == 1 then
+                      final_zone = 14  -- Durotar for Kalimdor
+                    elseif map_id == 0 then
+                      final_zone = 12  -- Elwynn Forest for Eastern Kingdoms
+                    else
+                      final_zone = map_id  -- Use map ID as zone ID for other maps
+                    end
+                    if id == 3139 then
+                      print("DEBUG: Using fallback zone " .. final_zone .. " for NPC 3139")
+                    end
+                  end
+                end
+              end
+
+              -- Debug: log zone usage for specific NPCs only
+              if id == 3139 then
+                print("DEBUG: NPC 3139 (quest 784) - coords:", x, y, "map:", map_id, "zone:", zone_id, "area:", area_id, "final_zone:", final_zone)
+              end
 
               -- Convert world coordinates to zone percentage (simplified)
               local zone_x = math.floor((x + 17066) / 340 * 100) / 100
