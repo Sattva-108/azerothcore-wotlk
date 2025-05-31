@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 50           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
@@ -488,6 +488,14 @@ function tablesubstract(t1, t2)
   return result
 end
 
+-- Helper to parse float with comma or dot
+function parse_float(val)
+  if type(val) == "string" then
+    val = val:gsub(",", ".")
+  end
+  return tonumber(val)
+end
+
 -- Map validation function (placeholder)
 function isValidMap(zone, x, y, expansion)
   -- Basic validation - always return true for now
@@ -890,10 +898,10 @@ if config.expansions[expansion_to_process] then
         local zone = areatrigger.areatableID
         local x = areatrigger.X
         local y = areatrigger.Y
-        local x_max = areatrigger.x_max
-        local x_min = areatrigger.x_min
-        local y_max = areatrigger.y_max
-        local y_min = areatrigger.y_min
+        local x_max = parse_float(areatrigger.x_max)
+        local x_min = parse_float(areatrigger.x_min)
+        local y_max = parse_float(areatrigger.y_max)
+        local y_min = parse_float(areatrigger.y_min)
         local px, py = 0, 0
 
         if x and y and x_min and y_min then
@@ -949,10 +957,10 @@ if config.expansions[expansion_to_process] then
       local query = mysql:execute(sql)
       while query:fetch(worldmap, "a") do
         local zone = worldmap.areatableID
-        local x_max = worldmap.x_max
-        local x_min = worldmap.x_min
-        local y_max = worldmap.y_max
-        local y_min = worldmap.y_min
+        local x_max = parse_float(worldmap.x_max)
+        local x_min = parse_float(worldmap.x_min)
+        local y_max = parse_float(worldmap.y_max)
+        local y_min = parse_float(worldmap.y_min)
         local px, py = 0, 0
 
         if x and y and x_min and y_min then
@@ -1030,17 +1038,9 @@ if config.expansions[expansion_to_process] then
                     if id == 3139 then
                       print("DEBUG: No WorldMapArea zone found for NPC 3139 coords:", x, y, "map:", map_id)
                     end
-                    -- Fallback zones for all maps
-                    if map_id == 1 then
-                      final_zone = 14  -- Durotar for Kalimdor
-                    elseif map_id == 0 then
-                      final_zone = 12  -- Elwynn Forest for Eastern Kingdoms
-                    else
-                      final_zone = map_id  -- Use map ID as zone ID for other maps
-                    end
-                    if id == 3139 then
-                      print("DEBUG: Using fallback zone " .. final_zone .. " for NPC 3139")
-                    end
+                    -- No valid zone found, skip this coordinate and print a warning
+                    print("WARNING: No valid zone/area found for NPC " .. id .. " at coords:", x, y, "map:", map_id)
+                    final_zone = nil
                   end
                 end
               end
@@ -1050,16 +1050,21 @@ if config.expansions[expansion_to_process] then
                 print("DEBUG: NPC 3139 (quest 784) - coords:", x, y, "map:", map_id, "zone:", zone_id, "area:", area_id, "final_zone:", final_zone)
               end
 
-              -- Convert world coordinates to zone percentage (simplified)
-              local zone_x = math.floor((x + 17066) / 340 * 100) / 100
-              local zone_y = math.floor((y + 17066) / 340 * 100) / 100
+              -- Only add coordinate if final_zone is valid
+              if final_zone then
+                -- Convert world coordinates to zone percentage (simplified)
+                local zone_x = math.floor((x + 17066) / 340 * 100) / 100
+                local zone_y = math.floor((y + 17066) / 340 * 100) / 100
 
-              -- Clamp to 0-100 range
-              zone_x = math.max(0, math.min(100, zone_x))
-              zone_y = math.max(0, math.min(100, zone_y))
+                -- Clamp to 0-100 range
+                zone_x = math.max(0, math.min(100, zone_x))
+                zone_y = math.max(0, math.min(100, zone_y))
 
-              local coord = { zone_x, zone_y, final_zone, 0 }
-              table.insert(ret, coord)
+                local coord = { zone_x, zone_y, final_zone, 0 }
+                table.insert(ret, coord)
+              else
+                print("WARNING: Skipping NPC " .. id .. " due to missing valid zone/area.")
+              end
             end
           end
         end
@@ -1096,19 +1101,22 @@ if config.expansions[expansion_to_process] then
 
             if x and y and map_id then
               -- Use area_id if available, otherwise zone_id
-              local final_zone = area_id and area_id > 0 and area_id or zone_id and zone_id > 0 and zone_id or map_id
+              local final_zone = area_id and area_id > 0 and area_id or zone_id and zone_id > 0 and zone_id or nil
 
-              -- Convert world coordinates to zone percentage (simplified)
-              local zone_x = math.floor((x + 17066) / 340 * 100) / 100
-              local zone_y = math.floor((y + 17066) / 340 * 100) / 100
+              if final_zone then
+                -- Convert world coordinates to zone percentage (simplified)
+                local zone_x = math.floor((x + 17066) / 340 * 100) / 100
+                local zone_y = math.floor((y + 17066) / 340 * 100) / 100
 
-              -- Clamp to 0-100 range
-              zone_x = math.max(0, math.min(100, zone_x))
-              zone_y = math.max(0, math.min(100, zone_y))
+                -- Clamp to 0-100 range
+                zone_x = math.max(0, math.min(100, zone_x))
+                zone_y = math.max(0, math.min(100, zone_y))
 
-              local coord = { zone_x, zone_y, final_zone, 0 }
-              table.insert(ret, coord)
-              -- Debug print removed to avoid spam
+                local coord = { zone_x, zone_y, final_zone, 0 }
+                table.insert(ret, coord)
+              else
+                print("WARNING: No valid zone/area for GameObject " .. id .. " at coords:", x, y, "map:", map_id)
+              end
             end
           end
         end
@@ -2243,10 +2251,10 @@ if config.expansions[expansion_to_process] then
           local mapID = minimap_size.mapID
           local areaID = minimap_size.areatableID
           local name = minimap_size.name
-          local x_min = minimap_size.x_min
-          local y_min = minimap_size.y_min
-          local x_max = minimap_size.x_max
-          local y_max = minimap_size.y_max
+          local x_min = parse_float(minimap_size.x_min)
+          local y_min = parse_float(minimap_size.y_min)
+          local x_max = parse_float(minimap_size.x_max)
+          local y_max = parse_float(minimap_size.y_max)
 
           local x = -1 * x_min + x_max
           local y = -1 * y_min + y_max
@@ -2268,10 +2276,10 @@ if config.expansions[expansion_to_process] then
           local mapID = minimap_size.mapID
           local areaID = minimap_size.areatableID
           local name = minimap_size.name
-          local x_min = minimap_size.x_min
-          local y_min = minimap_size.y_min
-          local x_max = minimap_size.x_max
-          local y_max = minimap_size.y_max
+          local x_min = parse_float(minimap_size.x_min)
+          local y_min = parse_float(minimap_size.y_min)
+          local x_max = parse_float(minimap_size.x_max)
+          local y_max = parse_float(minimap_size.y_max)
 
           local x = -1 * x_min + x_max
           local y = -1 * y_min + y_max

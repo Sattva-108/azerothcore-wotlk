@@ -130,6 +130,16 @@ if [ -d $root/$v ] && [ -f $root/$v/WorldMapArea.dbc.csv ]; then
       x_max=$(echo "$x_max" | sed 's/,/./g')
       y_max=$(echo "$y_max" | sed 's/,/./g')
 
+      # После парсинга и замены запятых:
+      x1=$x_min; x2=$x_max
+      y1=$y_min; y2=$y_max
+
+      # min/max через printf и sort (без bc)
+      x_min=$(printf "%s\n%s" "$x1" "$x2" | sort -n | head -n1)
+      x_max=$(printf "%s\n%s" "$x1" "$x2" | sort -n | tail -n1)
+      y_min=$(printf "%s\n%s" "$y1" "$y2" | sort -n | head -n1)
+      y_max=$(printf "%s\n%s" "$y1" "$y2" | sort -n | tail -n1)
+
       echo "INSERT INTO \`WorldMapArea_${v}\` VALUES ($zone, $map, $area, \"$name\", $x_min, $y_min, $x_max, $y_max);" >> $rootsql
     done
   fi
@@ -412,13 +422,13 @@ EOF
 for v in $versions; do
   echo "Expansion: $v"
 
-  Run WorldMapOverlay
-  Run AreaTrigger
+  # Run WorldMapOverlay
+  # Run AreaTrigger
   Run WorldMapArea
-  Run FactionTemplate
-  Run Lock
-  Run SkillLine
-  Run AreaTable
+  # Run FactionTemplate
+  # Run Lock
+  # Run SkillLine
+  # Run AreaTable
 done
 
 # Добавляем команду read в самом конце, чтобы окно не закрывалось
