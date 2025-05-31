@@ -33,18 +33,22 @@ CREATE TABLE \`WorldMapOverlay_${v}\` (
 EOF
 
   if [ -d $root/$v ] && [ -f $root/$v/WorldMapOverlay.dbc.csv ]; then
-    cat $root/$v/WorldMapOverlay.dbc.csv | tail -n +2 | sort -nt ',' -k3,3 | while read line; do
-      areaID=$(echo $line | cut -d "," -f 3)
-      zoneID=$(echo $line | cut -d "," -f 2)
-      texture=$(echo $line | cut -d "," -f 9)
-      textureWidth=$(echo $line | cut -d "," -f 10)
-      textureHeight=$(echo $line | cut -d "," -f 11)
-      offsetX=$(echo $line | cut -d "," -f 12)
-      offsetY=$(echo $line | cut -d "," -f 13)
-      top=$(echo $line | cut -d "," -f 14)
-      left=$(echo $line | cut -d "," -f 15)
-      bottom=$(echo $line | cut -d "," -f 16)
-      right=$(echo $line | cut -d "," -f 17)
+    cat $root/$v/WorldMapOverlay.dbc.csv | tail -n +2 | sort -nt ',' -k3,3 | while IFS= read -r line; do
+      # Remove quotes and split properly
+      line_clean=$(echo "$line" | sed 's/"//g')
+      IFS=',' read -ra FIELDS <<< "$line_clean"
+
+      areaID="${FIELDS[2]}"       # AreaID_1
+      zoneID="${FIELDS[1]}"       # MapAreaID  
+      texture="\"${FIELDS[8]}\""  # TextureName (re-add quotes)
+      textureWidth="${FIELDS[9]}"
+      textureHeight="${FIELDS[10]}"
+      offsetX="${FIELDS[11]}"
+      offsetY="${FIELDS[12]}"
+      top="${FIELDS[13]}"
+      left="${FIELDS[14]}"
+      bottom="${FIELDS[15]}"
+      right="${FIELDS[16]}"
 
       echo "INSERT INTO \`WorldMapOverlay_${v}\` VALUES ($areaID, $zoneID, $texture, $textureWidth, $textureHeight, $offsetX, $offsetY, $top, $left, $bottom, $right);" >> $rootsql
     done
@@ -108,20 +112,17 @@ CREATE TABLE \`WorldMapArea_${v}\` (
 
 EOF
 
-  if [ -d $root/$v ] && [ -f $root/$v/WorldMapArea.dbc.csv ]; then
+if [ -d $root/$v ] && [ -f $root/$v/WorldMapArea.dbc.csv ]; then
     cat $root/$v/WorldMapArea.dbc.csv | tail -n +2 | sort -nt ',' -k3,3 | while IFS= read -r line; do
-      # Remove quotes and split properly
-      line_clean=$(echo "$line" | sed 's/"//g')
-      IFS=',' read -ra FIELDS <<< "$line_clean"
-
-      zone="${FIELDS[0]}"
-      map="${FIELDS[1]}"
-      area="${FIELDS[2]}"
-      name="\"${FIELDS[3]}\""  # Re-add quotes for name
-      x_min="${FIELDS[4]}"
-      y_min="${FIELDS[5]}"
-      x_max="${FIELDS[6]}"
-      y_max="${FIELDS[7]}"
+      # Парсим CSV с учетом кавычек
+      zone=$(echo "$line" | cut -d'"' -f2)
+      map=$(echo "$line" | cut -d'"' -f4) 
+      area=$(echo "$line" | cut -d'"' -f6)
+      name=$(echo "$line" | cut -d'"' -f8)
+      x_min=$(echo "$line" | cut -d'"' -f10)
+      y_min=$(echo "$line" | cut -d'"' -f12)
+      x_max=$(echo "$line" | cut -d'"' -f14)
+      y_max=$(echo "$line" | cut -d'"' -f16)
 
       # Convert comma decimals to dot decimals for MySQL
       x_min=$(echo "$x_min" | sed 's/,/./g')
@@ -129,7 +130,7 @@ EOF
       x_max=$(echo "$x_max" | sed 's/,/./g')
       y_max=$(echo "$y_max" | sed 's/,/./g')
 
-      echo "INSERT INTO \`WorldMapArea_${v}\` VALUES ($zone, $map, $area, $name, $y_max, $y_min, $x_max, $x_min);" >> $rootsql
+      echo "INSERT INTO \`WorldMapArea_${v}\` VALUES ($zone, $map, $area, \"$name\", $x_min, $y_min, $x_max, $y_max);" >> $rootsql
     done
   fi
 }
