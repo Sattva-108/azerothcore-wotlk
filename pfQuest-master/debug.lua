@@ -363,4 +363,108 @@ function TableCount(t)
     return count
 end
 
-print("✅ Enhanced pfQuest debug loaded! Use /pftest and /pfq <questID>")
+print("✅ Enhanced pfQuest debug loaded! Use /pftest и /pfq <questID>")
+
+-- === ГЛУБОКАЯ ПРОВЕРКА ДЛЯ /pfq ===
+SLASH_PFQDEEP1 = "/pfqdeep"
+SlashCmdList["PFQDEEP"] = function(msg)
+  local qid = tonumber(msg)
+  if not qid then print("Использование: /pfqdeep <questID>") return end
+  print("=== pfQuest Deep Map Debug for QuestID:", qid, "===")
+
+  -- 1. Проверка наличия квеста
+  local quest = pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][qid]
+  if not quest then print("❌ Quest not found in pfDB[quests][loc]") return end
+  print("✅ Quest found:", quest.T or "(no title)")
+
+  -- 2. Проверка стартера/финишера
+  local qdata = pfDB["quests"] and pfDB["quests"]["data"] and pfDB["quests"]["data"][qid]
+  local starter, finisher = qdata and qdata.start, qdata and qdata["end"]
+  if starter then
+    print("✅ Starter:", starter.U and starter.U[1] or starter.O and starter.O[1] or starter.I and starter.I[1] or "Unknown")
+  else
+    print("❌ No starter info")
+  end
+  if finisher then
+    print("✅ Finisher:", finisher.U and finisher.U[1] or finisher.O and finisher.O[1] or "Unknown")
+  else
+    print("❌ No finisher info")
+  end
+
+  -- 3. Проверка целей (units/objects/coords)
+  local objectives = qdata and qdata.obj or {}
+  if objectives.U then
+    for _, unitId in ipairs(objectives.U) do
+      local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
+      if unit and unit.coords and #unit.coords > 0 then
+        print("✅ Unit objective:", unitId, "coords:", unit.coords[1][1], unit.coords[1][2], "zone:", unit.coords[1][3])
+      else
+        print("❌ Unit", unitId, "has no coords!")
+      end
+    end
+  end
+  if objectives.O then
+    for _, objId in ipairs(objectives.O) do
+      local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objId]
+      if obj and obj.coords and #obj.coords > 0 then
+        print("✅ Object objective:", objId, "coords:", obj.coords[1][1], obj.coords[1][2], "zone:", obj.coords[1][3])
+      else
+        print("❌ Object", objId, "has no coords!")
+      end
+    end
+  end
+
+  -- 4. Проверка зоны
+  local zoneid = nil
+  if starter and starter.U and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][starter.U[1]] and pfDB["units"]["data"][starter.U[1]].coords then
+    zoneid = pfDB["units"]["data"][starter.U[1]].coords[1][3]
+  elseif objectives.U and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][objectives.U[1]] and pfDB["units"]["data"][objectives.U[1]].coords then
+    zoneid = pfDB["units"]["data"][objectives.U[1]].coords[1][3]
+  end
+  if zoneid then
+    local zoneinfo = pfDB["zones"] and pfDB["zones"]["data"] and pfDB["zones"]["data"][zoneid]
+    if zoneinfo then
+      print("✅ Zone", zoneid, "found in zones.lua:", unpack(zoneinfo))
+    else
+      print("❌ Zone", zoneid, "not found in zones.lua!")
+    end
+  else
+    print("❌ No zoneID found for quest")
+  end
+
+  -- 5. Проверка наличия точек в pfMap.nodes после поиска
+  if pfDatabase and pfDatabase.SearchQuestID then
+    local meta = { ["addon"] = "PFQUEST" }
+    pfDatabase:SearchQuestID(qid, meta)
+    local nodes = pfMap.nodes["PFQUEST"]
+    local found = false
+    if nodes then
+      for zid, points in pairs(nodes) do
+        for coords, node in pairs(points) do
+          print("✅ Node in pfMap.nodes: zone", zid, "coords", coords)
+          found = true
+        end
+      end
+    end
+    if not found then
+      print("❌ No nodes for this quest in pfMap.nodes after SearchQuestID")
+    end
+  else
+    print("❌ pfDatabase:SearchQuestID not available")
+  end
+
+  -- 6. Проверка сопоставления zoneID/mapID
+  if zoneid and pfMap and pfMap.GetMapNameByID then
+    local name = pfMap:GetMapNameByID(zoneid)
+    print("ZoneID", zoneid, "-> MapName:", name or "Unknown")
+    local id2 = pfMap:GetMapIDByName(name)
+    print("MapName", name, "-> ZoneID:", id2 or "Unknown")
+  end
+
+  -- 7. Проверка настроек
+  if pfQuest_config then
+    print("pfQuest_config: showspawn", pfQuest_config.showspawn, "showcluster", pfQuest_config.showcluster, "minimapnodes", pfQuest_config.minimapnodes)
+  end
+
+  print("=== End pfQuest Deep Map Debug ===")
+end

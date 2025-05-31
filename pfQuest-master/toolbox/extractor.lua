@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
@@ -791,20 +791,27 @@ end
 local pfDB = {}
 -- Process only the specific expansion defined in config.expansion
 local expansion_to_process = config.expansion or "vanilla"
+
+-- Глобальные переменные для патча
+locales = nil
+expansion = nil
+exp = nil
+output = nil
+
 if config.expansions[expansion_to_process] then
   local id = expansion_to_process
   local settings = config.expansions[id]
   print("Extracting: " .. settings.name)
 
-  local expansion = settings.version
+  expansion = settings.version
   local db = settings.database
   local core = settings.core
-  local locales = settings.locales
+  locales = settings.locales
 
   local C = config.cores[core]
 
   local idcolumns = core == "vmangos" and { "id", "id2", "id3", "id4" } or { "id" }
-  local exp = expansion == "vanilla" and "" or "-"..expansion
+  exp = expansion == "vanilla" and "" or "-"..expansion
   local data = "data".. exp
 
     do -- database connection
@@ -2752,7 +2759,7 @@ if config.expansions[expansion_to_process] then
     if core == "acore" then
       -- For AzerothCore, use loaded DBC AreaTable table
       local locales_zones = {}
-      local table_name = "AreaTable_" .. expansion
+      local table_name = (expansion == "vanilla") and "areatable_wotlk" or "AreaTable_" .. expansion
       print("  Attempting to query zones from table: " .. table_name)
 
       local query = mysql:execute('SELECT * FROM ' .. table_name .. ' ORDER BY id ASC')  -- NO LIMIT for zones
@@ -2769,6 +2776,10 @@ if config.expansions[expansion_to_process] then
                 local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
                 pfDB["zones"][locale] = pfDB["zones"][locale] or {}
                 pfDB["zones"][locale][entry] = sanitize(name)
+                -- DEBUG PRINT: после добавления зоны
+                if entry == 14 or entry == 1 or entry == 12 then
+                  print("DEBUG: zones locale=", locale, "entry=", entry, "name=", name)
+                end
               end
             end
           end
@@ -2820,6 +2831,10 @@ if config.expansions[expansion_to_process] then
                 local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
                 pfDB["zones"][locale] = pfDB["zones"][locale] or {}
                 pfDB["zones"][locale][entry] = sanitize(name)
+                -- DEBUG PRINT: после добавления зоны
+                if entry == 14 or entry == 1 or entry == 12 then
+                  print("DEBUG: zones locale=", locale, "entry=", entry, "name=", name)
+                end
               end
             end
           end
@@ -2856,7 +2871,7 @@ if config.expansions[expansion_to_process] then
 
   -- write down tables
   print("- writing database...")
-  local output = settings.custom and "output/custom/" or "output/"
+  output = settings.custom and "output/custom/" or "output/"
 
   mkdir(output)
   serialize(output .. string.format("areatrigger%s.lua", exp), "pfDB[\"areatrigger\"][\""..data.."\"]", pfDB["areatrigger"][data])
@@ -2864,7 +2879,16 @@ if config.expansions[expansion_to_process] then
   serialize(output .. string.format("objects%s.lua", exp), "pfDB[\"objects\"][\""..data.."\"]", pfDB["objects"][data])
   serialize(output .. string.format("items%s.lua", exp), "pfDB[\"items\"][\""..data.."\"]", pfDB["items"][data])
   serialize(output .. string.format("refloot%s.lua", exp), "pfDB[\"refloot\"][\""..data.."\"]", pfDB["refloot"][data])
-  serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
+  -- Очистка некорректных U-таблиц перед сериализацией квестов
+for _, quest in pairs(pfDB["quests"][data]) do
+  if quest.start and type(quest.start.U) == "table" and (not next(quest.start.U) or tostring(quest.start.U):find('table:')) then
+    quest.start.U = {}
+  end
+  if quest["end"] and type(quest["end"].U) == "table" and (not next(quest["end"].U) or tostring(quest["end"].U):find('table:')) then
+    quest["end"].U = {}
+  end
+end
+serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
   serialize(output .. string.format("quests-itemreq%s.lua", exp), "pfDB[\"quests-itemreq\"][\""..data.."\"]", pfDB["quests-itemreq"][data])
   serialize(output .. string.format("zones%s.lua", exp), "pfDB[\"zones\"][\""..data.."\"]", pfDB["zones"][data])
   serialize(output .. string.format("minimap%s.lua", exp), "pfDB[\"minimap"..exp.."\"]", pfDB["minimap"..exp])
@@ -2908,6 +2932,29 @@ if config.expansions[expansion_to_process] then
   debug_statistics()
 else
   print("Error: Expansion '" .. expansion_to_process .. "' not found in config.expansions")
+end
+
+-- === DEBUG/ПАТЧ: Явная генерация локализованного zones.lua ===
+for loc in pairs(locales) do
+  local locale = loc .. ( expansion ~= "vanilla" and "-" .. expansion or "" )
+  local outdir = output .. loc
+  mkdir(outdir)
+  local outpath = outdir .. "/zones" .. (exp or "") .. ".lua"
+  print("DEBUG: Writing zones for locale", locale, "to", outpath)
+  if pfDB["zones"][locale] then
+    print("DEBUG: pfDB[\"zones\"][\"" .. locale .. "\"] has " .. TableCount(pfDB["zones"][locale]) .. " entries")
+    if pfDB["zones"][locale][14] then
+      print("DEBUG: Durotar in zones:", pfDB["zones"][locale][14])
+    else
+      print("WARNING: Durotar (14) not found in pfDB[\"zones\"][\"" .. locale .. "\"]!")
+    end
+    serialize(outpath, "pfDB[\"zones\"][\"" .. locale .. "\"]", pfDB["zones"][locale])
+    os.execute('mkdir "db/' .. loc .. '" 2>nul')
+    os.execute('copy "' .. outpath .. '" "db/' .. loc .. '/zones.lua"')
+    print("DEBUG: zones.lua copied to db/" .. loc .. "/zones.lua")
+  else
+    print("ERROR: pfDB[\"zones\"][\"" .. locale .. "\"] is nil! Zones localization not generated!")
+  end
 end
 
 -- Close main processing
