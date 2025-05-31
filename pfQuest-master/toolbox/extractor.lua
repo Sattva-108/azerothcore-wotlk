@@ -991,6 +991,7 @@ if config.expansions[expansion_to_process] then
                   WHERE mapID = ]] .. map_id .. [[
                     AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
                     AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
+                  ORDER BY (x_max - x_min) * (y_max - y_min) ASC
                   LIMIT 1
                 ]])
                 if worldmap_query then

@@ -60,7 +60,7 @@ SlashCmdList["PFTEST"] = function()
     -- Display loaded data counts
     local questCount = pfDB["quests"] and pfDB["quests"]["data"] and TableCount(pfDB["quests"]["data"]) or 0
     local unitCount = pfDB["units"] and pfDB["units"]["data"] and TableCount(pfDB["units"]["data"]) or 0
-    local zoneCount = pfDB["zones"] and pfDB["zones"]["enUS"] and TableCount(pfDB["zones"]["enUS"]) or 0
+    local zoneCount = pfDB["zones"] and pfDB["zones"]["data"] and TableCount(pfDB["zones"]["data"]) or 0
 
     -- Count units with coordinates
     local unitsWithCoords = 0
@@ -225,6 +225,7 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
                         print("     First spawn: " .. coord[1] .. ", " .. coord[2] .. " zone " .. coord[3])
                         -- Check if zone exists in pfQuest zones
                         local zone_names = {
+                            [14] = "Durotar",
                             [1519] = "Stormwind City",
                             [1637] = "Orgrimmar",
                             [17] = "The Barrens",
@@ -235,8 +236,8 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
                         }
 
                         local zone_name = zone_names[coord[3]]
-                        if not zone_name and pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][coord[3]] then
-                            zone_name = pfDB["zones"]["loc"][coord[3]]
+                        if not zone_name and pfDB["zones"] and pfDB["zones"]["data"] and pfDB["zones"]["data"][coord[3]] then
+                            zone_name = "Zone " .. coord[3]  -- We have zone data but no name lookup yet
                         end
                         zone_name = zone_name or "Unknown"
 
@@ -335,12 +336,14 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
                     local coord = unit.coords[1]
                     local zoneId = coord[3]
                     print("   📍 Map Debug: Quest starter at zone " .. zoneId)
-                    if zoneId == 1519 then
+                    if zoneId == 14 then
+                        print("      → Should appear in Durotar area on Kalimdor map")
+                    elseif zoneId == 1519 then
                         print("      → Should appear in Stormwind area on Eastern Kingdoms map")
                     elseif zoneId == 1637 then
                         print("      → Should appear in Orgrimmar area on Kalimdor map")
                     else
-                        print("      → Unknown zone mapping - may not appear correctly")
+                        print("      → Zone mapping available - should appear on map")
                     end
                 end
             end
