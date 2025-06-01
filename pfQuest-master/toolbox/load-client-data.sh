@@ -419,9 +419,9 @@ EOF
 for v in $versions; do
   echo "Expansion: $v"
 
-  # Run WorldMapOverlay
+  Run WorldMapOverlay
   # Run AreaTrigger
-  Run WorldMapArea
+  # Run WorldMapArea
   # Run FactionTemplate
   # Run Lock
   # Run SkillLine
