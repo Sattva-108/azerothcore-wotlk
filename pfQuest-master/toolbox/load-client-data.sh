@@ -100,47 +100,44 @@ function WorldMapArea() {
   cat >> $rootsql << EOF
 DROP TABLE IF EXISTS \`WorldMapArea_${v}\`;
 CREATE TABLE \`WorldMapArea_${v}\` (
-\`zoneID\` smallint(3) unsigned NOT NULL,
-\`mapID\` smallint(3) unsigned NOT NULL,
-\`areatableID\` smallint(3) unsigned NOT NULL,
-\`name\` varchar(255) NOT NULL,
-\`x_min\` float NOT NULL DEFAULT 0.0,
-\`y_min\` float NOT NULL DEFAULT 0.0,
-\`x_max\` float NOT NULL DEFAULT 0.0,
-\`y_max\` float NOT NULL DEFAULT 0.0
+  \`zoneID\` smallint(3) unsigned NOT NULL,
+  \`mapID\` smallint(3) unsigned NOT NULL,
+  \`areatableID\` smallint(3) unsigned NOT NULL,
+  \`name\` varchar(255) NOT NULL,
+  \`x_min\` float NOT NULL DEFAULT 0.0,
+  \`x_max\` float NOT NULL DEFAULT 0.0,
+  \`y_min\` float NOT NULL DEFAULT 0.0,
+  \`y_max\` float NOT NULL DEFAULT 0.0
 ) ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='WorldMapArea';
 
 EOF
 
-if [ -d $root/$v ] && [ -f $root/$v/WorldMapArea.dbc.csv ]; then
+  if [ -d $root/$v ] && [ -f $root/$v/WorldMapArea.dbc.csv ]; then
     cat $root/$v/WorldMapArea.dbc.csv | tail -n +2 | sort -nt ',' -k3,3 | while IFS= read -r line; do
       # Парсим CSV с учетом кавычек
       zone=$(echo "$line" | cut -d'"' -f2)
-      map=$(echo "$line" | cut -d'"' -f4) 
+      map=$(echo "$line" | cut -d'"' -f4)
       area=$(echo "$line" | cut -d'"' -f6)
       name=$(echo "$line" | cut -d'"' -f8)
-      x_min=$(echo "$line" | cut -d'"' -f10)
-      y_min=$(echo "$line" | cut -d'"' -f12)
-      x_max=$(echo "$line" | cut -d'"' -f14)
-      y_max=$(echo "$line" | cut -d'"' -f16)
+      locleft=$(echo "$line" | cut -d'"' -f10)
+      locright=$(echo "$line" | cut -d'"' -f12)
+      loctop=$(echo "$line" | cut -d'"' -f14)
+      locbottom=$(echo "$line" | cut -d'"' -f16)
 
       # Convert comma decimals to dot decimals for MySQL
-      x_min=$(echo "$x_min" | sed 's/,/./g')
-      y_min=$(echo "$y_min" | sed 's/,/./g')
-      x_max=$(echo "$x_max" | sed 's/,/./g')
-      y_max=$(echo "$y_max" | sed 's/,/./g')
+      locleft=$(echo "$locleft" | sed 's/,/./g')
+      locright=$(echo "$locright" | sed 's/,/./g')
+      loctop=$(echo "$loctop" | sed 's/,/./g')
+      locbottom=$(echo "$locbottom" | sed 's/,/./g')
 
-      # После парсинга и замены запятых:
-      x1=$x_min; x2=$x_max
-      y1=$y_min; y2=$y_max
+      # min/max для X (LocLeft/LocRight)
+      x_min=$(printf "%s\n%s" "$locleft" "$locright" | sort -n | head -n1)
+      x_max=$(printf "%s\n%s" "$locleft" "$locright" | sort -n | tail -n1)
+      # min/max для Y (LocTop/LocBottom)
+      y_min=$(printf "%s\n%s" "$loctop" "$locbottom" | sort -n | head -n1)
+      y_max=$(printf "%s\n%s" "$loctop" "$locbottom" | sort -n | tail -n1)
 
-      # min/max через printf и sort (без bc)
-      x_min=$(printf "%s\n%s" "$x1" "$x2" | sort -n | head -n1)
-      x_max=$(printf "%s\n%s" "$x1" "$x2" | sort -n | tail -n1)
-      y_min=$(printf "%s\n%s" "$y1" "$y2" | sort -n | head -n1)
-      y_max=$(printf "%s\n%s" "$y1" "$y2" | sort -n | tail -n1)
-
-      echo "INSERT INTO \`WorldMapArea_${v}\` VALUES ($zone, $map, $area, \"$name\", $x_min, $y_min, $x_max, $y_max);" >> $rootsql
+      echo "INSERT INTO \`WorldMapArea_${v}\` VALUES ($zone, $map, $area, \"$name\", $x_min, $x_max, $y_min, $y_max);" >> $rootsql
     done
   fi
 }
