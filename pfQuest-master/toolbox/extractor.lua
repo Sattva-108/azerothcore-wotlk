@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
@@ -2090,7 +2090,7 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_starterunit") then break end
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["U"] = pfDB["quests"][data][entry]["start"]["U"] or {}
-                      table.insert(pfDB["quests"][data][entry]["start"]["U"], tonumber(creature_questrelation.id))
+                      pfDB["quests"][data][entry]["start"]["U"][tonumber(creature_questrelation.id)] = true
                   end
               end
 
@@ -2104,7 +2104,7 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_starterobject") then break end
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["O"] = pfDB["quests"][data][entry]["start"]["O"] or {}
-                      table.insert(pfDB["quests"][data][entry]["start"]["O"], tonumber(gameobject_questrelation.id))
+                      pfDB["quests"][data][entry]["start"]["O"][tonumber(gameobject_questrelation.id)] = true
                   end
               end
 
@@ -2128,7 +2128,7 @@ if config.expansions[expansion_to_process] then
                       -- add item to quest starters
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["I"] = pfDB["quests"][data][entry]["start"]["I"] or {}
-                      table.insert(pfDB["quests"][data][entry]["start"]["I"], tonumber(item_template.id))
+                      pfDB["quests"][data][entry]["start"]["I"][tonumber(item_template.id)] = true
                   end
               end
 
@@ -2143,7 +2143,7 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_enderunit") then break end
                       pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
                       pfDB["quests"][data][entry]["end"]["U"] = pfDB["quests"][data][entry]["end"]["U"] or {}
-                      table.insert(pfDB["quests"][data][entry]["end"]["U"], tonumber(creature_involvedrelation.id))
+                      pfDB["quests"][data][entry]["end"]["U"][tonumber(creature_involvedrelation.id)] = true
                   end
               end
 
@@ -2158,7 +2158,7 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_enderobject") then break end
                       pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
                       pfDB["quests"][data][entry]["end"]["O"] = pfDB["quests"][data][entry]["end"]["O"] or {}
-                      table.insert(pfDB["quests"][data][entry]["end"]["O"], tonumber(gameobject_involvedrelation.id))
+                      pfDB["quests"][data][entry]["end"]["O"][tonumber(gameobject_involvedrelation.id)] = true
                   end
               end
           end

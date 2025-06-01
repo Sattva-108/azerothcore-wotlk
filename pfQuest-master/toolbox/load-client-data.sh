@@ -39,7 +39,7 @@ EOF
       IFS=',' read -ra FIELDS <<< "$line_clean"
 
       areaID="${FIELDS[2]}"       # AreaID_1
-      zoneID="${FIELDS[1]}"       # MapAreaID  
+      zoneID="${FIELDS[1]}"       # MapAreaID
       texture="\"${FIELDS[8]}\""  # TextureName (re-add quotes)
       textureWidth="${FIELDS[9]}"
       textureHeight="${FIELDS[10]}"
@@ -116,19 +116,80 @@ if [ -d $root/$v ] && [ -f $root/$v/WorldMapArea.dbc.csv ]; then
     cat $root/$v/WorldMapArea.dbc.csv | tail -n +2 | sort -nt ',' -k3,3 | while IFS= read -r line; do
       # Парсим CSV с учетом кавычек
       zone=$(echo "$line" | cut -d'"' -f2)
-      map=$(echo "$line" | cut -d'"' -f4) 
+      map=$(echo "$line" | cut -d'"' -f4)
       area=$(echo "$line" | cut -d'"' -f6)
       name=$(echo "$line" | cut -d'"' -f8)
-      x_min=$(echo "$line" | cut -d'"' -f10)
-      y_min=$(echo "$line" | cut -d'"' -f12)
-      x_max=$(echo "$line" | cut -d'"' -f14)
-      y_max=$(echo "$line" | cut -d'"' -f16)
+      loc_left=$(echo "$line" | cut -d'"' -f10)
+      loc_right=$(echo "$line" | cut -d'"' -f12)
+      loc_top=$(echo "$line" | cut -d'"' -f14)
+      loc_bottom=$(echo "$line" | cut -d'"' -f16)
 
       # Convert comma decimals to dot decimals for MySQL
-      x_min=$(echo "$x_min" | sed 's/,/./g')
-      y_min=$(echo "$y_min" | sed 's/,/./g')
-      x_max=$(echo "$x_max" | sed 's/,/./g')
-      y_max=$(echo "$y_max" | sed 's/,/./g')
+      loc_left=$(echo "$loc_left" | sed 's/,/./g')
+      loc_right=$(echo "$loc_right" | sed 's/,/./g')
+      loc_top=$(echo "$loc_top" | sed 's/,/./g')
+      loc_bottom=$(echo "$loc_bottom" | sed 's/,/./g')
+
+      # Calculate proper min/max coordinates (using bash arithmetic)
+      # Convert to integers by removing decimal point for comparison
+      left_int=$(echo "$loc_left" | sed 's/[.,-]//g' | sed 's/^-//')
+      right_int=$(echo "$loc_right" | sed 's/[.,-]//g' | sed 's/^-//')
+      top_int=$(echo "$loc_top" | sed 's/[.,-]//g' | sed 's/^-//')
+      bottom_int=$(echo "$loc_bottom" | sed 's/[.,-]//g' | sed 's/^-//')
+
+      # Check signs for proper comparison
+      if [[ "$loc_left" =~ ^- ]] && [[ ! "$loc_right" =~ ^- ]]; then
+        # left is negative, right is positive -> left < right
+        x_min=$loc_left
+        x_max=$loc_right
+      elif [[ ! "$loc_left" =~ ^- ]] && [[ "$loc_right" =~ ^- ]]; then
+        # left is positive, right is negative -> right < left
+        x_min=$loc_right
+        x_max=$loc_left
+      elif [[ "$loc_left" =~ ^- ]] && [[ "$loc_right" =~ ^- ]]; then
+        # both negative -> larger absolute value is smaller
+        if [ $left_int -gt $right_int ]; then
+          x_min=$loc_left
+          x_max=$loc_right
+        else
+          x_min=$loc_right
+          x_max=$loc_left
+        fi
+      else
+        # both positive -> normal comparison
+        if [ $left_int -lt $right_int ]; then
+          x_min=$loc_left
+          x_max=$loc_right
+        else
+          x_min=$loc_right
+          x_max=$loc_left
+        fi
+      fi
+
+      # Same logic for Y coordinates
+      if [[ "$loc_top" =~ ^- ]] && [[ ! "$loc_bottom" =~ ^- ]]; then
+        y_min=$loc_top
+        y_max=$loc_bottom
+      elif [[ ! "$loc_top" =~ ^- ]] && [[ "$loc_bottom" =~ ^- ]]; then
+        y_min=$loc_bottom
+        y_max=$loc_top
+      elif [[ "$loc_top" =~ ^- ]] && [[ "$loc_bottom" =~ ^- ]]; then
+        if [ $top_int -gt $bottom_int ]; then
+          y_min=$loc_top
+          y_max=$loc_bottom
+        else
+          y_min=$loc_bottom
+          y_max=$loc_top
+        fi
+      else
+        if [ $top_int -lt $bottom_int ]; then
+          y_min=$loc_top
+          y_max=$loc_bottom
+        else
+          y_min=$loc_bottom
+          y_max=$loc_top
+        fi
+      fi
 
       echo "INSERT INTO \`WorldMapArea_${v}\` VALUES ($zone, $map, $area, \"$name\", $x_min, $y_min, $x_max, $y_max);" >> $rootsql
     done
