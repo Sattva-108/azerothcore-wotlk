@@ -306,15 +306,20 @@ function serialize_value(file, value, indent)
             for _, nk in ipairs(nested_keys) do
               local nv = v[nk]
               nested_line = nested_line .. (nested_init and "," or "") .. "[" .. string.format("%q", tostring(nk)) .. "]="
-              if type(nv) == "table" and smalltable(nv) then
-                local inner_small = "{"
-                local inner_init
-                for _, isv in ipairs(nv) do
-                  inner_small = inner_small .. (inner_init and "," or "") .. tostring(isv)
-                  if not inner_init then inner_init = true end
+              if type(nv) == "table" then
+                if smalltable(nv) then -- Use fixed/simplified smalltable
+                  local inner_small = "{"
+                  local inner_init
+                  for _, isv in ipairs(nv) do
+                    inner_small = inner_small .. (inner_init and "," or "") .. tostring(isv)
+                    if not inner_init then inner_init = true end
+                  end
+                  inner_small = inner_small .. "}"
+                  nested_line = nested_line .. inner_small
+                else
+                  -- Fallback for complex tables that aren't smalltables
+                  nested_line = nested_line .. "{}"
                 end
-                inner_small = inner_small .. "}"
-                nested_line = nested_line .. inner_small
               else
                 nested_line = nested_line .. (type(nv) == "string" and string.format("%q", nv) or tostring(nv))
               end
@@ -403,12 +408,10 @@ end
 
 function smalltable(tbl)
   local size = tblsize(tbl)
-  if size > 10 then return end
-  if size < 1 then return end
+  if size > 10 or size < 1 then return false end
 
   for i=1, size do
-    if not tbl[i] then return end
-    if type(tbl[i]) == "table" then return end
+    if not tbl[i] or type(tbl[i]) == "table" then return false end
   end
 
   return true
@@ -1004,9 +1007,9 @@ if config.expansions[expansion_to_process] then
             local area_id = tonumber(creature_coords.areaId)
 
             if x and y and map_id then
-              -- Use real zoneId/areaId from creature table, NO hardcoded mapping
-              local final_zone = area_id and area_id > 0 and area_id or
-                                zone_id and zone_id > 0 and zone_id or
+              -- Use zoneId as primary (main zone), fallback to areaId only if no zoneId
+              local final_zone = zone_id and zone_id > 0 and zone_id or
+                                area_id and area_id > 0 and area_id or
                                 nil -- Let it be nil if no zone info
 
               -- If no zone info, try to find it via WorldMapArea DBC
@@ -1050,13 +1053,39 @@ if config.expansions[expansion_to_process] then
                 print("DEBUG: NPC 3139 (quest 784) - coords:", x, y, "map:", map_id, "zone:", zone_id, "area:", area_id, "final_zone:", final_zone)
               end
 
-              -- Convert world coordinates to zone percentage (simplified)
-              local zone_x = math.floor((x + 17066) / 340 * 100) / 100
-              local zone_y = math.floor((y + 17066) / 340 * 100) / 100
+              -- Convert world coordinates to zone percentage using WorldMapArea bounds
+              local zone_x, zone_y = 50, 50 -- Default center
 
-              -- Clamp to 0-100 range
-              zone_x = math.max(0, math.min(100, zone_x))
-              zone_y = math.max(0, math.min(100, zone_y))
+              -- Get proper zone bounds from WorldMapArea
+              local bounds_query = mysql:execute([[
+                SELECT x_min, x_max, y_min, y_max FROM worldmaparea_wotlk
+                WHERE areatableID = ]] .. final_zone .. [[
+                LIMIT 1
+              ]])
+
+              if bounds_query then
+                local bounds = {}
+                if bounds_query:fetch(bounds, "a") then
+                  local x_min = tonumber(bounds.x_min)
+                  local x_max = tonumber(bounds.x_max)
+                  local y_min = tonumber(bounds.y_min)
+                  local y_max = tonumber(bounds.y_max)
+
+                  if x_min and x_max and y_min and y_max then
+                    -- Convert to percentage within zone bounds
+                    zone_x = ((x - x_min) / (x_max - x_min)) * 100
+                    zone_y = ((y - y_min) / (y_max - y_min)) * 100
+
+                    -- Clamp to 0-100 range
+                    zone_x = math.max(0, math.min(100, zone_x))
+                    zone_y = math.max(0, math.min(100, zone_y))
+
+                    if id == 3139 then
+                      print("DEBUG: NPC 3139 zone coords:", zone_x, zone_y)
+                    end
+                  end
+                end
+              end
 
               local coord = { zone_x, zone_y, final_zone, 0 }
               table.insert(ret, coord)
@@ -2090,7 +2119,7 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_starterunit") then break end
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["U"] = pfDB["quests"][data][entry]["start"]["U"] or {}
-                      pfDB["quests"][data][entry]["start"]["U"][tonumber(creature_questrelation.id)] = true
+                      table.insert(pfDB["quests"][data][entry]["start"]["U"], tonumber(creature_questrelation.id))
                   end
               end
 
@@ -2104,7 +2133,7 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_starterobject") then break end
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["O"] = pfDB["quests"][data][entry]["start"]["O"] or {}
-                      pfDB["quests"][data][entry]["start"]["O"][tonumber(gameobject_questrelation.id)] = true
+                      table.insert(pfDB["quests"][data][entry]["start"]["O"], tonumber(gameobject_questrelation.id))
                   end
               end
 
@@ -2128,7 +2157,7 @@ if config.expansions[expansion_to_process] then
                       -- add item to quest starters
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["I"] = pfDB["quests"][data][entry]["start"]["I"] or {}
-                      pfDB["quests"][data][entry]["start"]["I"][tonumber(item_template.id)] = true
+                      table.insert(pfDB["quests"][data][entry]["start"]["I"], tonumber(item_template.id))
                   end
               end
 
@@ -2143,7 +2172,7 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_enderunit") then break end
                       pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
                       pfDB["quests"][data][entry]["end"]["U"] = pfDB["quests"][data][entry]["end"]["U"] or {}
-                      pfDB["quests"][data][entry]["end"]["U"][tonumber(creature_involvedrelation.id)] = true
+                      table.insert(pfDB["quests"][data][entry]["end"]["U"], tonumber(creature_involvedrelation.id))
                   end
               end
 
@@ -2158,7 +2187,7 @@ if config.expansions[expansion_to_process] then
                       if debug("quests_enderobject") then break end
                       pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
                       pfDB["quests"][data][entry]["end"]["O"] = pfDB["quests"][data][entry]["end"]["O"] or {}
-                      pfDB["quests"][data][entry]["end"]["O"][tonumber(gameobject_involvedrelation.id)] = true
+                      table.insert(pfDB["quests"][data][entry]["end"]["O"], tonumber(gameobject_involvedrelation.id))
                   end
               end
           end
@@ -2879,16 +2908,7 @@ if config.expansions[expansion_to_process] then
   serialize(output .. string.format("objects%s.lua", exp), "pfDB[\"objects\"][\""..data.."\"]", pfDB["objects"][data])
   serialize(output .. string.format("items%s.lua", exp), "pfDB[\"items\"][\""..data.."\"]", pfDB["items"][data])
   serialize(output .. string.format("refloot%s.lua", exp), "pfDB[\"refloot\"][\""..data.."\"]", pfDB["refloot"][data])
-  -- Очистка некорректных U-таблиц перед сериализацией квестов
-for _, quest in pairs(pfDB["quests"][data]) do
-  if quest.start and type(quest.start.U) == "table" and (not next(quest.start.U) or tostring(quest.start.U):find('table:')) then
-    quest.start.U = {}
-  end
-  if quest["end"] and type(quest["end"].U) == "table" and (not next(quest["end"].U) or tostring(quest["end"].U):find('table:')) then
-    quest["end"].U = {}
-  end
-end
-serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
+  serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
   serialize(output .. string.format("quests-itemreq%s.lua", exp), "pfDB[\"quests-itemreq\"][\""..data.."\"]", pfDB["quests-itemreq"][data])
   serialize(output .. string.format("zones%s.lua", exp), "pfDB[\"zones\"][\""..data.."\"]", pfDB["zones"][data])
   serialize(output .. string.format("minimap%s.lua", exp), "pfDB[\"minimap"..exp.."\"]", pfDB["minimap"..exp])
