@@ -1124,8 +1124,8 @@ if config.expansions[expansion_to_process] then
             local area_id = tonumber(object_coords.areaId)
 
             if x and y and map_id then
-              -- Use area_id if available, otherwise zone_id
-              local final_zone = area_id and area_id > 0 and area_id or zone_id and zone_id > 0 and zone_id or map_id
+              -- Use zone_id as primary (main zone), fallback to area_id, otherwise map_id
+              local final_zone = zone_id and zone_id > 0 and zone_id or area_id and area_id > 0 and area_id or map_id
 
               -- Convert world coordinates to zone percentage (simplified)
               local zone_x = math.floor((x + 17066) / 340 * 100) / 100
