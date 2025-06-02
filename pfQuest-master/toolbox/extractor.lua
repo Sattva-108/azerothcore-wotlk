@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
@@ -1063,16 +1063,18 @@ if config.expansions[expansion_to_process] then
                 print("DEBUG: NPC " .. id .. " (coords:", x, y, ") - map:", map_id, "db_zone:", zone_id, "db_area:", area_id, "final_zone:", final_zone)
               end
 
-              -- Convert world coordinates to zone percentage using WorldMapArea bounds
+              -- Convert world coordinates to zone percentage using AreaTable_wotlk_enriched bounds
               local zone_x, zone_y = 50, 50 -- Default center
+              local use_parent_boundaries = false
 
-              -- Get proper zone bounds from WorldMapArea
+              -- Get proper zone bounds from AreaTable_wotlk_enriched
               local bounds_query = mysql:execute([[
-                SELECT x_min, x_max, y_min, y_max FROM WorldMapArea_wotlk
-                WHERE areatableID = ]] .. final_zone .. [[
+                SELECT x_min, x_max, y_min, y_max, ParentZoneID FROM AreaTable_wotlk_enriched
+                WHERE ID = ]] .. final_zone .. [[
                 LIMIT 1
               ]])
 
+              local found_bounds = false
               if bounds_query then
                 local bounds = {}
                 if bounds_query:fetch(bounds, "a") then
@@ -1080,8 +1082,50 @@ if config.expansions[expansion_to_process] then
                   local x_max = tonumber(bounds.x_max)
                   local y_min = tonumber(bounds.y_min)
                   local y_max = tonumber(bounds.y_max)
+                  local parent_zone_id = tonumber(bounds.ParentZoneID)
 
-                  if x_min and x_max and y_min and y_max then
+                  -- Check if zone has valid coordinates
+                  if x_min and x_max and y_min and y_max and not (x_min == 0 and x_max == 0 and y_min == 0 and y_max == 0) then
+                    found_bounds = true
+                    if id == 3139 then
+                      print("DEBUG: Using bounds for zone " .. final_zone .. ": x_min=" .. x_min .. " x_max=" .. x_max .. " y_min=" .. y_min .. " y_max=" .. y_max)
+                    end
+                  else
+                    -- No bounds for this zone, try parent zone if available
+                    if parent_zone_id and parent_zone_id > 0 then
+                      if id == 3139 then
+                        print("DEBUG: Zone " .. final_zone .. " has no bounds, trying parent zone " .. parent_zone_id)
+                      end
+
+                      local parent_bounds_query = mysql:execute([[
+                        SELECT x_min, x_max, y_min, y_max FROM AreaTable_wotlk_enriched
+                        WHERE ID = ]] .. parent_zone_id .. [[
+                        LIMIT 1
+                      ]])
+
+                      if parent_bounds_query then
+                        local parent_bounds = {}
+                        if parent_bounds_query:fetch(parent_bounds, "a") then
+                          local px_min = tonumber(parent_bounds.x_min)
+                          local px_max = tonumber(parent_bounds.x_max)
+                          local py_min = tonumber(parent_bounds.y_min)
+                          local py_max = tonumber(parent_bounds.y_max)
+
+                          if px_min and px_max and py_min and py_max and not (px_min == 0 and px_max == 0 and py_min == 0 and py_max == 0) then
+                            -- Use parent zone boundaries
+                            x_min, x_max, y_min, y_max = px_min, px_max, py_min, py_max
+                            use_parent_boundaries = true
+                            found_bounds = true
+                            if id == 3139 then
+                              print("DEBUG: Using parent zone " .. parent_zone_id .. " bounds: x_min=" .. x_min .. " x_max=" .. x_max .. " y_min=" .. y_min .. " y_max=" .. y_max)
+                            end
+                          end
+                        end
+                      end
+                    end
+                  end
+
+                  if found_bounds then
                     -- GPS-matching formula using ORIGINAL CSV values (not sorted):
                     -- Our SQL has sorted values, need to restore original CSV order
                     -- For Durotar: LocLeft=-1962.5, LocRight=-7250, LocTop=1808.333, LocBottom=-1716.667
@@ -2224,25 +2268,75 @@ if config.expansions[expansion_to_process] then
     pfDB["zones"][data] = {}
 
     if core == "acore" then
-      -- For AzerothCore, extract zones from creature spawns since AreaTable_vanilla is empty
+      -- For AzerothCore, use AreaTable_wotlk_enriched to get proper zone hierarchy
+      print("  Attempting to load zones from AreaTable_wotlk_enriched...")
       local zones = {}
-      local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0')  -- NO LIMIT for zones
+      local query = mysql:execute('SELECT ID, MapID_continent, ParentZoneID, name_loc0 FROM AreaTable_wotlk_enriched ORDER BY ID ASC')  -- NO LIMIT for zones
       if query then
+        print("  Query successful, processing zones...")
+        local zone_count = 0
         while query:fetch(zones, "a") do
           if debug("zones") then break end
-          local zone_id = tonumber(zones.zoneId)
-          local area_id = tonumber(zones.areaId)
+          local area_id = tonumber(zones.ID)
+          local map_id_continent = tonumber(zones.MapID_continent)
+          local parent_zone_id = tonumber(zones.ParentZoneID)
+          local name = zones.name_loc0
 
-          if zone_id and zone_id > 0 then
-            pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 } -- zone, width, height, cx, cy
-          end
-          if area_id and area_id > 0 and area_id ~= zone_id then
-            pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
+          if area_id and area_id > 0 then
+            -- Determine parent: if ParentZoneID=0 (root zone), use MapID_continent; otherwise use ParentZoneID
+            local parent = (parent_zone_id == 0) and map_id_continent or parent_zone_id
+            pfDB["zones"][data][area_id] = { parent, 100, 100, 50, 50 } -- parent, width, height, cx, cy
+            zone_count = zone_count + 1
+
+            -- Debug for specific zones
+            if area_id == 14 or area_id == 1 or area_id == 12 or area_id == 362 then
+              print("DEBUG: zones data - ID=" .. area_id .. " name=" .. (name or "nil") .. " parent=" .. parent .. " (continent=" .. map_id_continent .. " parentzone=" .. parent_zone_id .. ")")
+            end
+          else
+            print("  WARNING: Invalid area_id for zone: ID=" .. (zones.ID or "nil") .. " name=" .. (name or "nil"))
           end
         end
-        print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from creature spawns")
+        print("  SUCCESS: Extracted " .. zone_count .. " zones from AreaTable_wotlk_enriched with proper hierarchy")
+
+        -- Verify key zones were loaded
+        if pfDB["zones"][data][14] then
+          local durotar_parent = pfDB["zones"][data][14][1]
+          print("  VERIFY: Durotar (14) parent = " .. durotar_parent)
+        else
+          print("  ERROR: Durotar (14) not found in zones data!")
+        end
+
+        if pfDB["zones"][data][362] then
+          local razor_hill_parent = pfDB["zones"][data][362][1]
+          print("  VERIFY: Razor Hill (362) parent = " .. razor_hill_parent)
+        else
+          print("  WARNING: Razor Hill (362) not found in zones data!")
+        end
+
       else
-        print("  Warning: Failed to query zones from creature table")
+        print("  ERROR: Failed to query zones from AreaTable_wotlk_enriched - table might not exist")
+        print("  Falling back to creature spawns method...")
+        -- Fallback to original logic
+        local zones = {}
+        local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0')
+        if query then
+          print("  Fallback query successful...")
+          while query:fetch(zones, "a") do
+            if debug("zones") then break end
+            local zone_id = tonumber(zones.zoneId)
+            local area_id = tonumber(zones.areaId)
+
+            if zone_id and zone_id > 0 then
+              pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 }
+            end
+            if area_id and area_id > 0 and area_id ~= zone_id then
+              pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
+            end
+          end
+          print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from creature spawns (fallback)")
+        else
+          print("  ERROR: Even fallback query failed! No zones will be available!")
+        end
       end
     else
       -- Original zones logic for cores with pfquest DBC data
