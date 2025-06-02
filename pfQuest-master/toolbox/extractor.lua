@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
