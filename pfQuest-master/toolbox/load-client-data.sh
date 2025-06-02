@@ -130,66 +130,12 @@ if [ -d $root/$v ] && [ -f $root/$v/WorldMapArea.dbc.csv ]; then
       loc_top=$(echo "$loc_top" | sed 's/,/./g')
       loc_bottom=$(echo "$loc_bottom" | sed 's/,/./g')
 
-      # Calculate proper min/max coordinates (using bash arithmetic)
-      # Convert to integers by removing decimal point for comparison
-      left_int=$(echo "$loc_left" | sed 's/[.,-]//g' | sed 's/^-//')
-      right_int=$(echo "$loc_right" | sed 's/[.,-]//g' | sed 's/^-//')
-      top_int=$(echo "$loc_top" | sed 's/[.,-]//g' | sed 's/^-//')
-      bottom_int=$(echo "$loc_bottom" | sed 's/[.,-]//g' | sed 's/^-//')
-
-      # Check signs for proper comparison
-      if [[ "$loc_left" =~ ^- ]] && [[ ! "$loc_right" =~ ^- ]]; then
-        # left is negative, right is positive -> left < right
-        x_min=$loc_left
-        x_max=$loc_right
-      elif [[ ! "$loc_left" =~ ^- ]] && [[ "$loc_right" =~ ^- ]]; then
-        # left is positive, right is negative -> right < left
-        x_min=$loc_right
-        x_max=$loc_left
-      elif [[ "$loc_left" =~ ^- ]] && [[ "$loc_right" =~ ^- ]]; then
-        # both negative -> larger absolute value is smaller
-        if [ $left_int -gt $right_int ]; then
-          x_min=$loc_left
-          x_max=$loc_right
-        else
-          x_min=$loc_right
-          x_max=$loc_left
-        fi
-      else
-        # both positive -> normal comparison
-        if [ $left_int -lt $right_int ]; then
-          x_min=$loc_left
-          x_max=$loc_right
-        else
-          x_min=$loc_right
-          x_max=$loc_left
-        fi
-      fi
-
-      # Same logic for Y coordinates
-      if [[ "$loc_top" =~ ^- ]] && [[ ! "$loc_bottom" =~ ^- ]]; then
-        y_min=$loc_top
-        y_max=$loc_bottom
-      elif [[ ! "$loc_top" =~ ^- ]] && [[ "$loc_bottom" =~ ^- ]]; then
-        y_min=$loc_bottom
-        y_max=$loc_top
-      elif [[ "$loc_top" =~ ^- ]] && [[ "$loc_bottom" =~ ^- ]]; then
-        if [ $top_int -gt $bottom_int ]; then
-          y_min=$loc_top
-          y_max=$loc_bottom
-        else
-          y_min=$loc_bottom
-          y_max=$loc_top
-        fi
-      else
-        if [ $top_int -lt $bottom_int ]; then
-          y_min=$loc_top
-          y_max=$loc_bottom
-        else
-          y_min=$loc_bottom
-          y_max=$loc_top
-        fi
-      fi
+      # Calculate proper min/max coordinates using robust numeric comparison
+      # Use printf and sort for proper floating point comparison
+      x_min=$(printf "%s\n%s" "$loc_left" "$loc_right" | sort -n | head -n1)
+      x_max=$(printf "%s\n%s" "$loc_left" "$loc_right" | sort -n | tail -n1)
+      y_min=$(printf "%s\n%s" "$loc_top" "$loc_bottom" | sort -n | head -n1)
+      y_max=$(printf "%s\n%s" "$loc_top" "$loc_bottom" | sort -n | tail -n1)
 
       echo "INSERT INTO \`WorldMapArea_${v}\` VALUES ($zone, $map, $area, \"$name\", $x_min, $y_min, $x_max, $y_max);" >> $rootsql
     done

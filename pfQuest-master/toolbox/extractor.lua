@@ -701,23 +701,7 @@ function removedupes(tab)
   return result
 end
 
--- Custom coords function placeholder (DBC data not available in AzerothCore)
-function GetCustomCoords(mapId, x, y)
-  -- Return empty table since DBC data is not available
-  return {}
-end
 
--- Creature coords function placeholder (DBC data not available in AzerothCore)
-function GetCreatureCoords(creatureId)
-  -- Return empty table since DBC data is not available
-  return {}
-end
-
--- Pool coords function placeholder (DBC data not available in AzerothCore)
-function GetCreatureCoordsPool(creatureId)
-  -- Return empty table since DBC data is not available
-  return {}
-end
 
 -- Ordered pairs function for consistent iteration
 function opairs(t)
