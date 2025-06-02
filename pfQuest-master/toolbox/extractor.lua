@@ -991,10 +991,48 @@ if config.expansions[expansion_to_process] then
             local area_id = tonumber(creature_coords.areaId)
 
             if x and y and map_id then
-              -- Use zoneId as primary (main zone), fallback to areaId only if no zoneId
-              local final_zone = zone_id and zone_id > 0 and zone_id or
-                                area_id and area_id > 0 and area_id or
-                                nil -- Let it be nil if no zone info
+              -- Smart zone determination: prefer areaId, fallback to parent zone for boundaries
+              local final_zone = nil
+              local use_parent_boundaries = false
+
+              if area_id and area_id > 0 then
+                -- First try to use areaId (subzone like Razor Hill)
+                final_zone = area_id
+
+                -- Check if subzone has boundaries in worldmaparea_wotlk
+                local subzone_check = mysql:execute([[
+                  SELECT areatableID FROM worldmaparea_wotlk
+                  WHERE areatableID = ]] .. area_id .. [[
+                  LIMIT 1
+                ]])
+
+                if subzone_check then
+                  local subzone_result = {}
+                  if not subzone_check:fetch(subzone_result, "a") then
+                    -- Subzone has no boundaries, find parent zone
+                    local parent_query = mysql:execute([[
+                      SELECT zoneID FROM AreaTable_wotlk
+                      WHERE id = ]] .. area_id .. [[
+                      LIMIT 1
+                    ]])
+                    if parent_query then
+                      local parent_result = {}
+                      if parent_query:fetch(parent_result, "a") then
+                        local parent_zone = tonumber(parent_result.zoneID)
+                        if parent_zone and parent_zone > 0 then
+                          final_zone = parent_zone
+                          use_parent_boundaries = true
+                          if id == 3139 then
+                            print("DEBUG: Using parent zone " .. parent_zone .. " for subzone " .. area_id)
+                          end
+                        end
+                      end
+                    end
+                  end
+                end
+              elseif zone_id and zone_id > 0 then
+                final_zone = zone_id
+              end
 
               -- If no zone info, try to find it via WorldMapArea DBC
               if not final_zone then
@@ -1071,7 +1109,10 @@ if config.expansions[expansion_to_process] then
                 end
               end
 
-              local coord = { zone_x, zone_y, final_zone, 0 }
+              -- Use original area_id for display if we used parent boundaries
+              local display_zone = (use_parent_boundaries and area_id and area_id > 0) and area_id or final_zone
+
+              local coord = { zone_x, zone_y, display_zone, 0 }
               table.insert(ret, coord)
             end
           end
