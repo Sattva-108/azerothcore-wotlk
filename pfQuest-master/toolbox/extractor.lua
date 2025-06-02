@@ -999,9 +999,9 @@ if config.expansions[expansion_to_process] then
                 -- First try to use areaId (subzone like Razor Hill)
                 final_zone = area_id
 
-                -- Check if subzone has boundaries in worldmaparea_wotlk
+                -- Check if subzone has boundaries in WorldMapArea_wotlk
                 local subzone_check = mysql:execute([[
-                  SELECT areatableID FROM worldmaparea_wotlk
+                  SELECT areatableID FROM WorldMapArea_wotlk
                   WHERE areatableID = ]] .. area_id .. [[
                   LIMIT 1
                 ]])
@@ -1022,9 +1022,6 @@ if config.expansions[expansion_to_process] then
                         if parent_zone and parent_zone > 0 then
                           final_zone = parent_zone
                           use_parent_boundaries = true
-                          if id == 3139 then
-                            print("DEBUG: Using parent zone " .. parent_zone .. " for subzone " .. area_id)
-                          end
                         end
                       end
                     end
@@ -1037,7 +1034,7 @@ if config.expansions[expansion_to_process] then
               -- If no zone info, try to find it via WorldMapArea DBC
               if not final_zone then
                 local worldmap_query = mysql:execute([[
-                  SELECT areatableID FROM worldmaparea_wotlk
+                  SELECT areatableID FROM WorldMapArea_wotlk
                   WHERE mapID = ]] .. map_id .. [[
                     AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
                     AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
@@ -1048,13 +1045,7 @@ if config.expansions[expansion_to_process] then
                   local worldmap_result = {}
                   if worldmap_query:fetch(worldmap_result, "a") then
                     final_zone = tonumber(worldmap_result.areatableID)
-                    if id == 3139 then
-                      print("DEBUG: Found zone " .. final_zone .. " via WorldMapArea for NPC 3139")
-                    end
                   else
-                    if id == 3139 then
-                      print("DEBUG: No WorldMapArea zone found for NPC 3139 coords:", x, y, "map:", map_id)
-                    end
                     -- Fallback zones for all maps
                     if map_id == 1 then
                       final_zone = 14  -- Durotar for Kalimdor
@@ -1063,16 +1054,13 @@ if config.expansions[expansion_to_process] then
                     else
                       final_zone = map_id  -- Use map ID as zone ID for other maps
                     end
-                    if id == 3139 then
-                      print("DEBUG: Using fallback zone " .. final_zone .. " for NPC 3139")
-                    end
                   end
                 end
               end
 
-              -- Debug: log zone usage for specific NPCs only
+              -- Debug: log zone usage for critical NPCs only
               if id == 3139 then
-                print("DEBUG: NPC 3139 (quest 784) - coords:", x, y, "map:", map_id, "zone:", zone_id, "area:", area_id, "final_zone:", final_zone)
+                print("DEBUG: NPC " .. id .. " (coords:", x, y, ") - map:", map_id, "db_zone:", zone_id, "db_area:", area_id, "final_zone:", final_zone)
               end
 
               -- Convert world coordinates to zone percentage using WorldMapArea bounds
@@ -1080,7 +1068,7 @@ if config.expansions[expansion_to_process] then
 
               -- Get proper zone bounds from WorldMapArea
               local bounds_query = mysql:execute([[
-                SELECT x_min, x_max, y_min, y_max FROM worldmaparea_wotlk
+                SELECT x_min, x_max, y_min, y_max FROM WorldMapArea_wotlk
                 WHERE areatableID = ]] .. final_zone .. [[
                 LIMIT 1
               ]])
@@ -1094,23 +1082,32 @@ if config.expansions[expansion_to_process] then
                   local y_max = tonumber(bounds.y_max)
 
                   if x_min and x_max and y_min and y_max then
-                    -- Convert to percentage within zone bounds
-                    zone_x = ((x - x_min) / (x_max - x_min)) * 100
-                    zone_y = ((y - y_min) / (y_max - y_min)) * 100
+                    -- GPS-matching formula using ORIGINAL CSV values (not sorted):
+                    -- Our SQL has sorted values, need to restore original CSV order
+                    -- For Durotar: LocLeft=-1962.5, LocRight=-7250, LocTop=1808.333, LocBottom=-1716.667
+
+                    local DBC_LocLeft = x_max     -- Original LocLeft: -1962.5
+                    local DBC_LocRight = x_min    -- Original LocRight: -7250
+                    local DBC_LocTop = y_max      -- Original LocTop: 1808.333
+                    local DBC_LocBottom = y_min   -- Original LocBottom: -1716.667
+
+                    -- GPS-matching formula from Cursor analysis:
+                    zone_x = (y - DBC_LocLeft) / ((DBC_LocRight - DBC_LocLeft) / 100)  -- Uses Y-coord for ZoneX
+                    zone_y = (x - DBC_LocTop) / ((DBC_LocBottom - DBC_LocTop) / 100)   -- Uses X-coord for ZoneY
 
                     -- Clamp to 0-100 range
                     zone_x = math.max(0, math.min(100, zone_x))
                     zone_y = math.max(0, math.min(100, zone_y))
 
                     if id == 3139 then
-                      print("DEBUG: NPC 3139 zone coords:", zone_x, zone_y)
+                      print("DEBUG: NPC 3139 final coords:", zone_x, zone_y)
                     end
                   end
                 end
               end
 
-              -- Use original area_id for display if we used parent boundaries
-              local display_zone = (use_parent_boundaries and area_id and area_id > 0) and area_id or final_zone
+              -- Use correct zone for display: if we calculated using parent boundaries, show parent zone
+              local display_zone = use_parent_boundaries and final_zone or (area_id and area_id > 0 and area_id or final_zone)
 
               local coord = { zone_x, zone_y, display_zone, 0 }
               table.insert(ret, coord)
