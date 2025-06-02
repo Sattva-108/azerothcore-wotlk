@@ -8,3 +8,4 @@ db-backup-*/
 # Allow toolbox output for reference only
 !toolbox/output/
 /db/
+/db/

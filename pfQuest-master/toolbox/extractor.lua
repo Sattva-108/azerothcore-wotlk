@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
@@ -821,6 +821,90 @@ if config.expansions[expansion_to_process] then
         print("Database connection successful!")
     end
 
+-- ########## НОВЫЙ БЛОК ДЛЯ ЗАГРУЗКИ ИНФОРМАЦИИ О ЗОНАХ ##########
+-- Глобальная таблица для хранения расширенной информации о зонах
+pfQuest_AreaTableInfo = {}
+
+do -- Load AreaTable_wotlk data (ID, ParentZoneID, Name)
+  print("- Загрузка AreaTable_wotlk (ID, ParentZoneID, Name)...")
+  -- Убедитесь, что таблица называется AreaTable_wotlk и столбцы ID, zoneID, name_loc0 существуют
+  local query_at = mysql:execute("SELECT ID, zoneID, name_loc0 FROM AreaTable_wotlk ORDER BY ID")
+  if query_at then
+    local entry_data_at = {}
+    local count = 0
+    while query_at:fetch(entry_data_at, "a") do
+      local area_id_at = tonumber(entry_data_at.ID)
+      if area_id_at then
+        pfQuest_AreaTableInfo[area_id_at] = {
+          parentZoneID = tonumber(entry_data_at.zoneID), -- Это ParentZoneID из AreaTable.dbc
+          name = entry_data_at.name_loc0 or "Unknown Zone",
+          continentMapID = nil -- Пока не знаем
+        }
+        count = count + 1
+      end
+    end
+    -- query_at:close() -- Закрывать курсор лучше после использования или в конце блока, если он больше не нужен.
+                        -- В данном случае, если mysql это один объект соединения, закрывать его здесь не надо.
+                        -- Если query_at это объект курсора, то да, его можно закрыть.
+                        -- Для luasql, fetch до конца или query:close() освобождает ресурсы.
+    print("  Загружено " .. count .. " записей из AreaTable_wotlk в pfQuest_AreaTableInfo.")
+  else
+    print("  ОШИБКА: не удалось загрузить AreaTable_wotlk. SQL: " .. "SELECT ID, zoneID, name_loc0 FROM AreaTable_wotlk ORDER BY ID")
+  end
+end
+
+do -- Load WorldMapArea_wotlk to get continentMapID for zones and enrich pfQuest_AreaTableInfo
+  print("- Загрузка WorldMapArea_wotlk для определения continentMapID...")
+  -- Убедитесь, что таблица называется WorldMapArea_wotlk и столбцы areatableID, mapID существуют
+  -- GROUP BY обеспечивает уникальные пары areatableID, mapID
+  local query_wma = mysql:execute("SELECT areatableID, mapID FROM WorldMapArea_wotlk WHERE areatableID > 0 GROUP BY areatableID, mapID")
+  if query_wma then
+    local entry_data_wma = {}
+    local updated_count = 0
+    local created_count = 0
+    while query_wma:fetch(entry_data_wma, "a") do
+      local area_id_wma = tonumber(entry_data_wma.areatableID)
+      local continent_map_id_wma = tonumber(entry_data_wma.mapID)
+
+      if area_id_wma and continent_map_id_wma then
+        if pfQuest_AreaTableInfo[area_id_wma] then
+          if pfQuest_AreaTableInfo[area_id_wma].continentMapID == nil then
+            pfQuest_AreaTableInfo[area_id_wma].continentMapID = continent_map_id_wma
+            updated_count = updated_count + 1
+          elseif pfQuest_AreaTableInfo[area_id_wma].continentMapID ~= continent_map_id_wma then
+            print(string.format("  ПРЕДУПРЕЖДЕНИЕ: Конфликт continentMapID для AreaID %d ('%s'). Текущий: %s, Новый из WMA: %s. Оставляем старый.",
+                                area_id_wma, pfQuest_AreaTableInfo[area_id_wma].name, tostring(pfQuest_AreaTableInfo[area_id_wma].continentMapID), tostring(continent_map_id_wma)))
+          end
+        else
+          -- Зона есть в WorldMapArea, но по какой-то причине не была в AreaTable_wotlk
+          pfQuest_AreaTableInfo[area_id_wma] = {
+            parentZoneID = 0, -- Не можем знать родителя, ставим 0
+            name = "Unknown (ID: " .. area_id_wma .. ", from WMA)",
+            continentMapID = continent_map_id_wma
+          }
+          created_count = created_count + 1
+        end
+      end
+    end
+    print("  Обновлено " .. updated_count .. " и создано " .. created_count .. " записей в pfQuest_AreaTableInfo с continentMapID из WorldMapArea_wotlk.")
+
+    -- Проверка корневых зон
+    local missing_root_mapid_count = 0
+    for area_id_check, data_check in pairs(pfQuest_AreaTableInfo) do
+        if data_check.parentZoneID == 0 and data_check.continentMapID == nil then
+            print(string.format("  КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: Корневая зона AreaID %d ('%s') не имеет назначенного continentMapID. Это вызовет проблемы с отображением на карте мира!", area_id_check, data_check.name))
+            missing_root_mapid_count = missing_root_mapid_count + 1
+        end
+    end
+    if missing_root_mapid_count > 0 then
+        print("  Обнаружено " .. missing_root_mapid_count .. " корневых зон без continentMapID. Убедитесь, что WorldMapArea_wotlk содержит mapID для этих зон.")
+    end
+  else
+    print("  ОШИБКА: не удалось загрузить WorldMapArea_wotlk для определения continentMapID. SQL: " .. "SELECT areatableID, mapID FROM WorldMapArea_wotlk WHERE areatableID > 0 GROUP BY areatableID, mapID")
+  end
+end
+-- ########## КОНЕЦ НОВОГО БЛОКА ##########
+
   do -- database query functions
     function GetAreaTriggerCoords(id)
       local areatrigger = {}
@@ -1126,40 +1210,336 @@ if config.expansions[expansion_to_process] then
       local ret = {}
 
       if core == "acore" then
-        -- For AzerothCore, get coordinates from gameobject table
-        local object_coords = {}
+        local gameobject_coords_data = {}
+        -- Подправьте LIMIT если нужно, или уберите его для полного извлечения всех позиций объекта
         local query = mysql:execute([[
-          SELECT gameobject.position_x, gameobject.position_y, gameobject.map, gameobject.zoneId, gameobject.areaId
+          SELECT gameobject.position_x, gameobject.position_y, gameobject.map, gameobject.zoneId, gameobject.areaId, gameobject.id as gameobject_id
           FROM gameobject
           WHERE gameobject.id = ]] .. id .. [[
-          LIMIT 50
+          LIMIT 50 -- Ограничение на случай, если у объекта много спавнов, для ускорения
         ]])
 
         if query then
-          while query:fetch(object_coords, "a") do
+          while query:fetch(gameobject_coords_data, "a") do
             if debug("object_coords") then break end
 
-            local x = tonumber(object_coords.position_x)
-            local y = tonumber(object_coords.position_y)
-            local map_id = tonumber(object_coords.map)
-            local zone_id = tonumber(object_coords.zoneId)
-            local area_id = tonumber(object_coords.areaId)
+            local x = tonumber(gameobject_coords_data.position_x)
+            local y = tonumber(gameobject_coords_data.position_y)
+            local map_id_from_entity_table = tonumber(gameobject_coords_data.map)
+            local db_zone_id = tonumber(gameobject_coords_data.zoneId)
+            local db_area_id = tonumber(gameobject_coords_data.areaId)
+            local entry_id = tonumber(gameobject_coords_data.gameobject_id) -- Для отладочных сообщений
+
+            if x and y and map_id_from_entity_table then
+              local final_zone = nil
+              local use_parent_boundaries_for_calc = false -- Флаг, если для расчета координат используются границы родителя
+
+              if db_area_id and db_area_id > 0 then
+                -- Пытаемся использовать areaId (subzone)
+                final_zone = db_area_id
+                -- Проверяем, есть ли у этой подзоны свои границы в WorldMapArea
+                local wma_bounds_check_query = mysql:execute([[
+                  SELECT areatableID FROM WorldMapArea_wotlk
+                  WHERE areatableID = ]] .. db_area_id .. [[ LIMIT 1
+                ]])
+                local wma_bounds_result = {}
+                if not (wma_bounds_check_query and wma_bounds_check_query:fetch(wma_bounds_result, "a")) then
+                  -- У подзоны нет своих границ в WMA, ищем родительскую зону из pfQuest_AreaTableInfo
+                  if pfQuest_AreaTableInfo and pfQuest_AreaTableInfo[db_area_id] and pfQuest_AreaTableInfo[db_area_id].parentZoneID and pfQuest_AreaTableInfo[db_area_id].parentZoneID > 0 then
+                    final_zone = pfQuest_AreaTableInfo[db_area_id].parentZoneID
+                    use_parent_boundaries_for_calc = true
+                    if entry_id and (entry_id == 000) then -- Замените 000 на ID для отладки
+                        print(string.format("DEBUG_GO (%s): Subzone %d has no WMA bounds, using parent %d from pfQuest_AreaTableInfo for coord calculation.", entry_id, db_area_id, final_zone))
+                    end
+                  else
+                     if entry_id and (entry_id == 000) then
+                        print(string.format("DEBUG_GO (%s): Subzone %d has no WMA bounds and no parent in pfQuest_AreaTableInfo. Sticking with subzone ID %d for bounds lookup.", entry_id, db_area_id, db_area_id))
+                     end
+                     -- Оставляем final_zone = db_area_id, возможно, для него найдутся границы позже или это ошибка в данных
+                  end
+                end
+                if wma_bounds_check_query then wma_bounds_check_query:close() end
+
+              elseif db_zone_id and db_zone_id > 0 then
+                final_zone = db_zone_id
+              end
+
+              if not final_zone then
+                local worldmap_query = mysql:execute([[
+                  SELECT areatableID FROM WorldMapArea_wotlk
+                  WHERE mapID = ]] .. map_id_from_entity_table .. [[
+                    AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
+                    AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
+                  ORDER BY (x_max - x_min) * (y_max - y_min) ASC
+                  LIMIT 1
+                ]])
+                if worldmap_query then
+                  local worldmap_result = {}
+                  if worldmap_query:fetch(worldmap_result, "a") then
+                    final_zone = tonumber(worldmap_result.areatableID)
+                  else
+                    -- Fallback зоны, если по координатам ничего не найдено
+                    local zone_map_fallback = {
+                      [0] = 12,      -- Eastern Kingdoms -> Elwynn Forest
+                      [1] = 14,      -- Kalimdor -> Durotar
+                      [530] = 3520,  -- Outland -> Hellfire Peninsula
+                      [571] = 65     -- Northrend -> Dragonblight
+                    }
+                    final_zone = zone_map_fallback[map_id_from_entity_table] or map_id_from_entity_table -- Последний fallback на саму map_id
+                  end
+                  worldmap_query:close()
+                end
+              end
+
+              if not final_zone then -- Если final_zone всё еще не определен
+                if entry_id and (entry_id == 000) then
+                    print(string.format("DEBUG_GO (%s): CRITICAL - final_zone could not be determined for map %d, coords (%f, %f). Skipping.", entry_id, map_id_from_entity_table, x, y))
+                end
+                 -- Implicitly skip to next iteration as the rest of the code is in the 'if final_zone then' block
+              end
+
+              if final_zone then -- Check if final_zone was successfully determined
+                if entry_id and (entry_id == 000) then -- Замените 000 на ID объекта для детальной отладки
+                  print(string.format("DEBUG_GO (%s): map: %s, db_zone: %s, db_area: %s, calculated_final_zone_for_bounds: %s, use_parent_for_calc: %s",
+                    entry_id, tostring(map_id_from_entity_table), tostring(db_zone_id), tostring(db_area_id), tostring(final_zone), tostring(use_parent_boundaries_for_calc)))
+                end
+
+                local zone_x, zone_y = 50.0, 50.0 -- Координаты по умолчанию (центр зоны)
+
+                local bounds_query = mysql:execute([[
+                  SELECT x_min, x_max, y_min, y_max FROM WorldMapArea_wotlk
+                  WHERE areatableID = ]] .. final_zone .. [[
+                  LIMIT 1
+                ]])
+
+                if bounds_query then
+                  local bounds = {}
+                  if bounds_query:fetch(bounds, "a") then
+                    local x_min_bound = tonumber(bounds.x_min)
+                    local x_max_bound = tonumber(bounds.x_max)
+                    local y_min_bound = tonumber(bounds.y_min)
+                    local y_max_bound = tonumber(bounds.y_max)
+
+                    if x_min_bound and x_max_bound and y_min_bound and y_max_bound then
+                      -- Предполагаем, что комментарии в GetCreatureCoords верны относительно соответствия x_min/max, y_min/max
+                      -- оригинальным LocLeft/Right/Top/Bottom:
+                      local calc_DBC_LocLeft = x_max_bound
+                      local calc_DBC_LocRight = x_min_bound
+                      local calc_DBC_LocTop = y_max_bound
+                      local calc_DBC_LocBottom = y_min_bound
+
+                      -- Формула, соответствующая GPS:
+                      if (calc_DBC_LocRight - calc_DBC_LocLeft) ~= 0 and (calc_DBC_LocBottom - calc_DBC_LocTop) ~= 0 then
+                          zone_x = (y - calc_DBC_LocLeft) / ((calc_DBC_LocRight - calc_DBC_LocLeft) / 100.0)
+                          zone_y = (x - calc_DBC_LocTop) / ((calc_DBC_LocBottom - calc_DBC_LocTop) / 100.0)
+
+                          zone_x = math.max(0.0, math.min(100.0, zone_x))
+                          zone_y = math.max(0.0, math.min(100.0, zone_y))
+                      else
+                          if entry_id and (entry_id == 000) then
+                              print(string.format("DEBUG_GO (%s): Division by zero avoided for zone %d. Bounds: L:%s R:%s T:%s B:%s", entry_id, final_zone, calc_DBC_LocLeft, calc_DBC_LocRight, calc_DBC_LocTop, calc_DBC_LocBottom))
+                          end
+                          -- Оставляем 50,50, так как границы не позволяют вычислить
+                      end
+
+                      if entry_id and (entry_id == 000) then
+                        print(string.format("DEBUG_GO (%s): Calculated coords for zone %d: %f, %f", entry_id, final_zone, zone_x, zone_y))
+                      end
+                    else
+                       if entry_id and (entry_id == 000) then print(string.format("DEBUG_GO (%s): Nil bounds for zone %d", entry_id, final_zone)) end
+                    end
+                  else
+                      if entry_id and (entry_id == 000) then print(string.format("DEBUG_GO (%s): No WMA bounds found for final_zone %d", entry_id, final_zone)) end
+                  end
+                  bounds_query:close()
+                end
+
+                -- Определение display_zone для pfQuest
+                -- По умолчанию, зона, для которой считались проценты, и есть display_zone.
+                -- Если использовались границы родителя для расчета, то display_zone всё равно должен быть ID самой подзоны (db_area_id), если он есть,
+                -- так как pfQuest должен знать о подзоне. А иерархию он поймет из pfDB["zones"].
+                local display_zone_for_pfQuest = db_area_id and db_area_id > 0 and db_area_id or (db_zone_id and db_zone_id > 0 and db_zone_id or final_zone)
+                if not display_zone_for_pfQuest or display_zone_for_pfQuest == 0 then
+                  display_zone_for_pfQuest = final_zone -- Если все еще 0, берем final_zone, который точно не 0
+                end
+
+                local coord = { zone_x, zone_y, display_zone_for_pfQuest, 0 }
+                table.insert(ret, coord)
+              else -- final_zone is nil
+                if entry_id and (entry_id == 000) then -- Замените 000 на ID объекта для детальной отладки
+                    print(string.format("DEBUG_GO (%s): CRITICAL - final_zone could not be determined for map %d, coords (%f, %f). Skipping.", entry_id, map_id_from_entity_table, x, y))
+                end
+                 -- Implicitly skip to next iteration as the rest of the code is in the 'if final_zone then' block
+              end
+            end
+            -- Removed ::continue_loop:: label
+          end
+          query:close()
+        end
+
+        return ret
+      else
+        -- Original function code for other cores would go here (currently empty)
+        return {}
+      end
+    end
+
+    function GetCreatureCoordsPool(id)
+      -- Temporarily disabled due to DBC data issues
+      return {}
+    end
+
+    function GetCreatureCoords(id)
+      local ret = {}
+
+      if core == "acore" then
+        -- HARDCODED ZONE MAPPING for AzerothCore (since zoneId/areaId are empty)
+        local zone_map = {
+          [0] = 12,      -- Eastern Kingdoms -> Elwynn Forest
+          [1] = 14,      -- Kalimdor -> Durotar (correct zone for quest 784!)
+          [530] = 3520,  -- Outland -> Hellfire Peninsula
+          [571] = 65     -- Northrend -> Dragonblight
+        }
+
+        -- For AzerothCore, get coordinates from creature table
+        local creature_coords = {}
+        local query = mysql:execute([[
+          SELECT creature.position_x, creature.position_y, creature.map, creature.zoneId, creature.areaId
+          FROM creature
+          WHERE creature.id1 = ]] .. id .. [[
+        ]])
+
+        if query then
+          while query:fetch(creature_coords, "a") do
+            if debug("creature_coords") then break end
+
+            local x = tonumber(creature_coords.position_x)
+            local y = tonumber(creature_coords.position_y)
+            local map_id = tonumber(creature_coords.map)
+            local zone_id = tonumber(creature_coords.zoneId)
+            local area_id = tonumber(creature_coords.areaId)
 
             if x and y and map_id then
-              -- Use zone_id as primary (main zone), fallback to area_id, otherwise map_id
-              local final_zone = zone_id and zone_id > 0 and zone_id or area_id and area_id > 0 and area_id or map_id
+              -- Smart zone determination: prefer areaId, fallback to parent zone for boundaries
+              local final_zone = nil
+              local use_parent_boundaries = false
 
-              -- Convert world coordinates to zone percentage (simplified)
-              local zone_x = math.floor((x + 17066) / 340 * 100) / 100
-              local zone_y = math.floor((y + 17066) / 340 * 100) / 100
+              if area_id and area_id > 0 then
+                -- First try to use areaId (subzone like Razor Hill)
+                final_zone = area_id
 
-              -- Clamp to 0-100 range
-              zone_x = math.max(0, math.min(100, zone_x))
-              zone_y = math.max(0, math.min(100, zone_y))
+                -- Check if subzone has boundaries in WorldMapArea_wotlk
+                local subzone_check = mysql:execute([[
+                  SELECT areatableID FROM WorldMapArea_wotlk
+                  WHERE areatableID = ]] .. area_id .. [[
+                  LIMIT 1
+                ]])
 
-              local coord = { zone_x, zone_y, final_zone, 0 }
+                if subzone_check then
+                  local subzone_result = {}
+                  if not subzone_check:fetch(subzone_result, "a") then
+                    -- Subzone has no boundaries, find parent zone
+                    local parent_query = mysql:execute([[
+                      SELECT zoneID FROM AreaTable_wotlk
+                      WHERE id = ]] .. area_id .. [[
+                      LIMIT 1
+                    ]])
+                    if parent_query then
+                      local parent_result = {}
+                      if parent_query:fetch(parent_result, "a") then
+                        local parent_zone = tonumber(parent_result.zoneID)
+                        if parent_zone and parent_zone > 0 then
+                          final_zone = parent_zone
+                          use_parent_boundaries = true
+                        end
+                      end
+                    end
+                  end
+                end
+              elseif zone_id and zone_id > 0 then
+                final_zone = zone_id
+              end
+
+              -- If no zone info, try to find it via WorldMapArea DBC
+              if not final_zone then
+                local worldmap_query = mysql:execute([[
+                  SELECT areatableID FROM WorldMapArea_wotlk
+                  WHERE mapID = ]] .. map_id .. [[
+                    AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
+                    AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
+                  ORDER BY (x_max - x_min) * (y_max - y_min) ASC
+                  LIMIT 1
+                ]])
+                if worldmap_query then
+                  local worldmap_result = {}
+                  if worldmap_query:fetch(worldmap_result, "a") then
+                    final_zone = tonumber(worldmap_result.areatableID)
+                  else
+                    -- Fallback zones for all maps
+                    if map_id == 1 then
+                      final_zone = 14  -- Durotar for Kalimdor
+                    elseif map_id == 0 then
+                      final_zone = 12  -- Elwynn Forest for Eastern Kingdoms
+                    else
+                      final_zone = map_id  -- Use map ID as zone ID for other maps
+                    end
+                  end
+                end
+              end
+
+              -- Debug: log zone usage for critical NPCs only
+              if id == 3139 then
+                print("DEBUG: NPC " .. id .. " (coords:", x, y, ") - map:", map_id, "db_zone:", zone_id, "db_area:", area_id, "final_zone:", final_zone)
+              end
+
+              -- Convert world coordinates to zone percentage using WorldMapArea bounds
+              local zone_x, zone_y = 50, 50 -- Default center
+
+              -- Get proper zone bounds from WorldMapArea
+              local bounds_query = mysql:execute([[
+                SELECT x_min, x_max, y_min, y_max FROM WorldMapArea_wotlk
+                WHERE areatableID = ]] .. final_zone .. [[
+                LIMIT 1
+              ]])
+
+              if bounds_query then
+                local bounds = {}
+                if bounds_query:fetch(bounds, "a") then
+                  local x_min = tonumber(bounds.x_min)
+                  local x_max = tonumber(bounds.x_max)
+                  local y_min = tonumber(bounds.y_min)
+                  local y_max = tonumber(bounds.y_max)
+
+                  if x_min and x_max and y_min and y_max then
+                    -- GPS-matching formula using ORIGINAL CSV values (not sorted):
+                    -- Our SQL has sorted values, need to restore original CSV order
+                    -- For Durotar: LocLeft=-1962.5, LocRight=-7250, LocTop=1808.333, LocBottom=-1716.667
+
+                    local DBC_LocLeft = x_max     -- Original LocLeft: -1962.5
+                    local DBC_LocRight = x_min    -- Original LocRight: -7250
+                    local DBC_LocTop = y_max      -- Original LocTop: 1808.333
+                    local DBC_LocBottom = y_min   -- Original LocBottom: -1716.667
+
+                    -- GPS-matching formula from Cursor analysis:
+                    zone_x = (y - DBC_LocLeft) / ((DBC_LocRight - DBC_LocLeft) / 100)  -- Uses Y-coord for ZoneX
+                    zone_y = (x - DBC_LocTop) / ((DBC_LocBottom - DBC_LocTop) / 100)   -- Uses X-coord for ZoneY
+
+                    -- Clamp to 0-100 range
+                    zone_x = math.max(0, math.min(100, zone_x))
+                    zone_y = math.max(0, math.min(100, zone_y))
+
+                    if id == 3139 then
+                      print("DEBUG: NPC 3139 final coords:", zone_x, zone_y)
+                    end
+                  end
+                end
+              end
+
+              -- Use correct zone for display: if we calculated using parent boundaries, show parent zone
+              local display_zone = use_parent_boundaries and final_zone or (area_id and area_id > 0 and area_id or final_zone)
+
+              local coord = { zone_x, zone_y, display_zone, 0 }
               table.insert(ret, coord)
-              -- Debug print removed to avoid spam
             end
           end
         end
@@ -2219,33 +2599,63 @@ if config.expansions[expansion_to_process] then
   end
 
   do -- zones
-    print("- loading zones...")
+    print("- loading zones for pfDB['zones'] structure...")
     pfDB["zones"] = pfDB["zones"] or {}
     pfDB["zones"][data] = {}
 
     if core == "acore" then
-      -- For AzerothCore, extract zones from creature spawns since AreaTable_vanilla is empty
-      local zones = {}
-      local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0')  -- NO LIMIT for zones
-      if query then
-        while query:fetch(zones, "a") do
-          if debug("zones") then break end
-          local zone_id = tonumber(zones.zoneId)
-          local area_id = tonumber(zones.areaId)
+      -- Новая логика для AzerothCore: используем pfQuest_AreaTableInfo
+      if pfQuest_AreaTableInfo and TableCount(pfQuest_AreaTableInfo) > 0 then
+        print("  Populating pfDB['zones'] from pfQuest_AreaTableInfo for AzerothCore...")
+        local zones_added_count = 0
+        for area_id_iter, area_data_entry in pairs(pfQuest_AreaTableInfo) do
+          local first_element_for_pfDB_zones
 
-          if zone_id and zone_id > 0 then
-            pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 } -- zone, width, height, cx, cy
+          if area_data_entry.parentZoneID and area_data_entry.parentZoneID ~= 0 then
+            -- Это подзона, используем ее parentZoneID
+            first_element_for_pfDB_zones = area_data_entry.parentZoneID
+          else
+            -- Это зона верхнего уровня (parentZoneID = 0), используем continentMapID
+            first_element_for_pfDB_zones = area_data_entry.continentMapID
+            if not first_element_for_pfDB_zones then
+              print(string.format("  КРИТИЧЕСКОЕ ПРЕДУПРЕЖДЕНИЕ: Не удалось определить continentMapID для корневой зоны %d ('%s')! Используется 0 как fallback для pfDB.zones. Это может привести к неверному отображению на карте мира.", area_id_iter, area_data_entry.name))
+              first_element_for_pfDB_zones = 0 -- Или другой ID карты по умолчанию, если 0 не подходит
+            end
           end
-          if area_id and area_id > 0 and area_id ~= zone_id then
-            pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
-          end
+          pfDB["zones"][data][area_id_iter] = { first_element_for_pfDB_zones, 100, 100, 50, 50 } -- width, height, cx, cy - пока заглушки
+          zones_added_count = zones_added_count + 1
         end
-        print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from creature spawns")
+        print("  SUCCESS: Populated " .. zones_added_count .. " entries in pfDB['zones'] using pfQuest_AreaTableInfo.")
+        if zones_added_count == 0 then
+             print("  WARNING: pfQuest_AreaTableInfo was processed, but no zones were added to pfDB['zones']. Check logic or pfQuest_AreaTableInfo content.")
+        end
       else
-        print("  Warning: Failed to query zones from creature table")
+        print("  WARNING: pfQuest_AreaTableInfo is empty or not loaded. pfDB['zones'] will be incomplete. Attempting fallback to creature spawns (less accurate).")
+        -- Старый fallback на creature spawns, если pfQuest_AreaTableInfo пуст (менее точный)
+        local zones_fallback = {}
+        local query_fallback = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0 OR areaId > 0')
+        if query_fallback then
+          local fallback_count = 0
+          while query_fallback:fetch(zones_fallback, "a") do
+            local z_id = tonumber(zones_fallback.zoneId)
+            local a_id = tonumber(zones_fallback.areaId)
+            if z_id and z_id > 0 and not pfDB["zones"][data][z_id] then
+              pfDB["zones"][data][z_id] = { z_id, 100, 100, 50, 50 } -- Используем сам zoneId как первый элемент в крайнем случае
+              fallback_count = fallback_count + 1
+            end
+            if a_id and a_id > 0 and a_id ~= z_id and not pfDB["zones"][data][a_id] then
+              pfDB["zones"][data][a_id] = { (z_id and z_id > 0 and z_id or a_id), 100, 100, 50, 50 } -- Если есть z_id, он как родитель, иначе сама a_id
+              fallback_count = fallback_count + 1
+            end
+          end
+          -- query_fallback:close() -- Если luasql, то fetch до конца сам освободит
+          print("  Fallback: Extracted " .. fallback_count .. " unique zone/area IDs from creature spawns.")
+        else
+          print("  Warning: Failed to query zones from creature table for fallback.")
+        end
       end
     else
-      -- Original zones logic for cores with pfquest DBC data
+      -- Original zones logic for other cores (uses pfquest.WorldMapOverlay_expansion etc.)
       local zones = {}
       local query = mysql:execute('SELECT * FROM pfquest.WorldMapOverlay_'..expansion..' LEFT JOIN pfquest.AreaTable_'..expansion..' ON pfquest.WorldMapOverlay_'..expansion..'.areaID = pfquest.AreaTable_'..expansion..'.id')
       while query:fetch(zones, "a") do
