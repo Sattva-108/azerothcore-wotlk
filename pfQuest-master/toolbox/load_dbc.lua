@@ -374,6 +374,52 @@ load_dbc_csv("DBC/wotlk/enUS/SkillLine.dbc.csv", "SkillLine_wotlk", [[
   return "INSERT INTO `SkillLine_wotlk` (`id`, `name_loc0`) VALUES ('" .. id .. "', '" .. name .. "')"
 end)
 
+-- Create and load WorldMapOverlay_wotlk
+load_dbc_csv("DBC/wotlk/WorldMapOverlay.dbc.csv", "worldmapoverlay_wotlk", [[\
+  CREATE TABLE `worldmapoverlay_wotlk` (
+    `ID` int(11) NOT NULL,
+    `MapAreaID` int(11) DEFAULT NULL,
+    `areaID` int(11) DEFAULT NULL,
+    `TextureName` varchar(255) DEFAULT NULL,
+    `TextureWidth` int(11) DEFAULT NULL,
+    `TextureHeight` int(11) DEFAULT NULL,
+    `OffsetX` float DEFAULT NULL,
+    `OffsetY` float DEFAULT NULL,
+    `HitRectTop` float DEFAULT NULL,
+    `HitRectLeft` float DEFAULT NULL,
+    `HitRectBottom` float DEFAULT NULL,
+    `HitRectRight` float DEFAULT NULL,
+    PRIMARY KEY (`ID`)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+]], function(values)
+  -- CSV Header: "ID","MapAreaID","AreaID_1","AreaID_2","AreaID_3","AreaID_4","MapPointX","MapPointY","TextureName","TextureWidth","TextureHeight","OffsetX","OffsetY","HitRectTop","HitRectLeft","HitRectBottom","HitRectRight"
+  -- Indices:     1      2          3          4          5          6           7           8           9             10             11             12         13         14           15            16             17
+  local id = values[1]
+  local map_area_id = values[2] or "0"
+  local area_id_1 = values[3] or "0" -- This is the one we link to AreaTable.ID
+  -- AreaID_2, _3, _4 (values[4], values[5], values[6]) are ignored for now
+  -- MapPointX, MapPointY (values[7], values[8]) are ignored for now
+  local texture_name = values[9] or ""
+  texture_name = texture_name:gsub("'", "\\\\'") -- Escape quotes
+  local texture_width = tonumber(values[10]) or 0
+  local texture_height = tonumber(values[11]) or 0
+  local offset_x = tonumber(values[12]) or 0
+  local offset_y = tonumber(values[13]) or 0
+  local hit_rect_top = tonumber(values[14]) or 0
+  local hit_rect_left = tonumber(values[15]) or 0
+  local hit_rect_bottom = tonumber(values[16]) or 0
+  local hit_rect_right = tonumber(values[17]) or 0
+
+  -- We only care about AreaID_1 for linking to the actual zone.
+  -- If AreaID_1 is 0 or nil, this overlay might not be directly for a displayable zone area in pfQuest context.
+  if tonumber(area_id_1) == 0 then
+    return nil -- Skip inserting if AreaID_1 is 0
+  end
+
+  return string.format("INSERT INTO `worldmapoverlay_wotlk` (`ID`, `MapAreaID`, `areaID`, `TextureName`, `TextureWidth`, `TextureHeight`, `OffsetX`, `OffsetY`, `HitRectTop`, `HitRectLeft`, `HitRectBottom`, `HitRectRight`) VALUES ('%s', '%s', '%s', '%s', %d, %d, %f, %f, %f, %f, %f, %f)",
+    id, map_area_id, area_id_1, texture_name, texture_width, texture_height, offset_x, offset_y, hit_rect_top, hit_rect_left, hit_rect_bottom, hit_rect_right)
+end)
+
 mysql:close()
 env:close()
 print("DBC data loading completed!")

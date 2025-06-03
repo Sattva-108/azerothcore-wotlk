@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
 
@@ -665,7 +665,7 @@ local config = {
     },
   },
 
-  expansion = "vanilla", -- define the expansion to build (use vanilla to avoid -wotlk suffix) (must be a key of 'expansions' table)
+  expansion = "wotlk_ac", -- define the expansion to build (must be a key of 'expansions' table)
 
   -- ignore list for object types. These types will not be included into the database
   -- usually these are herbs, minerals, chests because they have a too wide spawn area
@@ -2267,79 +2267,131 @@ if config.expansions[expansion_to_process] then
     pfDB["zones"] = pfDB["zones"] or {}
     pfDB["zones"][data] = {}
 
+    -- Helper function to get field value trying common capitalizations
+    local function get_case_insensitive_field(data_row, field_name_lower)
+        if data_row[field_name_lower] ~= nil then return data_row[field_name_lower] end
+        local first_char_upper = string.upper(string.sub(field_name_lower, 1, 1)) .. string.sub(field_name_lower, 2)
+        if data_row[first_char_upper] ~= nil then return data_row[first_char_upper] end -- e.g. HitRectTop
+        if data_row[string.upper(field_name_lower)] ~= nil then return data_row[string.upper(field_name_lower)] end -- e.g. HITRECTTOP
+        -- Try with underscores if common (though not in current DBC standard)
+        -- local under_name = string.gsub(field_name_lower, "rect", "rect_") -- Example: hit_rect_top
+        -- if data_row[under_name] ~= nil then return data_row[under_name] end
+        return nil
+    end
+
     if core == "acore" then
-      -- For AzerothCore, use AreaTable_wotlk_enriched to get proper zone hierarchy
-      print("  Attempting to load zones from AreaTable_wotlk_enriched...")
-      local zones = {}
-      local query = mysql:execute('SELECT ID, MapID_continent, ParentZoneID, name_loc0 FROM AreaTable_wotlk_enriched ORDER BY ID ASC')  -- NO LIMIT for zones
+      local zones_data = {} -- This table will be populated by fetch
+      local query_string = [[
+        SELECT
+          ate.ID,
+          ate.ParentZoneID,
+          ate.name_loc0,          -- Use original column name
+          ate.MapID_continent,    -- Use original column name
+          wmo.TextureWidth,
+          wmo.TextureHeight,
+          wmo.HitRectLeft,
+          wmo.HitRectRight,
+          wmo.HitRectTop,
+          wmo.HitRectBottom
+        FROM AreaTable_wotlk_enriched ate
+        LEFT JOIN worldmapoverlay_wotlk wmo ON ate.ID = wmo.areaID
+        ORDER BY ate.ID ASC
+      ]]
+      print("DEBUG: Executing SQL for zone dimensions: " .. query_string) -- Print the query
+      local query = mysql:execute(query_string)
+
       if query then
-        print("  Query successful, processing zones...")
-        local zone_count = 0
-        while query:fetch(zones, "a") do
-          if debug("zones") then break end
-          local area_id = tonumber(zones.ID)
-          local map_id_continent = tonumber(zones.MapID_continent)
-          local parent_zone_id = tonumber(zones.ParentZoneID)
-          local name = zones.name_loc0
+        print("  SUCCESS: Queried enriched AreaTable and WorldMapOverlay data for zone dimensions")
+        while query:fetch(zones_data, "a") do
+          if not zones_data or type(zones_data) ~= "table" then
+            print("  ERROR: zones_data is nil or not a table after fetch in dimension calculation. Breaking loop.")
+            break
+          end
 
-          if area_id and area_id > 0 then
-            -- Determine parent: if ParentZoneID=0 (root zone), use MapID_continent; otherwise use ParentZoneID
-            local parent = (parent_zone_id == 0) and map_id_continent or parent_zone_id
-            pfDB["zones"][data][area_id] = { parent, 100, 100, 50, 50 } -- parent, width, height, cx, cy
-            zone_count = zone_count + 1
+          if debug and debug("zones") then break end
 
-            -- Debug for specific zones
-            if area_id == 14 or area_id == 1 or area_id == 12 or area_id == 362 then
-              print("DEBUG: zones data - ID=" .. area_id .. " name=" .. (name or "nil") .. " parent=" .. parent .. " (continent=" .. map_id_continent .. " parentzone=" .. parent_zone_id .. ")")
+          local areaID = tonumber(zones_data.ID)
+          if zones_data.MapID_continent == nil then
+            print(string.format("  DEBUG WARNING: zones_data.MapID_continent is nil for areaID %s. Row data:", tostring(areaID or "unknown ID before assignment")))
+            for k,v in pairs(zones_data) do print(string.format("    %s = %s (type: %s)", tostring(k), tostring(v), type(v))) end
+          else
+            print(string.format("MANUAL DEBUG: zones_data.MapID_continent IS NIL for areaID %s. Full zones_data row:", tostring(areaID or zones_data.ID)))
+            for k,v in pairs(zones_data) do print(string.format("    %s = %s (type: %s)", tostring(k), tostring(v), type(v))) end
+          end
+          local parentZoneID = tonumber(zones_data.ParentZoneID) or 0
+          local continentMapID = tonumber(zones_data.MapID_continent) or 0
+          local name = zones_data.name_loc0 or "Unknown Zone"
+
+          local first_element
+          if parentZoneID ~= 0 then
+            first_element = parentZoneID
+          else
+            first_element = continentMapID
+          end
+
+          local width, height, cx, cy = 100, 100, 50, 50
+
+          local tex_w = tonumber(zones_data.TextureWidth)
+          local tex_h = tonumber(zones_data.TextureHeight)
+          local hr_left = tonumber(zones_data.HitRectLeft)
+          local hr_right = tonumber(zones_data.HitRectRight)
+          local hr_top = tonumber(zones_data.HitRectTop)
+          local hr_bottom = tonumber(zones_data.HitRectBottom)
+
+          if tex_w and tex_h and hr_left and hr_right and hr_top and hr_bottom and tex_w > 0 and tex_h > 0 then
+            width = ((hr_right - hr_left) / tex_w) * 100
+            height = ((hr_bottom - hr_top) / tex_h) * 100
+            cx = (hr_left / tex_w) * 100 + (width / 2)
+            cy = (hr_top / tex_h) * 100 + (height / 2)
+
+            width = math.max(0, math.min(100, width))
+            height = math.max(0, math.min(100, height))
+            cx = math.max(0, math.min(100, cx))
+            cy = math.max(0, math.min(100, cy))
+
+            if type(debug_zone_calc) == "boolean" and debug_zone_calc and type(DEBUG_ZONE_ID) == "number" and (areaID == DEBUG_ZONE_ID or areaID == 362) then
+                print(string.format("DEBUG zones calc: AreaID=%s Name=%s", tostring(areaID), tostring(name)))
+                print(string.format("  tex_w=%.2f, tex_h=%.2f, hr_left=%.2f, hr_right=%.2f, hr_top=%.2f, hr_bottom=%.2f", tex_w, tex_h, hr_left, hr_right, hr_top, hr_bottom))
+                print(string.format("  Calculated: w=%.2f h=%.2f cx=%.2f cy=%.2f", width, height, cx, cy))
             end
           else
-            print("  WARNING: Invalid area_id for zone: ID=" .. (zones.ID or "nil") .. " name=" .. (name or "nil"))
+            if type(debug_zone_calc) == "boolean" and debug_zone_calc and type(DEBUG_ZONE_ID) == "number" and (areaID == DEBUG_ZONE_ID or areaID == 362) then
+                 print(string.format("DEBUG zones calc: AreaID=%s Name=%s - Using default dimensions (overlay data missing or invalid)", tostring(areaID), tostring(name)))
+            end
+          end
+
+          if width ~= width or height ~= height or cx ~= cx or cy ~= cy then
+            width, height, cx, cy = 100, 100, 50, 50
+            if type(debug_zone_calc) == "boolean" and debug_zone_calc and type(DEBUG_ZONE_ID) == "number" and (areaID == DEBUG_ZONE_ID or areaID == 362) then
+                 print(string.format("DEBUG zones calc: AreaID=%s Name=%s - NaN detected, using default dimensions", tostring(areaID), tostring(name)))
+            end
+          end
+
+          if areaID then
+            local zone_entry = { first_element, width, height, cx, cy }
+            pfDB["zones"][data][areaID] = zone_entry
+            if type(debug_zones) == "boolean" and debug_zones then
+              print(string.format("DEBUG: zones data - ID=%s name=%s parent/map=%s ... dims: w=%.2f h=%.2f cx=%.2f cy=%.2f", tostring(areaID), tostring(name), tostring(first_element), width, height, cx, cy))
+            end
           end
         end
-        print("  SUCCESS: Extracted " .. zone_count .. " zones from AreaTable_wotlk_enriched with proper hierarchy")
-
-        -- Verify key zones were loaded
-        if pfDB["zones"][data][14] then
-          local durotar_parent = pfDB["zones"][data][14][1]
-          print("  VERIFY: Durotar (14) parent = " .. durotar_parent)
-        else
-          print("  ERROR: Durotar (14) not found in zones data!")
-        end
-
-        if pfDB["zones"][data][362] then
-          local razor_hill_parent = pfDB["zones"][data][362][1]
-          print("  VERIFY: Razor Hill (362) parent = " .. razor_hill_parent)
-        else
-          print("  WARNING: Razor Hill (362) not found in zones data!")
-        end
-
+        print("  SUCCESS: Extracted zone data (dimensions)")
+        if query and query.close then query:close() end
       else
-        print("  ERROR: Failed to query zones from AreaTable_wotlk_enriched - table might not exist")
-        print("  Falling back to creature spawns method...")
-        -- Fallback to original logic
-        local zones = {}
-        local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0')
-        if query then
-          print("  Fallback query successful...")
-          while query:fetch(zones, "a") do
-            if debug("zones") then break end
-            local zone_id = tonumber(zones.zoneId)
-            local area_id = tonumber(zones.areaId)
-
-            if zone_id and zone_id > 0 then
-              pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 }
-            end
-            if area_id and area_id > 0 and area_id ~= zone_id then
-              pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
-            end
+        local err_msg_detail = "Unknown MySQL error"
+        if mysql and type(mysql.error) == "function" then
+          local specific_error = mysql:error()
+          if specific_error then
+            err_msg_detail = tostring(specific_error)
           end
-          print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from creature spawns (fallback)")
-        else
-          print("  ERROR: Even fallback query failed! No zones will be available!")
+        elseif not mysql then
+          err_msg_detail = "MySQL connection object is nil at the point of zone dimension query failure."
         end
+        print("  Warning: Failed to query zone data (dimensions) - run load_dbc.lua. SQL Error: " .. err_msg_detail)
+        if query and query.close then query:close() end -- query will be nil here, but check is harmless
       end
     else
-      -- Original zones logic for cores with pfquest DBC data
+      -- Original logic for other cores
       local zones = {}
       local query = mysql:execute('SELECT * FROM pfquest.WorldMapOverlay_'..expansion..' LEFT JOIN pfquest.AreaTable_'..expansion..' ON pfquest.WorldMapOverlay_'..expansion..'.areaID = pfquest.AreaTable_'..expansion..'.id')
       while query:fetch(zones, "a") do
@@ -2903,64 +2955,52 @@ if config.expansions[expansion_to_process] then
   do -- zones locales
     if core == "acore" then
       -- For AzerothCore, use loaded DBC AreaTable table
-      local locales_zones = {}
-      local table_name = (expansion == "vanilla") and "areatable_wotlk" or "AreaTable_" .. expansion
-      print("  Attempting to query zones from table: " .. table_name)
+      local locales_zones_row = {} -- Renamed to avoid confusion
+      local C_AreaTable = C.AreaTable or "areatable" -- Get from config or default
+      local areatable_dbc_table_name = C_AreaTable .. "_" .. expansion -- e.g. areatable_vanilla
 
-      local query = mysql:execute('SELECT * FROM ' .. table_name .. ' ORDER BY id ASC')  -- NO LIMIT for zones
+      print("  Attempting to query zone names from table: " .. areatable_dbc_table_name)
+
+      local query = mysql:execute('SELECT id, name_loc0 FROM ' .. areatable_dbc_table_name .. ' ORDER BY id ASC')
       if query then
-        while query:fetch(locales_zones, "a") do
+        local count_processed = 0
+        while query:fetch(locales_zones_row, "a") do
           if debug("locales_zone") then break end
 
-          local entry = tonumber(locales_zones.id)
+          local entry = tonumber(locales_zones_row.id)
 
           if entry then
-            for loc in pairs(locales) do
-              local name = locales_zones["name_loc0"] -- Only enUS from DBC
-              if name and name ~= "" then
-                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-                pfDB["zones"][locale] = pfDB["zones"][locale] or {}
-                pfDB["zones"][locale][entry] = sanitize(name)
-                -- DEBUG PRINT: после добавления зоны
-                if entry == 14 or entry == 1 or entry == 12 then
-                  print("DEBUG: zones locale=", locale, "entry=", entry, "name=", name)
-                end
-              end
-            end
-          end
-        end
-        print("  SUCCESS: Extracted zones locales from DBC tables")
-      else
-        print("  Warning: Failed to query zones from table " .. table_name .. " - checking alternative names")
+            for loc_key_iter, loc_val_iter in pairs(locales) do -- Iterate through configured locales
+              local name_from_db = locales_zones_row.name_loc0 -- Directly use name_loc0 for AzerothCore DBC tables
 
-        -- Try alternative table names
-        local alt_names = {"AreaTable", "pfquest.AreaTable_" .. expansion}
-        for _, alt_name in ipairs(alt_names) do
-          local alt_query = mysql:execute('SELECT * FROM ' .. alt_name .. ' ORDER BY id ASC LIMIT 10')
-          if alt_query then
-            print("  SUCCESS: Found zones table as " .. alt_name)
-            while alt_query:fetch(locales_zones, "a") do
-              if debug("locales_zone") then break end
-              local entry = tonumber(locales_zones.id)
-              if entry then
-                for loc in pairs(locales) do
-                  local name = locales_zones["name_loc0"]
-                  if name and name ~= "" then
-                    local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-                    pfDB["zones"][locale] = pfDB["zones"][locale] or {}
-                    pfDB["zones"][locale][entry] = sanitize(name)
-                  end
+              if name_from_db and type(name_from_db) == "string" and name_from_db ~= "" then
+                local pfdb_locale_key = loc_key_iter .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+                pfDB["zones"][pfdb_locale_key] = pfDB["zones"][pfdb_locale_key] or {}
+                pfDB["zones"][pfdb_locale_key][entry] = sanitize(name_from_db)
+                count_processed = count_processed + 1
+
+                if entry == 14 or entry == 1 or entry == 12 or entry == 362 then
+                  print(string.format("DEBUG: zones locale=%s entry=%d name='%s' (source: name_loc0)", pfdb_locale_key, entry, name_from_db))
+                end
+              else
+                -- Debug if name is not a valid string for key zones
+                if entry == 14 or entry == 1 or entry == 12 or entry == 362 then
+                  print(string.format("DEBUG: zones locale PROBLEM for entry=%d. name_loc0 value: '%s', type: %s. Skipping locale entry.",
+                                      entry, tostring(name_from_db), type(name_from_db)))
                 end
               end
             end
-            break
-          else
-            print("  Warning: Table " .. alt_name .. " not found")
           end
         end
+        print("  SUCCESS: Processed " .. count_processed .. " zone locale entries from " .. areatable_dbc_table_name)
+        if query.close then query.close() end
+      else
+        local err_msg = mysql and mysql:error() or "Unknown SQL error"
+        print("  WARNING: Failed to query zone names from " .. areatable_dbc_table_name .. ". SQL Error: " .. err_msg)
+        -- Fallback logic from original script (if any) could go here, but current AC branch doesn't have one.
       end
     else
-      -- Original logic for other cores
+      -- Original logic for other cores (mangos with pfquest.AreaTable_expansion)
       local locales_zones = {}
       local query = mysql:execute('SELECT * FROM pfquest.AreaTable_'..expansion..' ORDER BY id ASC')
       if query then
