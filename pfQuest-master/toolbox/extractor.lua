@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -1023,7 +1023,7 @@ if config.expansions[expansion_to_process] then
 
             if x and y and map_id then
               -- Smart zone determination: prefer areaId, fallback to parent zone for boundaries
-              local final_zone = nil
+              local final_zone = zone_id or area_id or 14 -- Initialize with safe default
               local use_parent_boundaries = false
 
               if area_id and area_id > 0 then
@@ -1079,19 +1079,25 @@ if config.expansions[expansion_to_process] then
                   final_zone = tonumber(worldmap_result.areatableID)
                 else
                   -- Only use database values if WorldMapArea fails
-                  if zone_id and zone_id > 0 then
-                    final_zone = zone_id
-                  elseif area_id and area_id > 0 then
-                    final_zone = area_id
+              if zone_id and zone_id > 0 then
+                final_zone = zone_id
+              elseif area_id and area_id > 0 then
+                final_zone = area_id
                   end
                 end
               else
-                final_zone = zone_id or area_id or map_id
+                final_zone = 14 -- Final fallback
               end
 
-              -- Debug: log zone usage for critical NPCs and problem cases
-              if id == 3139 or id == 3293 or (map_id == 1 and final_zone == 1637) then
-                print("DEBUG: NPC " .. id .. " (coords:", x, y, ") - map:", map_id, "db_zone:", zone_id, "db_area:", area_id, "final_zone:", final_zone, "use_parent:", use_parent_boundaries or false)
+              -- Simple unit counting for statistics
+              total_units_processed = (total_units_processed or 0) + 1
+              if not zone_id or zone_id == 0 then
+                zone_fallback_count = (zone_fallback_count or 0) + 1
+              end
+              -- Debug key NPCs to track zone assignment
+              if id == 3139 or id == 3293 then
+                print(string.format("ZONE: NPC %d -> DB:%s FINAL:%d",
+                  id, zone_id or "nil", final_zone))
               end
 
               -- Convert world coordinates to zone percentage using WorldMapArea bounds
@@ -3060,6 +3066,12 @@ end
 -- ================================================================
 -- АВТОМАТИЧЕСКОЕ КОПИРОВАНИЕ ФАЙЛОВ ПОСЛЕ ЭКСТРАКЦИИ
 -- ================================================================
+
+-- Zone statistics (compact)
+if zone_fallback_count and total_units_processed then
+  local success_rate = math.floor(((total_units_processed - zone_fallback_count) / total_units_processed) * 100)
+  print("Zone Stats: " .. total_units_processed .. " units, " .. zone_fallback_count .. " fallbacks (" .. success_rate .. "% DB coverage)")
+end
 
 -- Автоматически запускаем скрипт копирования файлов
 local transfer_result = os.execute("copy_files.bat auto")

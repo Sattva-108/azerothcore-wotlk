@@ -1,32 +1,49 @@
-# TECHNICAL ISSUES ANALYSIS - АНАЛИЗ ТЕХНИЧЕСКИХ ПРОБЛЕМ
+# TECHNICAL ISSUES ANALYSIS - АНАЛИЗ ТЕХНИЧЕСКИХ ПРОБЛЕМ (UPDATED)
 
-## 🎯 ОСНОВНАЯ ПРОБЛЕМА: QUEST VISIBILITY ZONES
+## 🎯 ОСНОВНАЯ ПРОБЛЕМА: QUEST VISIBILITY ZONES (UPDATED POST-HYBRID)
 
-### **СИМПТОМЫ:**
-- Квесты отображаются в правильных координатах
-- НО на неправильных картах зон
-- Пример: квесты Mulgore видны на карте Barrens, но не наоборот
+### **СИМПТОМЫ (AFTER HYBRID SYSTEM):**
+- Квесты все еще отображаются в неправильных зонах (quest "pricking" continues)
+- NPCs правильно получают зоны из database, но квесты прилепляются к ближайшим зонам
+- Координаты в основном правильные, но остаются edge cases (100,0 / 0,100)
 
-### **ROOT CAUSE ANALYSIS:**
+### **NEW ROOT CAUSE DISCOVERED: IDENTICAL HIT RECTS**
 
-#### **1. ZONE DETECTION LOGIC:**
+#### **CRITICAL ISSUE: pfDB["zones"]["data"] Structure**
 ```lua
--- Текущая логика в extractor.lua:
-if db_area_id > 0 then
-    final_zone = db_area_id  -- Razor Hill (362)
-    if no_boundaries_for_area then
-        final_zone = parent_zone  -- Durotar (14)
-        use_parent_boundaries = true
-        display_zone = parent_zone  -- ПОКАЗЫВАЕТ DUROTAR
-    end
+[14] = { 14, 100, 100, 50, 50 },  -- Durotar: width=100, height=100, centerX=50, centerY=50
+[17] = { 17, 100, 100, 50, 50 },  -- Barrens: IDENTICAL dimensions
+[1637] = { 1637, 100, 100, 50, 50 }, -- Orgrimmar: IDENTICAL dimensions
+```
+
+**ALL ZONES APPEAR IDENTICAL TO PFQUEST ADDON!**
+
+#### **ROOT CAUSE CHAIN:**
+1. **Zones extraction generates dummy hit rects** instead of real zone dimensions
+2. **pfQuest cannot differentiate zone sizes** - all zones appear as 100x100 squares
+3. **Quest attachment logic confused** - without proper zone boundaries, quests attach to nearest zones
+4. **Coordinate mapping unreliable** - hit rects don't match actual zone shapes
+
+### **PREVIOUS ROOT CAUSE ANALYSIS (PARTIALLY ADDRESSED):**
+
+#### **1. ZONE DETECTION LOGIC (IMPROVED BY HYBRID):**
+```lua
+-- Current hybrid logic:
+if zone_id and zone_id > 0 then
+    final_zone = zone_id  -- Database priority
+elseif area_id and area_id > 0 then
+    final_zone = area_id  -- Area fallback
+elseif worldmap_zone then
+    final_zone = worldmap_zone -- Spatial detection
+else
+    final_zone = 14 -- Safe fallback
 end
 ```
 
-#### **2. ПРОБЛЕМА В DISPLAY_ZONE:**
-- **Координаты рассчитываются:** относительно parent zone (Durotar)
-- **Но показываются как:** parent zone (Durotar)
-- **pfQuest ищет карту:** для Durotar, находит
-- **НО другие NPC** попадают в неправильные зоны через spatial lookup
+#### **2. COORDINATE CONVERSION (MOSTLY WORKING):**
+- GPS formula works correctly for most zones
+- WorldMapArea boundaries properly utilized
+- Edge coordinates (100,0) still occur but reduced
 
 ## 🔍 ДЕТАЛЬНЫЙ АНАЛИЗ ПРОБЛЕМ
 
@@ -125,9 +142,42 @@ WHERE areatableID = 14;
 - **Ожидаемое улучшение:** до 90-95%
 - **Приоритет:** zone detection > coordinate accuracy (уже решено)
 
-## 🎯 NEXT STEPS RECOMMENDATION
+## 🎯 NEXT STEPS RECOMMENDATION (UPDATED POST-HYBRID)
 
-1. **Implement zone overrides** для известных проблемных quest NPCs
-2. **Expand zone boundaries** на 15-20% для лучшего spatial coverage
-3. **Add proximity fallback** для NPC вне всех зон
-4. **Validate против live server** GPS данных для sample quest locations
+### **PRIORITY 1: FIX HIT RECTS EXTRACTION**
+1. **Research zones extraction logic** in extractor.lua - find where `{ zoneId, 100, 100, 50, 50 }` is generated
+2. **Calculate real zone dimensions** from WorldMapArea boundaries:
+   ```sql
+   -- Calculate zone width/height from boundaries
+   SELECT areatableID,
+          (x_max - x_min) as zone_width,
+          (y_max - y_min) as zone_height,
+          (x_min + x_max)/2 as center_x,
+          (y_min + y_max)/2 as center_y
+   FROM WorldMapArea_wotlk;
+   ```
+3. **Update zones generation** to use real dimensions instead of dummy values
+
+### **PRIORITY 2: RESEARCH PFQUEST HIT RECTS USAGE**
+1. **Analyze pfQuest addon code** - understand how it interprets `pfDB["zones"]["data"]`
+2. **Determine hit rects purpose**:
+   - Zone size calculations?
+   - Coordinate transformations?
+   - Quest attachment logic?
+3. **Document current behavior** - why pfQuest works with identical hit rects
+
+### **PRIORITY 3: COORDINATE FORMULA ALIGNMENT**
+1. **Test coordinate accuracy** with real hit rects vs dummy values
+2. **Adapt GPS formula** if needed to work with calculated zone dimensions
+3. **Validate edge coordinates** (100,0 / 0,100) resolution
+
+### **ALTERNATIVE APPROACH: AZEROTHCORE NATIVE ZONE DETECTION**
+If hit rects approach fails, research AzerothCore source:
+1. **Map::GetZoneAndAreaId()** - how core determines zones from coordinates
+2. **Creature zone assignment logic** - how NPCs get their zoneId values
+3. **Implement native zone detection** in extractor to match core behavior exactly
+
+### **LONG-TERM RESEARCH**
+1. **pfQuest quest attachment algorithm** - understand why quests "prick" to wrong zones
+2. **Zone priority systems** - how pfQuest determines quest visibility per zone
+3. **Coordinate transformation chain** - full pipeline from world coords to display

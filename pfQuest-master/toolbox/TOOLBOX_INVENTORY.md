@@ -4,6 +4,10 @@
 
 ### **🔧 ОСНОВНЫЕ ИНСТРУМЕНТЫ:**
 - `extractor.lua` - ГЛАВНЫЙ ФАЙЛ: генерирует координаты NPC/объектов для pfQuest
+  - **HYBRID SYSTEM**: Комбинирует database zones с WorldMapArea boundaries для координат
+  - **Zone Priority**: Database zoneId > areaId > WorldMapArea spatial > fallback
+  - **GPS Formula**: Использует WorldMapArea boundaries для точного coordinate conversion
+  - **Fallback Protection**: Безопасные defaults предотвращают nil zone assignments
 - `load-client-data.sh` - парсер DBC→SQL: конвертирует клиентские DBC в SQL
 - `client-data.sql` - результат парсинга: таблицы WorldMapArea_wotlk, AreaTable_wotlk и др.
 
@@ -12,6 +16,12 @@
   - `WorldMapArea.dbc.csv` - границы зон (LocLeft,LocRight,LocTop,LocBottom)
   - `AreaTable.dbc.csv` - иерархия зон (зона→родительская зона)
   - `WorldMapOverlay.dbc.csv` - субзоны и их позиционирование
+
+### **🔧 ОТЛАДОЧНЫЕ ИНСТРУМЕНТЫ (RESEARCH ARTIFACTS):**
+- `pfquest_diagnostic.lua` - диагностические инструменты для анализа квестов и NPC
+- `fixed_getcustomcoords.lua` - исправленная версия GetCustomCoords с WorldMapArea lookup
+- `sql_field_test.lua` - тестирование SQL полей и запросов для отладки
+- `old-extractor.lua` - резервная копия extractor.lua до модификаций
 
 ### **📋 КОНФИГУРАЦИЯ:**
 - `Makefile` - автоматизация процесса генерации данных

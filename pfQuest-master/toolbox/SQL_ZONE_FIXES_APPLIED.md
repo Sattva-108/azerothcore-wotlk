@@ -98,9 +98,16 @@ FROM creature;
 - **Line 1086-1093**: Removed fallback logic that overrode database zoneId
 - **Line 1003-1009**: Disabled secondary hardcoded mapping in GetCreatureCoords
 
+### Hybrid System Implementation (Post-Research)
+- **GetCustomCoords()**: Implemented hybrid approach combining database zones with WorldMapArea boundaries
+- **Zone Priority Logic**: Database zoneId > areaId > WorldMapArea spatial > fallback
+- **Coordinate Conversion**: Uses WorldMapArea boundaries for coordinate calculation when available
+- **Fallback Protection**: Safe defaults prevent nil zone assignments
+
 ### Debug Logging Added
-- Enhanced logging for NPCs 3139, 3293, and zone 1637 assignments
+- Enhanced logging for NPCs 3139, 3293, and zone conflicts
 - Coordinate vs zone ID mismatch detection
+- Zone statistics tracking (total units, fallback usage, success rate)
 
 ## ⚠️ CRITICAL DISCOVERY: DATABASE vs WORLDMAPAREA MISMATCH
 
@@ -136,11 +143,38 @@ JOIN creature_backup_june2025 b ON c.guid = b.guid
 SET c.zoneId = b.zoneId;
 ```
 
-## 🚨 OUTSTANDING ISSUES
-1. **Database zoneId != WorldMapArea coordinates**: Fundamental data integrity issue
-2. **Quest "pricking" to wrong zones**: pfQuest shows quests in incorrect zones
-3. **Zone boundary overlaps**: Multiple zones claim same coordinate spaces
-4. **Extractor reliability**: Needs coordinate-based zone detection vs database trust
+## 🚨 OUTSTANDING ISSUES (UPDATED AFTER HYBRID SYSTEM)
+
+### **CRITICAL: Hit Rects Problem**
+All zones in `pfDB["zones"]["data"]` have identical hit rectangles:
+```lua
+[14] = { 14, 100, 100, 50, 50 },  -- Durotar
+[17] = { 17, 100, 100, 50, 50 },  -- Barrens
+[1637] = { 1637, 100, 100, 50, 50 }, -- Orgrimmar
+```
+**Every zone shows as 100x100 size with center at (50,50)**
+
+### **Root Cause**:
+Zones extraction logic generates dummy hit rects instead of calculating real zone dimensions from WorldMapArea boundaries.
+
+### **Impact**:
+1. **Quest "pricking" continues**: Quests still attach to nearest zones instead of correct zones
+2. **pfQuest can't differentiate zone sizes**: All zones appear identical to the addon
+3. **Coordinate accuracy affected**: Without proper hit rects, coordinate mapping becomes unreliable
+
+### **Next Steps Required**:
+1. **Fix zones db extraction** to generate proper hit rects from WorldMapArea boundaries
+2. **Research pfQuest hit rects usage** - understand how addon interprets this data
+3. **Coordinate formula adaptation** - align coordinate calculation with new hit rects
+4. **Root cause analysis** - determine why pfQuest works with identical hit rects currently
+
+---
+
+1. **Database zoneId != WorldMapArea coordinates**: Partially addressed by hybrid system
+2. **Quest "pricking" to wrong zones**: **STILL OCCURS** - quests attach to nearest zones
+3. **Zone boundary overlaps**: Handled by hybrid priority system
+4. **Edge coordinates (100,0 / 0,100)**: **STILL OCCURS** - some NPCs show edge positions
+5. **Identical hit rects**: **NEW CRITICAL ISSUE** - all zones have same dimensions
 
 ---
 **Last Updated**: June 2025 Research Session

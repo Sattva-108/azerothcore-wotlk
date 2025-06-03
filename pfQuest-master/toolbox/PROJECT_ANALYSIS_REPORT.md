@@ -1,9 +1,15 @@
-# PROJECT ANALYSIS REPORT - АНАЛИЗ ПРОДЕЛАННОЙ РАБОТЫ
+# PROJECT ANALYSIS REPORT - АНАЛИЗ ПРОДЕЛАННОЙ РАБОТЫ (UPDATED POST-HYBRID)
 
 ## 🎯 ЗАДАЧА: ИСПРАВЛЕНИЕ КООРДИНАТ NPC В PFQUEST
 
-### **ПРОБЛЕМА:**
+### **ПРОБЛЕМА (RESOLVED):**
 NPC 3139 (Gar'Thok) показывался с координатами 100,0 вместо правильных ~52%,43%
+**STATUS: ✅ ИСПРАВЛЕНО** - NPC 3139 теперь показывает корректные координаты
+
+### **ОСТАЮЩИЕСЯ ПРОБЛЕМЫ:**
+- **Edge coordinates**: некоторые NPCs все еще показывают 100,0 или 0,100 позиции
+- **Quest pricking**: квесты прилепляются к ближайшим зонам вместо правильных
+- **Identical hit rects**: все зоны имеют одинаковые размеры { zoneId, 100, 100, 50, 50 }
 
 ### **ROOT CAUSE ANALYSIS:**
 
@@ -12,9 +18,9 @@ NPC 3139 (Gar'Thok) показывался с координатами 100,0 в�
 - **AzerothCore struct:** y1, y2, x1, x2
 - **НАША ОШИБКА:** неправильное соответствие полей
 
-#### **2. КЛЮЧЕВЫЕ ОТКРЫТИЯ:**
+#### **2. КЛЮЧЕВЫЕ ОТКРЫТИЯ (UPDATED STATUS):**
 
-**A. DBC Structure (от Cursor analysis):**
+**A. DBC Structure (от Cursor analysis) - ✅ VALIDATED:**
 ```cpp
 struct WorldMapAreaEntry {
     uint32  map_id;     // 1
@@ -26,12 +32,37 @@ struct WorldMapAreaEntry {
 };
 ```
 
-**B. GPS Formula (от Cursor analysis):**
+**B. GPS Formula (от Cursor analysis) - ✅ MOSTLY WORKING:**
 ```lua
 -- GPS использует ПЕРЕКРЕСТНЫЕ координаты:
 zone_x = (npc_y - LocLeft) / ((LocRight - LocLeft) / 100)   -- Y→ZoneX
 zone_y = (npc_x - LocTop) / ((LocBottom - LocTop) / 100)    -- X→ZoneY
 ```
+**STATUS**: Работает корректно для большинства зон, но остаются edge cases с координатами 100,0 / 0,100
+
+**C. HYBRID SYSTEM IMPLEMENTATION:**
+```lua
+-- Zone Priority Logic:
+if zone_id and zone_id > 0 then
+    final_zone = zone_id  -- Database priority
+elseif area_id and area_id > 0 then
+    final_zone = area_id  -- Area fallback
+elseif worldmap_zone then
+    final_zone = worldmap_zone -- Spatial detection
+else
+    final_zone = 14 -- Safe fallback
+end
+```
+**STATUS**: Частично улучшает zone assignment, но quest pricking продолжается
+
+**D. CRITICAL DISCOVERY - IDENTICAL HIT RECTS:**
+```lua
+-- ALL zones have identical dimensions:
+[14] = { 14, 100, 100, 50, 50 },  -- Durotar
+[17] = { 17, 100, 100, 50, 50 },  -- Barrens
+[1637] = { 1637, 100, 100, 50, 50 }, -- Orgrimmar
+```
+**STATUS**: 🚨 NEW ROOT CAUSE - pfQuest не может различить размеры зон
 
 ## 🔧 ИСПРАВЛЕНИЯ СДЕЛАННЫЕ
 
