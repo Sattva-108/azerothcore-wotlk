@@ -10,16 +10,16 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
-local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
 local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_ID = 784
-local QUEST_784_NPCS = {3139, 3128, 3129, 3192}  -- NPCs из анализа квеста 784
+local QUEST_784_ID = 871
+local QUEST_784_NPCS = {3429, 3265, 3267, 3268}  -- NPCs из анализа квеста 784
 
 -- ================================================================
 -- АВТОМАТИЧЕСКАЯ НАСТРОЙКА (не трогай)
@@ -910,17 +910,43 @@ if config.expansions[expansion_to_process] then
       local worldmap = {}
       local ret = {}
 
-      -- Try pfquest DBC data first, then fall back to basic coordinate conversion
+      -- For AzerothCore, use real zoneId from database instead of hardcoded mapping
       if core == "acore" then
-        -- Basic coordinate conversion for AzerothCore without pfquest
-        local zone_map = {
-          [0] = 12,      -- Eastern Kingdoms -> Elwynn Forest
-          [1] = 14,      -- Kalimdor -> Durotar
-          [530] = 3520,  -- Outland -> Hellfire Peninsula
-          [571] = 65     -- Northrend -> Dragonblight
+        -- DISABLED hardcoded mapping - use real zoneId from creature table
+        -- We now have proper zoneId values in database from our SQL fixes
+
+        -- Use mapId as fallback only if we can't determine zone from coordinates
+        local fallback_zones = {
+          [0] = 12,      -- Eastern Kingdoms -> Elwynn Forest (fallback only)
+          [1] = 14,      -- Kalimdor -> Durotar (fallback only)
+          [530] = 3520,  -- Outland -> Hellfire Peninsula (fallback only)
+          [571] = 65     -- Northrend -> Dragonblight (fallback only)
         }
 
-        local zone_id = zone_map[m] or m
+        -- Try to get zone from coordinates using database lookup
+        local zone_query = string.format([[
+          SELECT zoneId FROM creature
+          WHERE map = %d AND zoneId > 0
+          ORDER BY (
+            (position_x - %f) * (position_x - %f) +
+            (position_y - %f) * (position_y - %f)
+          ) ASC
+          LIMIT 1
+        ]], m, x, x, y, y)
+
+        local zone_result = {}
+        local query = mysql:execute(zone_query)
+        local actual_zone_id = nil
+
+        if query then
+          if query:fetch(zone_result, "a") then
+            actual_zone_id = tonumber(zone_result.zoneId)
+          end
+        end
+
+        -- Use actual zone or fallback
+        local zone_id = actual_zone_id or fallback_zones[m] or m
+
         if zone_id and x and y then
           -- Simple world to zone coordinate conversion
           local zone_x = ((x + 17066.666) / 533.33333) * 100
@@ -974,13 +1000,8 @@ if config.expansions[expansion_to_process] then
       local ret = {}
 
       if core == "acore" then
-        -- HARDCODED ZONE MAPPING for AzerothCore (since zoneId/areaId are empty)
-        local zone_map = {
-          [0] = 12,      -- Eastern Kingdoms -> Elwynn Forest
-          [1] = 14,      -- Kalimdor -> Durotar (correct zone for quest 784!)
-          [530] = 3520,  -- Outland -> Hellfire Peninsula
-          [571] = 65     -- Northrend -> Dragonblight
-        }
+        -- DISABLED HARDCODED ZONE MAPPING - now use database zoneId values!
+        -- We have proper zoneId values in creature table from our SQL fixes
 
         -- For AzerothCore, get coordinates from creature table
         local creature_coords = {}
@@ -1041,36 +1062,36 @@ if config.expansions[expansion_to_process] then
                 final_zone = zone_id
               end
 
-              -- If no zone info, try to find it via WorldMapArea DBC
-              if not final_zone then
-                local worldmap_query = mysql:execute([[
-                  SELECT areatableID FROM WorldMapArea_wotlk
-                  WHERE mapID = ]] .. map_id .. [[
-                    AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
-                    AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
-                  ORDER BY (x_max - x_min) * (y_max - y_min) ASC
-                  LIMIT 1
-                ]])
-                if worldmap_query then
-                  local worldmap_result = {}
-                  if worldmap_query:fetch(worldmap_result, "a") then
-                    final_zone = tonumber(worldmap_result.areatableID)
-                  else
-                    -- Fallback zones for all maps
-                    if map_id == 1 then
-                      final_zone = 14  -- Durotar for Kalimdor
-                    elseif map_id == 0 then
-                      final_zone = 12  -- Elwynn Forest for Eastern Kingdoms
-                    else
-                      final_zone = map_id  -- Use map ID as zone ID for other maps
-                    end
+              -- Force WorldMapArea lookup instead of trusting database zoneId
+              -- Database zoneId is unreliable, use coordinate-based detection
+              local worldmap_query = mysql:execute([[
+                SELECT areatableID FROM WorldMapArea_wotlk
+                WHERE mapID = ]] .. map_id .. [[
+                  AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
+                  AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
+                ORDER BY (x_max - x_min) * (y_max - y_min) ASC
+                LIMIT 1
+              ]])
+
+              if worldmap_query then
+                local worldmap_result = {}
+                if worldmap_query:fetch(worldmap_result, "a") then
+                  final_zone = tonumber(worldmap_result.areatableID)
+                else
+                  -- Only use database values if WorldMapArea fails
+                  if zone_id and zone_id > 0 then
+                    final_zone = zone_id
+                  elseif area_id and area_id > 0 then
+                    final_zone = area_id
                   end
                 end
+              else
+                final_zone = zone_id or area_id or map_id
               end
 
-              -- Debug: log zone usage for critical NPCs only
-              if id == 3139 then
-                print("DEBUG: NPC " .. id .. " (coords:", x, y, ") - map:", map_id, "db_zone:", zone_id, "db_area:", area_id, "final_zone:", final_zone)
+              -- Debug: log zone usage for critical NPCs and problem cases
+              if id == 3139 or id == 3293 or (map_id == 1 and final_zone == 1637) then
+                print("DEBUG: NPC " .. id .. " (coords:", x, y, ") - map:", map_id, "db_zone:", zone_id, "db_area:", area_id, "final_zone:", final_zone, "use_parent:", use_parent_boundaries or false)
               end
 
               -- Convert world coordinates to zone percentage using WorldMapArea bounds
@@ -2254,56 +2275,24 @@ if config.expansions[expansion_to_process] then
     pfDB["zones"][data] = {}
 
     if core == "acore" then
-      -- For AzerothCore, use worldmaparea_wotlk for proper zone dimensions
+      -- For AzerothCore, extract zones from creature spawns since AreaTable_vanilla is empty
       local zones = {}
-      local query = mysql:execute([[
-        SELECT w.zoneID, w.areatableID, w.name,
-               ABS(w.x_max - w.x_min) as width,
-               ABS(w.y_max - w.y_min) as height,
-               (w.x_min + w.x_max) / 2 as center_x,
-               (w.y_min + w.y_max) / 2 as center_y
-        FROM worldmaparea_wotlk w
-        WHERE w.areatableID > 0
-        ORDER BY w.zoneID
-      ]])
-
+      local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0')  -- NO LIMIT for zones
       if query then
         while query:fetch(zones, "a") do
           if debug("zones") then break end
-          local zone_id = tonumber(zones.zoneID)
-          local area_id = tonumber(zones.areatableID)
-          local width = tonumber(zones.width) or 100
-          local height = tonumber(zones.height) or 100
-          local center_x = tonumber(zones.center_x) or 50
-          local center_y = tonumber(zones.center_y) or 50
-
-          -- Convert to pfQuest coordinate system (0-100 scale)
-          local normalized_width = math.min(100, math.max(10, width / 100))
-          local normalized_height = math.min(100, math.max(10, height / 100))
-          local normalized_cx = 50  -- Always center for now
-          local normalized_cy = 50  -- Always center for now
+          local zone_id = tonumber(zones.zoneId)
+          local area_id = tonumber(zones.areaId)
 
           if zone_id and zone_id > 0 then
-            pfDB["zones"][data][zone_id] = { zone_id, normalized_width, normalized_height, normalized_cx, normalized_cy }
+            pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 } -- zone, width, height, cx, cy
           end
           if area_id and area_id > 0 and area_id ~= zone_id then
-            pfDB["zones"][data][area_id] = { zone_id or area_id, normalized_width, normalized_height, normalized_cx, normalized_cy }
+            pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
           end
         end
-        print("  Generated " .. (query:numrows() or 0) .. " zones from worldmaparea_wotlk")
       else
-        print("  Warning: Failed to query worldmaparea_wotlk, using fallback")
-        -- Fallback to old method
-        local zones_fallback = {}
-        local query_fallback = mysql:execute('SELECT DISTINCT zoneId FROM creature WHERE zoneId > 0')
-        if query_fallback then
-          while query_fallback:fetch(zones_fallback, "a") do
-            local zone_id = tonumber(zones_fallback.zoneId)
-            if zone_id and zone_id > 0 then
-              pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 }
-            end
-          end
-        end
+        print("  Warning: Failed to query zones from creature table")
       end
     else
       -- Original zones logic for cores with pfquest DBC data
