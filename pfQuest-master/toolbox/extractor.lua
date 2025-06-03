@@ -17,7 +17,7 @@ local FULL_EXTRACTION = false      -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = true       -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = false       -- true = тестируем только квест 784 и его данные
 local QUEST_784_ID = 784
 local QUEST_784_NPCS = {3139, 3128, 3129, 3192}  -- NPCs из анализа квеста 784
 
@@ -100,7 +100,10 @@ local PROGRESS_STEP = 100
 -- Вывод настроек
 print("================================================================")
 print("pfQuest Extraction Settings:")
-if FULL_EXTRACTION then
+if QUEST_784_TEST then
+  print("   Mode: QUEST 784 DEBUG - Quest ID " .. QUEST_784_ID)
+  print("   NPCs: " .. table.concat(QUEST_784_NPCS, ", "))
+elseif FULL_EXTRACTION then
   print("   Mode: FULL EXTRACTION")
 else
   print("   Focus: " .. table.concat(FOCUS_ON, ", ") .. " (" .. FOCUS_LIMIT .. ")")
@@ -1214,7 +1217,6 @@ if config.expansions[expansion_to_process] then
               end
             end
           end
-          print("  SUCCESS: Extracted areatriggers from areatrigger_teleport")
         else
           print("  Warning: Failed to extract areatriggers")
         end
@@ -1269,8 +1271,19 @@ if config.expansions[expansion_to_process] then
     -- iterate over all creatures
     local processed = 0
     local creature_template = {}
-    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. UNITS_LIMIT) or ''
-    local query = mysql:execute('SELECT * FROM creature_template GROUP BY creature_template.entry ORDER BY creature_template.entry' .. limit_clause)
+    local limit_clause = ""
+    local where_clause = ""
+
+    -- QUEST 784 DEBUG MODE - фильтруем только нужных NPC
+    if QUEST_784_TEST then
+      local npc_list = table.concat(QUEST_784_NPCS, ",")
+      where_clause = " WHERE entry IN (" .. npc_list .. ") "
+      print("🎯 QUEST 784 DEBUG: Processing only NPCs " .. npc_list)
+    else
+      limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. UNITS_LIMIT) or ''
+    end
+
+    local query = mysql:execute('SELECT * FROM creature_template' .. where_clause .. ' GROUP BY creature_template.entry ORDER BY creature_template.entry' .. limit_clause)
     while query:fetch(creature_template, "a") do
       if debug("units") then break end
       processed = processed + 1
@@ -1749,11 +1762,21 @@ if config.expansions[expansion_to_process] then
     -- iterate over all quests (LIMITED FOR TESTING)
     local quest_template = {}
     local quest_pk_column = (core == "acore" and "ID" or "entry") -- Added for AzerothCore
-    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
-    local query_string = 'SELECT * FROM quest_template ORDER BY quest_template.' .. quest_pk_column .. limit_clause
+
+    -- QUEST 784 DEBUG MODE - фильтруем только нужный квест
+    local where_clause = ""
+    local limit_clause = ""
+    if QUEST_784_TEST then
+      where_clause = " WHERE " .. quest_pk_column .. " = " .. QUEST_784_ID .. " "
+      print("🎯 QUEST 784 DEBUG: Processing only quest " .. QUEST_784_ID)
+    else
+      limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
+    end
+
+    local query_string = 'SELECT * FROM quest_template' .. where_clause .. ' ORDER BY quest_template.' .. quest_pk_column .. limit_clause
 
     -- Count total quests first for progress
-    local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template' .. limit_clause)
+    local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template' .. where_clause .. limit_clause)
     local count_result = {}
     count_query:fetch(count_result, "a")
     local total_quests = tonumber(count_result.total) or 0
@@ -2247,7 +2270,6 @@ if config.expansions[expansion_to_process] then
             pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
           end
         end
-        print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from creature spawns")
       else
         print("  Warning: Failed to query zones from creature table")
       end
@@ -2295,7 +2317,6 @@ if config.expansions[expansion_to_process] then
       local minimap_size = {}
       local query = mysql:execute('SELECT * FROM WorldMapArea_'..expansion..' ORDER BY areatableID ASC')
       if query then
-        print("  SUCCESS: WorldMapArea_" .. expansion .. " table found!")
         while query:fetch(minimap_size, "a") do
           if debug("minimap") then break end
           local mapID = minimap_size.mapID
@@ -2311,7 +2332,6 @@ if config.expansions[expansion_to_process] then
 
           pfDB["minimap"..exp][tonumber(areaID)] = { tonumber(y+.0), tonumber(x+.0) }
         end
-        print("  SUCCESS: Extracted minimap from DBC tables")
       else
         print("  Warning: Failed to query minimap from DBC tables - run load_dbc.lua first")
       end
@@ -2320,7 +2340,6 @@ if config.expansions[expansion_to_process] then
       local minimap_size = {}
       local query = mysql:execute('SELECT * FROM pfquest.WorldMapArea_'..expansion..' ORDER BY areatableID ASC LIMIT 5')
       if query then
-        print("  SUCCESS: pfquest.WorldMapArea_" .. expansion .. " table found!")
         while query:fetch(minimap_size, "a") do
           if debug("minimap") then break end
           local mapID = minimap_size.mapID
@@ -2457,7 +2476,6 @@ if config.expansions[expansion_to_process] then
               pfDB["meta"..exp]["mines"][entry] = skill
             end
           end
-          print("  SUCCESS: Extracted gameobject relations from DBC tables")
         else
           print("  Warning: Failed to query gameobject relations from DBC tables - run load_dbc.lua first")
         end
@@ -2495,8 +2513,15 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_creature = {}
         local locale_code = GetLocaleCode(loc)
+        local where_clause = ""
 
-        local query = mysql:execute('SELECT creature_template.entry, creature_template.name FROM creature_template ORDER BY creature_template.entry ASC')
+        -- QUEST 784 DEBUG MODE - фильтруем только нужных NPC
+        if QUEST_784_TEST then
+          local npc_list = table.concat(QUEST_784_NPCS, ",")
+          where_clause = " WHERE creature_template.entry IN (" .. npc_list .. ") "
+        end
+
+        local query = mysql:execute('SELECT creature_template.entry, creature_template.name FROM creature_template' .. where_clause .. ' ORDER BY creature_template.entry ASC')
 
         if query then
           while query:fetch(locales_creature, "a") do
@@ -2690,9 +2715,17 @@ if config.expansions[expansion_to_process] then
       for loc in pairs(locales) do
         local locales_quest = {}
         local locale_code = GetLocaleCode(loc)
-        local limit_clause = QUEST_LIMIT and (' LIMIT ' .. QUEST_LIMIT) or ''  -- Use QUEST_LIMIT
+        local limit_clause = ""
+        local where_clause = ""
 
-        local query = mysql:execute('SELECT quest_template.ID, quest_template.LogTitle, quest_template.QuestDescription, quest_template.LogDescription, quest_template_locale.Title AS locale_title, quest_template_locale.Details AS locale_details, quest_template_locale.Objectives AS locale_objectives FROM quest_template LEFT JOIN quest_template_locale ON quest_template_locale.ID = quest_template.ID AND quest_template_locale.locale = \'' .. locale_code .. '\' ORDER BY quest_template.ID ASC' .. limit_clause)
+        -- QUEST 784 DEBUG MODE - фильтруем только нужный квест
+        if QUEST_784_TEST then
+          where_clause = " WHERE quest_template.ID = " .. QUEST_784_ID .. " "
+        else
+          limit_clause = QUEST_LIMIT and (' LIMIT ' .. QUEST_LIMIT) or ''
+        end
+
+        local query = mysql:execute('SELECT quest_template.ID, quest_template.LogTitle, quest_template.QuestDescription, quest_template.LogDescription, quest_template_locale.Title AS locale_title, quest_template_locale.Details AS locale_details, quest_template_locale.Objectives AS locale_objectives FROM quest_template LEFT JOIN quest_template_locale ON quest_template_locale.ID = quest_template.ID AND quest_template_locale.locale = \'' .. locale_code .. '\' ' .. where_clause .. ' ORDER BY quest_template.ID ASC' .. limit_clause)
 
         if query then
           while query:fetch(locales_quest, "a") do
@@ -2784,7 +2817,6 @@ if config.expansions[expansion_to_process] then
             end
           end
         end
-        print("  SUCCESS: Extracted professions locales from DBC tables")
       else
         print("  Warning: Failed to query professions locales from DBC tables - run load_dbc.lua first")
       end
@@ -2842,7 +2874,6 @@ if config.expansions[expansion_to_process] then
             end
           end
         end
-        print("  SUCCESS: Extracted zones locales from DBC tables")
       else
         print("  Warning: Failed to query zones from table " .. table_name .. " - checking alternative names")
 
@@ -2851,7 +2882,6 @@ if config.expansions[expansion_to_process] then
         for _, alt_name in ipairs(alt_names) do
           local alt_query = mysql:execute('SELECT * FROM ' .. alt_name .. ' ORDER BY id ASC LIMIT 10')
           if alt_query then
-            print("  SUCCESS: Found zones table as " .. alt_name)
             while alt_query:fetch(locales_zones, "a") do
               if debug("locales_zone") then break end
               local entry = tonumber(locales_zones.id)
@@ -3004,6 +3034,23 @@ for loc in pairs(locales) do
   else
     print("ERROR: pfDB[\"zones\"][\"" .. locale .. "\"] is nil! Zones localization not generated!")
   end
+end
+
+-- ================================================================
+-- АВТОМАТИЧЕСКОЕ КОПИРОВАНИЕ ФАЙЛОВ ПОСЛЕ ЭКСТРАКЦИИ
+-- ================================================================
+
+-- Автоматически запускаем скрипт копирования файлов
+local transfer_result = os.execute("copy_files.bat auto")
+
+if transfer_result == 0 then
+  if QUEST_784_TEST then
+    print("🎯 QUEST 784 DEBUG: Ready for testing! Commands: /run print(\"Quest 784:\", pfDB[\"quests\"][\"data\"][784] and \"FOUND\" or \"NOT FOUND\"); print(\"NPC 3139:\", pfDB[\"units\"][\"data\"][3139] and \"FOUND\" or \"NOT FOUND\")")
+  else
+    print("✅ Extraction completed! Test: /run local count = 0; for _ in pairs(pfDB[\"quests\"][\"data\"]) do count = count + 1 end; print(\"Total quests:\", count)")
+  end
+else
+  print("⚠️  File transfer failed - run copy_files.bat manually")
 end
 
 -- Close main processing

@@ -15,28 +15,64 @@ local function findWorkingQuests()
     local workingQuests = {}
 
     for questId, quest in pairs(pfDB["quests"]["data"]) do
-        -- A quest is "working" if it has both start and end NPCs/objects
-        local hasStarter = false
-        local hasFinisher = false
+        -- A quest is "working" if it has NPCs/objects with actual coordinates
+        local hasStarterWithCoords = false
+        local hasFinisherWithCoords = false
 
-        -- Check for quest starters
+        -- Check for quest starters WITH coordinates
         if quest.start then
-            if (quest.start.U and #quest.start.U > 0) or
-               (quest.start.O and #quest.start.O > 0) or
-               (quest.start.I and #quest.start.I > 0) then
-                hasStarter = true
+            -- Check starter NPCs
+            if quest.start.U then
+                for _, unitId in ipairs(quest.start.U) do
+                    local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
+                    if unit and unit.coords and #unit.coords > 0 then
+                        hasStarterWithCoords = true
+                        break
+                    end
+                end
+            end
+            -- Check starter objects (if no NPC with coords found)
+            if not hasStarterWithCoords and quest.start.O then
+                for _, objectId in ipairs(quest.start.O) do
+                    local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId]
+                    if obj and obj.coords and #obj.coords > 0 then
+                        hasStarterWithCoords = true
+                        break
+                    end
+                end
+            end
+            -- Items always count as valid starters
+            if not hasStarterWithCoords and quest.start.I and #quest.start.I > 0 then
+                hasStarterWithCoords = true
             end
         end
 
-        -- Check for quest finishers (using "end" field)
+        -- Check for quest finishers WITH coordinates
         if quest["end"] then
-            if (quest["end"].U and #quest["end"].U > 0) or
-               (quest["end"].O and #quest["end"].O > 0) then
-                hasFinisher = true
+            -- Check finisher NPCs
+            if quest["end"].U then
+                for _, unitId in ipairs(quest["end"].U) do
+                    local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
+                    if unit and unit.coords and #unit.coords > 0 then
+                        hasFinisherWithCoords = true
+                        break
+                    end
+                end
+            end
+            -- Check finisher objects (if no NPC with coords found)
+            if not hasFinisherWithCoords and quest["end"].O then
+                for _, objectId in ipairs(quest["end"].O) do
+                    local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId]
+                    if obj and obj.coords and #obj.coords > 0 then
+                        hasFinisherWithCoords = true
+                        break
+                    end
+                end
             end
         end
 
-        if hasStarter and hasFinisher then
+        -- Only count as working if BOTH starter and finisher have coordinates
+        if hasStarterWithCoords and hasFinisherWithCoords then
             table.insert(workingQuests, questId)
         end
     end
@@ -53,7 +89,7 @@ SlashCmdList["PFTEST"] = function()
 
     -- Check if pfDB is loaded
     if not pfDB then
-        print("❌ pfDB not loaded! Make sure pfQuest addon is running.")
+        print("{rt8} pfDB not loaded! Make sure pfQuest addon is running.")
         return
     end
 
@@ -72,28 +108,60 @@ SlashCmdList["PFTEST"] = function()
         end
     end
 
-    print("📊 Data loaded:")
+    print("{rt6} Data loaded:")
     print("   Quests: " .. questCount)
     print("   Units: " .. unitCount .. " (" .. unitsWithCoords .. " with coords)")
     print("   Zones: " .. zoneCount)
 
     -- Find working quests
-    print("🔍 Finding working quests...")
+    print("{rt3} Finding working quests...")
     local workingQuests = findWorkingQuests()
 
-    if #workingQuests > 0 then
-        print("✅ Found " .. #workingQuests .. " working quests!")
+    -- Get player faction for sorting
+    local playerFaction = UnitFactionGroup("player") -- "Alliance" or "Horde"
+    local hordeQuests = {}
+    local allianceQuests = {}
+    local bothFactionsQuests = {}
 
-        -- Show only first 10 as examples
-        local maxToShow = math.min(10, #workingQuests)
-        if maxToShow < #workingQuests then
-            print("📋 Showing first " .. maxToShow .. " examples:")
+    for _, questId in ipairs(workingQuests) do
+        local quest = pfDB["quests"]["data"][questId]
+
+        if quest.race then
+            if quest.race == 690 then
+                table.insert(hordeQuests, questId)
+            elseif quest.race == 1101 then
+                table.insert(allianceQuests, questId)
+            end
         else
-            print("📋 Complete list:")
+            -- No race restriction = both factions
+            table.insert(bothFactionsQuests, questId)
+        end
+    end
+
+    if #workingQuests > 0 then
+        print("{rt1} Found " .. #workingQuests .. " working quests total!")
+        print("   Horde only: " .. #hordeQuests)
+        print("   Alliance only: " .. #allianceQuests)
+        print("   Both factions: " .. #bothFactionsQuests)
+
+        -- Create display list prioritizing player faction
+        local displayQuests = {}
+        if playerFaction == "Horde" then
+            -- Add Horde-only first, then both factions
+            for _, qid in ipairs(hordeQuests) do table.insert(displayQuests, qid) end
+            for _, qid in ipairs(bothFactionsQuests) do table.insert(displayQuests, qid) end
+        else
+            -- Add Alliance-only first, then both factions
+            for _, qid in ipairs(allianceQuests) do table.insert(displayQuests, qid) end
+            for _, qid in ipairs(bothFactionsQuests) do table.insert(displayQuests, qid) end
         end
 
+        -- Show first 15 examples
+        local maxToShow = math.min(15, #displayQuests)
+        print("{rt4} Showing first " .. maxToShow .. " " .. playerFaction .. " examples:")
+
         for i = 1, maxToShow do
-            local questId = workingQuests[i]
+            local questId = displayQuests[i]
             -- Get quest name, handle if it's a table
             local questName = "Quest " .. questId
             if pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][questId] then
@@ -124,12 +192,13 @@ SlashCmdList["PFTEST"] = function()
 
                 -- Zone info from starter NPCs with names
                 if quest.start and quest.start.U then
-                    for unitId, _ in pairs(quest.start.U) do
+                    for _, unitId in ipairs(quest.start.U) do
                         if pfDB["units"]["data"][unitId] and pfDB["units"]["data"][unitId].coords then
                             for _, coord in ipairs(pfDB["units"]["data"][unitId].coords) do
                                 local zoneId = coord[3]
                                 if zoneId == 1519 then zoneInfo = " (Stormwind City)"
                                 elseif zoneId == 1637 then zoneInfo = " (Orgrimmar)"
+                                elseif zoneId == 14 then zoneInfo = " (Durotar)"
                                 elseif zoneId == 3520 then zoneInfo = " (Hellfire Peninsula)"
                                 elseif zoneId == 65 then zoneInfo = " (Dragonblight)"
                                 else
@@ -156,12 +225,12 @@ SlashCmdList["PFTEST"] = function()
         end
 
         print("")
-        print("🧪 TEST COMMANDS:")
-        for i = 1, math.min(3, #workingQuests) do
-            print("   /pfq " .. workingQuests[i])
+        print("{rt2} TEST COMMANDS:")
+        for i = 1, math.min(3, #displayQuests) do
+            print("   /pfq " .. displayQuests[i])
         end
     else
-        print("❌ No working quests found!")
+        print("{rt8} No working quests found!")
     end
 
     print("=== End Debug ===")
@@ -172,19 +241,19 @@ SLASH_PFQUESTTEST1 = "/pfq"
 SlashCmdList["PFQUESTTEST"] = function(questId)
     questId = tonumber(questId)
     if not questId then
-        print("❌ Usage: /pfq <questID>")
+        print("{rt8} Usage: /pfq <questID>")
         print("   Example: /pfq 784")
         return
     end
 
     local quest = pfDB["quests"]["data"][questId]
     if not quest then
-        print("❌ Quest " .. questId .. " not found in database")
+        print("{rt8} Quest " .. questId .. " not found in database")
         return
     end
 
     print("=== pfQuest Quest Analysis ===")
-    print("🔍 Testing Quest " .. questId)
+    print("{rt3} Testing Quest " .. questId)
 
     -- Get quest name, handle if it's a table
     local questName = "Quest " .. questId
@@ -197,10 +266,10 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
         end
     end
 
-    print("📜 " .. questName)
+    print("{rt4} " .. questName)
 
     -- Quest level and race info
-    print("📊 Level: " .. (quest.lvl or "Unknown") .. " (Min: " .. (quest.min or "Unknown") .. ")")
+    print("{rt6} Level: " .. (quest.lvl or "Unknown") .. " (Min: " .. (quest.min or "Unknown") .. ")")
     local raceInfo = ""
     if quest.race then
         if quest.race == 1101 then raceInfo = "Alliance"
@@ -209,11 +278,11 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
     else
         raceInfo = "Both factions"
     end
-    print("🏳️ Faction: " .. raceInfo)
+    print("{rt5} Faction: " .. raceInfo)
 
     -- Check quest starters
     if quest.start then
-        print("🚀 Quest Starters:")
+        print("{rt1} Quest Starters:")
         if quest.start.U then
             for i, unitId in ipairs(quest.start.U) do
                 local unit = pfDB["units"]["data"][unitId]
@@ -259,12 +328,12 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
             end
         end
     else
-        print("❌ No quest starters found!")
+        print("{rt8} No quest starters found!")
     end
 
     -- Check quest finishers
     if quest["end"] then
-        print("🏁 Quest Finishers:")
+        print("{rt7} Quest Finishers:")
         if quest["end"].U then
             for i, unitId in ipairs(quest["end"].U) do
                 local unit = pfDB["units"]["data"][unitId]
@@ -286,12 +355,12 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
             end
         end
     else
-        print("❌ No quest finishers found!")
+        print("{rt8} No quest finishers found!")
     end
 
     -- Check unit objectives
     if quest.obj and quest.obj.U then
-        print("🐲 Unit objectives:")
+        print("{rt8} Unit objectives:")
         for i, unitId in ipairs(quest.obj.U) do
             local unit = pfDB["units"]["data"][unitId]
             if unit then
@@ -309,7 +378,7 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
 
     -- Check item objectives
     if quest.obj and quest.obj.I then
-        print("💎 Item objectives:")
+        print("{rt6} Item objectives:")
         for i, itemId in ipairs(quest.obj.I) do
             print("   Item " .. itemId)
         end
@@ -317,16 +386,67 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
 
     -- pfQuest working quest analysis
     print("")
-    print("🔧 pfQuest Analysis:")
+    print("{rt2} pfQuest Analysis:")
     local hasStarter = (quest.start and (quest.start.U or quest.start.O or quest.start.I))
     local hasFinisher = (quest["end"] and (quest["end"].U or quest["end"].O))
 
-    print("   Has starter: " .. (hasStarter and "✅ YES" or "❌ NO"))
-    print("   Has finisher: " .. (hasFinisher and "✅ YES" or "❌ NO"))
+    -- Check if starters have coordinates
+    local starterHasCoords = false
+    if quest.start then
+        if quest.start.U then
+            for _, unitId in ipairs(quest.start.U) do
+                local unit = pfDB["units"]["data"][unitId]
+                if unit and unit.coords and #unit.coords > 0 then
+                    starterHasCoords = true
+                    break
+                end
+            end
+        end
+        if not starterHasCoords and quest.start.O then
+            for _, objId in ipairs(quest.start.O) do
+                local obj = pfDB["objects"]["data"][objId]
+                if obj and obj.coords and #obj.coords > 0 then
+                    starterHasCoords = true
+                    break
+                end
+            end
+        end
+        if not starterHasCoords and quest.start.I and #quest.start.I > 0 then
+            starterHasCoords = true -- Items don't need coordinates
+        end
+    end
 
-    if hasStarter and hasFinisher then
-        print("   Status: ✅ Should be WORKING QUEST")
-        print("   🗺️ Should appear on map if zone coordinates are correct")
+    -- Check if finishers have coordinates
+    local finisherHasCoords = false
+    if quest["end"] then
+        if quest["end"].U then
+            for _, unitId in ipairs(quest["end"].U) do
+                local unit = pfDB["units"]["data"][unitId]
+                if unit and unit.coords and #unit.coords > 0 then
+                    finisherHasCoords = true
+                    break
+                end
+            end
+        end
+        if not finisherHasCoords and quest["end"].O then
+            for _, objId in ipairs(quest["end"].O) do
+                local obj = pfDB["objects"]["data"][objId]
+                if obj and obj.coords and #obj.coords > 0 then
+                    finisherHasCoords = true
+                    break
+                end
+            end
+        end
+    end
+
+    print("   Has starter: " .. (hasStarter and "{rt1} YES" or "{rt8} NO"))
+    print("   Starter coords: " .. (starterHasCoords and "{rt1} YES" or "{rt8} NO"))
+    print("   Has finisher: " .. (hasFinisher and "{rt1} YES" or "{rt8} NO"))
+    print("   Finisher coords: " .. (finisherHasCoords and "{rt1} YES" or "{rt8} NO"))
+
+    if hasStarter and hasFinisher and starterHasCoords and finisherHasCoords then
+        print("   Status: {rt1} WORKING QUEST - should appear on map!")
+        print("   {rt4} Should appear on map if zone coordinates are correct")
 
         -- Additional map debugging
         if quest.start and quest.start.U then
@@ -335,21 +455,26 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
                 if unit and unit.coords and #unit.coords > 0 then
                     local coord = unit.coords[1]
                     local zoneId = coord[3]
-                    print("   📍 Map Debug: Quest starter at zone " .. zoneId)
+                    print("   {rt3} Map Debug: Quest starter at zone " .. zoneId)
                     if zoneId == 14 then
-                        print("      → Should appear in Durotar area on Kalimdor map")
+                        print("      {rt1} Should appear in Durotar area on Kalimdor map")
                     elseif zoneId == 1519 then
-                        print("      → Should appear in Stormwind area on Eastern Kingdoms map")
+                        print("      {rt1} Should appear in Stormwind area on Eastern Kingdoms map")
                     elseif zoneId == 1637 then
-                        print("      → Should appear in Orgrimmar area on Kalimdor map")
+                        print("      {rt1} Should appear in Orgrimmar area on Kalimdor map")
                     else
-                        print("      → Zone mapping available - should appear on map")
+                        print("      {rt1} Zone mapping available - should appear on map")
                     end
                 end
             end
         end
+    elseif not hasStarter or not hasFinisher then
+        print("   Status: {rt8} BROKEN - missing starter or finisher")
+    elseif not starterHasCoords or not finisherHasCoords then
+        print("   Status: {rt8} BROKEN - NPCs/objects have no coordinates!")
+        print("   {rt6} This is why quest doesn't show on map")
     else
-        print("   Status: ❌ NOT a working quest - missing start/end")
+        print("   Status: {rt8} NOT a working quest")
     end
 
     print("=== End Analysis ===")
@@ -363,7 +488,7 @@ function TableCount(t)
     return count
 end
 
-print("✅ Enhanced pfQuest debug loaded! Use /pftest и /pfq <questID>")
+print("{rt1} Enhanced pfQuest debug loaded! Use /pftest and /pfq <questID>")
 
 -- === ГЛУБОКАЯ ПРОВЕРКА ДЛЯ /pfq ===
 SLASH_PFQDEEP1 = "/pfqdeep"
