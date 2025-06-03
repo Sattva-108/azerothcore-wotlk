@@ -139,6 +139,37 @@ load_dbc_csv("DBC/wotlk/WorldMapArea.dbc.csv", "WorldMapArea_wotlk", [[
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 ]])
 
+-- WorldMapOverlay_wotlk (аналогично bash-версии)
+load_dbc_csv("DBC/wotlk/WorldMapOverlay.dbc.csv", "WorldMapOverlay_wotlk", [[
+  CREATE TABLE `WorldMapOverlay_wotlk` (
+    `areaID` int(11) NOT NULL,
+    `zoneID` int(11) NOT NULL,
+    `texture` varchar(255) DEFAULT NULL,
+    `textureWidth` int(11) DEFAULT NULL,
+    `textureHeight` int(11) DEFAULT NULL,
+    `offsetX` int(11) DEFAULT NULL,
+    `offsetY` int(11) DEFAULT NULL,
+    `hitRectTop` int(11) DEFAULT NULL,
+    `hitRectLeft` int(11) DEFAULT NULL,
+    `hitRectBottom` int(11) DEFAULT NULL,
+    `hitRectRight` int(11) DEFAULT NULL
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+]], function(values)
+      local areaID = values[3]
+      local zoneID = values[2]
+      local texture = values[9] or ""
+      local textureWidth = values[10] or "0"
+      local textureHeight = values[11] or "0"
+      local offsetX = values[12] or "0"
+      local offsetY = values[13] or "0"
+      local hitRectTop = values[14] or "0"
+      local hitRectLeft = values[15] or "0"
+      local hitRectBottom = values[16] or "0"
+      local hitRectRight = values[17] or "0"
+      texture = texture:gsub("'", "\\'")
+      return "INSERT INTO `WorldMapOverlay_wotlk` (`areaID`, `zoneID`, `texture`, `textureWidth`, `textureHeight`, `offsetX`, `offsetY`, `hitRectTop`, `hitRectLeft`, `hitRectBottom`, `hitRectRight`) VALUES ('" .. areaID .. "', '" .. zoneID .. "', '" .. texture .. "', '" .. textureWidth .. "', '" .. textureHeight .. "', '" .. offsetX .. "', '" .. offsetY .. "', '" .. hitRectTop .. "', '" .. hitRectLeft .. "', '" .. hitRectBottom .. "', '" .. hitRectRight .. "')"
+    end)
+
 -- Create and load FactionTemplate_wotlk with custom logic
 load_dbc_csv("DBC/wotlk/FactionTemplate.dbc.csv", "FactionTemplate_wotlk", [[
   CREATE TABLE `FactionTemplate_wotlk` (
@@ -184,19 +215,23 @@ load_dbc_csv("DBC/wotlk/Lock.dbc.csv", "Lock_wotlk", [[
   return "INSERT INTO `Lock_wotlk` (`id`, `data`, `skill`) VALUES ('" .. id .. "', '0', '0')"
 end)
 
--- Create and load AreaTable_wotlk
+-- AreaTable_wotlk (минимально нужное: id, zoneID, name_loc0)
 load_dbc_csv("DBC/wotlk/enUS/AreaTable.dbc.csv", "AreaTable_wotlk", [[
   CREATE TABLE `AreaTable_wotlk` (
     `id` int(11) NOT NULL,
+    `zoneID` int(11) DEFAULT NULL,
+    `mapID` int(11) DEFAULT NULL,
     `name_loc0` varchar(255) DEFAULT NULL,
     PRIMARY KEY (`id`)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
 ]], function(values)
-  -- values[1] = ID, values[2] = Name
+  -- values[1]=ID, [2]=ContinentID(mapID), [3]=ParentAreaID(zoneID), [12]=AreaName_Lang_enUS
   local id = values[1]
-  local name = values[2] or ""
-  name = name:gsub("'", "\\'") -- Escape quotes
-  return "INSERT INTO `AreaTable_wotlk` (`id`, `name_loc0`) VALUES ('" .. id .. "', '" .. name .. "')"
+  local mapID = values[2]
+  local zoneID = values[3]
+  local name = values[12] or ""
+  name = name:gsub("'", "\\'")
+  return "INSERT INTO `AreaTable_wotlk` (`id`, `zoneID`, `mapID`, `name_loc0`) VALUES ('" .. id .. "', '" .. zoneID .. "', '" .. mapID .. "', '" .. name .. "')"
 end)
 
 -- Create and load SkillLine_wotlk

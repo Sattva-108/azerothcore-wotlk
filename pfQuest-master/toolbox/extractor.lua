@@ -2224,25 +2224,40 @@ if config.expansions[expansion_to_process] then
     pfDB["zones"][data] = {}
 
     if core == "acore" then
-      -- For AzerothCore, extract zones from creature spawns since AreaTable_vanilla is empty
+      -- Для AzerothCore: используем WorldMapOverlay_wotlk и AreaTable_wotlk для hit rects
       local zones = {}
-      local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0')  -- NO LIMIT for zones
+      local query = mysql:execute('SELECT o.areaID as id, a.zoneID as zoneID, o.textureWidth, o.textureHeight, o.offsetX, o.offsetY, o.hitRectTop, o.hitRectLeft, o.hitRectBottom, o.hitRectRight FROM WorldMapOverlay_wotlk o LEFT JOIN AreaTable_wotlk a ON o.areaID = a.id')
       if query then
         while query:fetch(zones, "a") do
           if debug("zones") then break end
-          local zone_id = tonumber(zones.zoneId)
-          local area_id = tonumber(zones.areaId)
+          local entry = tonumber(zones.id)
+          local zone = tonumber(zones.zoneID)
+          local textureWidth = tonumber(zones.textureWidth)
+          local textureHeight = tonumber(zones.textureHeight)
+          local offsetX = tonumber(zones.offsetX)
+          local offsetY = tonumber(zones.offsetY)
 
-          if zone_id and zone_id > 0 then
-            pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 } -- zone, width, height, cx, cy
-          end
-          if area_id and area_id > 0 and area_id ~= zone_id then
-            pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
+          -- convert square to map scale
+          local hitRectTop = tonumber(zones.hitRectTop)/668*100
+          local hitRectLeft = tonumber(zones.hitRectLeft)/1002*100
+          local hitRectBottom = tonumber(zones.hitRectBottom)/668*100
+          local hitRectRight = tonumber(zones.hitRectRight)/1002*100
+
+          -- area size
+          local width = hitRectRight - hitRectLeft
+          local height = hitRectBottom - hitRectTop
+
+          -- area center
+          local cx = (hitRectLeft+hitRectRight)/2
+          local cy = (hitRectTop+hitRectBottom)/2
+
+          if entry then
+            pfDB["zones"][data][entry] = { zone, round(width,2), round(height,2), round(cx,2), round(cy,2)}
           end
         end
-        print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from creature spawns")
+        print("  SUCCESS: Extracted " .. TableCount(pfDB["zones"][data]) .. " zones from WorldMapOverlay_wotlk")
       else
-        print("  Warning: Failed to query zones from creature table")
+        print("  Warning: Failed to query zones from WorldMapOverlay_wotlk table")
       end
     else
       -- Original zones logic for cores with pfquest DBC data
