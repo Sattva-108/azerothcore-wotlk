@@ -12,7 +12,7 @@
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
 local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
-local FULL_EXTRACTION = false      -- true = игнорировать все лимиты
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -2254,24 +2254,56 @@ if config.expansions[expansion_to_process] then
     pfDB["zones"][data] = {}
 
     if core == "acore" then
-      -- For AzerothCore, extract zones from creature spawns since AreaTable_vanilla is empty
+      -- For AzerothCore, use worldmaparea_wotlk for proper zone dimensions
       local zones = {}
-      local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0')  -- NO LIMIT for zones
+      local query = mysql:execute([[
+        SELECT w.zoneID, w.areatableID, w.name,
+               ABS(w.x_max - w.x_min) as width,
+               ABS(w.y_max - w.y_min) as height,
+               (w.x_min + w.x_max) / 2 as center_x,
+               (w.y_min + w.y_max) / 2 as center_y
+        FROM worldmaparea_wotlk w
+        WHERE w.areatableID > 0
+        ORDER BY w.zoneID
+      ]])
+
       if query then
         while query:fetch(zones, "a") do
           if debug("zones") then break end
-          local zone_id = tonumber(zones.zoneId)
-          local area_id = tonumber(zones.areaId)
+          local zone_id = tonumber(zones.zoneID)
+          local area_id = tonumber(zones.areatableID)
+          local width = tonumber(zones.width) or 100
+          local height = tonumber(zones.height) or 100
+          local center_x = tonumber(zones.center_x) or 50
+          local center_y = tonumber(zones.center_y) or 50
+
+          -- Convert to pfQuest coordinate system (0-100 scale)
+          local normalized_width = math.min(100, math.max(10, width / 100))
+          local normalized_height = math.min(100, math.max(10, height / 100))
+          local normalized_cx = 50  -- Always center for now
+          local normalized_cy = 50  -- Always center for now
 
           if zone_id and zone_id > 0 then
-            pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 } -- zone, width, height, cx, cy
+            pfDB["zones"][data][zone_id] = { zone_id, normalized_width, normalized_height, normalized_cx, normalized_cy }
           end
           if area_id and area_id > 0 and area_id ~= zone_id then
-            pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
+            pfDB["zones"][data][area_id] = { zone_id or area_id, normalized_width, normalized_height, normalized_cx, normalized_cy }
           end
         end
+        print("  Generated " .. (query:numrows() or 0) .. " zones from worldmaparea_wotlk")
       else
-        print("  Warning: Failed to query zones from creature table")
+        print("  Warning: Failed to query worldmaparea_wotlk, using fallback")
+        -- Fallback to old method
+        local zones_fallback = {}
+        local query_fallback = mysql:execute('SELECT DISTINCT zoneId FROM creature WHERE zoneId > 0')
+        if query_fallback then
+          while query_fallback:fetch(zones_fallback, "a") do
+            local zone_id = tonumber(zones_fallback.zoneId)
+            if zone_id and zone_id > 0 then
+              pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 }
+            end
+          end
+        end
       end
     else
       -- Original zones logic for cores with pfquest DBC data
