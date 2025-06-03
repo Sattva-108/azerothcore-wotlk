@@ -1,6 +1,6 @@
 #!/usr/bin/lua
 
--- Script to load DBC CSV files into acore_world database
+-- Script to load DBC CSV files into acore_world database (matching load-client-data.sh)
 luasql = require("luasql.mysql")
 
 local env = luasql.mysql()
@@ -27,8 +27,8 @@ function parse_csv_line(line)
       in_quotes = not in_quotes
     elseif char == ',' and not in_quotes then
       local value = line:sub(start, i-1)
-      -- Remove quotes and convert commas to dots for decimals
-      value = value:gsub('^"', ''):gsub('"$', ''):gsub(',', '.')
+      -- Remove quotes but keep original for numbers
+      value = value:gsub('^"', ''):gsub('"$', '')
       table.insert(values, value)
       start = i + 1
     end
@@ -38,7 +38,7 @@ function parse_csv_line(line)
 
   -- Add the last value
   local value = line:sub(start)
-  value = value:gsub('^"', ''):gsub('"$', ''):gsub(',', '.')
+  value = value:gsub('^"', ''):gsub('"$', '')
   table.insert(values, value)
 
   return values
@@ -75,18 +75,7 @@ function load_dbc_csv(filename, table_name, create_sql, custom_insert)
       local values = parse_csv_line(line)
 
       if #values > 0 then
-        local sql
-        if custom_insert then
-          sql = custom_insert(values)
-        else
-          -- Standard insert
-          local quoted_values = {}
-          for _, v in ipairs(values) do
-            table.insert(quoted_values, "'" .. v .. "'")
-          end
-          sql = "INSERT INTO `" .. table_name .. "` VALUES (" .. table.concat(quoted_values, ",") .. ")"
-        end
-
+        local sql = custom_insert(values)
         if sql then
           local result = mysql:execute(sql)
           if result then
@@ -104,115 +93,224 @@ function load_dbc_csv(filename, table_name, create_sql, custom_insert)
   return true
 end
 
--- Create and load AreaTrigger_wotlk
-load_dbc_csv("DBC/wotlk/AreaTrigger.dbc.csv", "AreaTrigger_wotlk", [[
-  CREATE TABLE `AreaTrigger_wotlk` (
-    `ID` int(11) NOT NULL,
-    `MapID` int(11) NOT NULL,
-    `X` float NOT NULL,
-    `Y` float NOT NULL,
-    `Z` float NOT NULL,
-    `Radius` float NOT NULL,
-    `Box_Length` float NOT NULL,
-    `Box_Width` float NOT NULL,
-    `Box_Height` float NOT NULL,
-    `Box_Yaw` float NOT NULL,
-    PRIMARY KEY (`ID`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-]])
-
--- Create and load WorldMapArea_wotlk
-load_dbc_csv("DBC/wotlk/WorldMapArea.dbc.csv", "WorldMapArea_wotlk", [[
-  CREATE TABLE `WorldMapArea_wotlk` (
-    `ID` int(11) NOT NULL,
-    `mapID` int(11) NOT NULL,
-    `areatableID` int(11) NOT NULL,
-    `name` varchar(255) DEFAULT NULL,
-    `x_min` float NOT NULL,
-    `x_max` float NOT NULL,
-    `y_min` float NOT NULL,
-    `y_max` float NOT NULL,
-    `DisplayMapID` int(11) NOT NULL,
-    `DefaultDungeonFloor` int(11) NOT NULL,
-    `ParentWorldMapID` int(11) NOT NULL,
-    PRIMARY KEY (`ID`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-]])
-
--- Create and load FactionTemplate_wotlk with custom logic
-load_dbc_csv("DBC/wotlk/FactionTemplate.dbc.csv", "FactionTemplate_wotlk", [[
-  CREATE TABLE `FactionTemplate_wotlk` (
-    `factiontemplateID` int(11) NOT NULL,
-    `A` tinyint(1) NOT NULL DEFAULT 0,
-    `H` tinyint(1) NOT NULL DEFAULT 0,
-    PRIMARY KEY (`factiontemplateID`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-]], function(values)
-  -- Custom logic for FactionTemplate
-  -- values[1] = ID, values[2] = Faction, values[3] = Flags, values[4] = FactionGroup
-  local id = values[1]
-  local faction_group = tonumber(values[4]) or 0
-
-  local A = 0
-  local H = 0
-
-  -- Simple faction logic based on FactionGroup
-  if faction_group == 2 or faction_group == 4 then -- Alliance
-    A = 1
-  elseif faction_group == 3 or faction_group == 5 then -- Horde
-    H = 1
+-- Check if file exists
+function file_exists(name)
+  local f = io.open(name, "r")
+  if f ~= nil then
+    io.close(f)
+    return true
   else
-    -- Neutral or other
-    A = 1
-    H = 1
+    return false
   end
+end
 
-  return "INSERT INTO `FactionTemplate_wotlk` (`factiontemplateID`, `A`, `H`) VALUES ('" .. id .. "', '" .. A .. "', '" .. H .. "')"
-end)
+local version = "wotlk"
 
--- Simple Lock table (we need to analyze the actual structure)
-load_dbc_csv("DBC/wotlk/Lock.dbc.csv", "Lock_wotlk", [[
-  CREATE TABLE `Lock_wotlk` (
-    `id` int(11) NOT NULL,
-    `data` int(11) NOT NULL DEFAULT 0,
-    `skill` int(11) NOT NULL DEFAULT 0,
-    PRIMARY KEY (`id`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-]], function(values)
-  -- Simplified lock logic - just take ID from first column
-  local id = values[1]
-  return "INSERT INTO `Lock_wotlk` (`id`, `data`, `skill`) VALUES ('" .. id .. "', '0', '0')"
-end)
+-- AreaTrigger_wotlk (matching load-client-data.sh structure)
+load_dbc_csv("DBC/wotlk/AreaTrigger.dbc.csv", "AreaTrigger_" .. version,
+  "CREATE TABLE `AreaTrigger_" .. version .. "` (" ..
+  "`ID` smallint(3) unsigned NOT NULL," ..
+  "`MapID` smallint(3) unsigned NOT NULL," ..
+  "`X` float NOT NULL DEFAULT 0.0," ..
+  "`Y` float NOT NULL DEFAULT 0.0," ..
+  "`Z` float NOT NULL DEFAULT 0.0," ..
+  "`Size` float NOT NULL DEFAULT 0.0" ..
+  ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='AreaTrigger'",
+  function(values)
+    local id = values[1]
+    local map = values[2]
+    local x = values[3]:gsub(',', '.')
+    local y = values[4]:gsub(',', '.')
+    local z = values[5]:gsub(',', '.')
+    local size = values[6]:gsub(',', '.')
+    return "INSERT INTO `AreaTrigger_" .. version .. "` VALUES (" .. id .. ", " .. map .. ", " .. x .. ", " .. y .. ", " .. z .. ", " .. size .. ")"
+  end)
 
--- Create and load AreaTable_wotlk
-load_dbc_csv("DBC/wotlk/enUS/AreaTable.dbc.csv", "AreaTable_wotlk", [[
-  CREATE TABLE `AreaTable_wotlk` (
-    `id` int(11) NOT NULL,
-    `name_loc0` varchar(255) DEFAULT NULL,
-    PRIMARY KEY (`id`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-]], function(values)
-  -- values[1] = ID, values[2] = Name
-  local id = values[1]
-  local name = values[2] or ""
-  name = name:gsub("'", "\\'") -- Escape quotes
-  return "INSERT INTO `AreaTable_wotlk` (`id`, `name_loc0`) VALUES ('" .. id .. "', '" .. name .. "')"
-end)
+-- WorldMapArea_wotlk (matching load-client-data.sh structure)
+load_dbc_csv("DBC/wotlk/WorldMapArea.dbc.csv", "WorldMapArea_" .. version,
+  "CREATE TABLE `WorldMapArea_" .. version .. "` (" ..
+  "`zoneID` smallint(3) unsigned NOT NULL," ..
+  "`mapID` smallint(3) unsigned NOT NULL," ..
+  "`areatableID` smallint(3) unsigned NOT NULL," ..
+  "`name` varchar(255) NOT NULL," ..
+  "`x_min` float NOT NULL DEFAULT 0.0," ..
+  "`y_min` float NOT NULL DEFAULT 0.0," ..
+  "`x_max` float NOT NULL DEFAULT 0.0," ..
+  "`y_max` float NOT NULL DEFAULT 0.0" ..
+  ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='WorldMapArea'",
+  function(values)
+    local zone = values[1]
+    local map = values[2]
+    local area = values[3]
+    local name = "\"" .. (values[4] or "") .. "\""
 
--- Create and load SkillLine_wotlk
-load_dbc_csv("DBC/wotlk/enUS/SkillLine.dbc.csv", "SkillLine_wotlk", [[
-  CREATE TABLE `SkillLine_wotlk` (
-    `id` int(11) NOT NULL,
-    `name_loc0` varchar(255) DEFAULT NULL,
-    PRIMARY KEY (`id`)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-]], function(values)
-  -- values[1] = ID, values[2] = Name
-  local id = values[1]
-  local name = values[2] or ""
-  name = name:gsub("'", "\\'") -- Escape quotes
-  return "INSERT INTO `SkillLine_wotlk` (`id`, `name_loc0`) VALUES ('" .. id .. "', '" .. name .. "')"
-end)
+    -- Convert coordinates safely
+    local loc_left_str = (values[5] or "0"):gsub(',', '.')
+    local loc_right_str = (values[6] or "0"):gsub(',', '.')
+    local loc_top_str = (values[7] or "0"):gsub(',', '.')
+    local loc_bottom_str = (values[8] or "0"):gsub(',', '.')
+
+    local loc_left = tonumber(loc_left_str) or 0
+    local loc_right = tonumber(loc_right_str) or 0
+    local loc_top = tonumber(loc_top_str) or 0
+    local loc_bottom = tonumber(loc_bottom_str) or 0
+
+    local x_min = math.min(loc_left, loc_right)
+    local x_max = math.max(loc_left, loc_right)
+    local y_min = math.min(loc_top, loc_bottom)
+    local y_max = math.max(loc_top, loc_bottom)
+
+    return "INSERT INTO `WorldMapArea_" .. version .. "` VALUES (" .. zone .. ", " .. map .. ", " .. area .. ", " .. name .. ", " .. x_min .. ", " .. y_min .. ", " .. x_max .. ", " .. y_max .. ")"
+  end)
+
+-- FactionTemplate_wotlk (matching load-client-data.sh logic)
+load_dbc_csv("DBC/wotlk/FactionTemplate.dbc.csv", "FactionTemplate_" .. version,
+  "CREATE TABLE `FactionTemplate_" .. version .. "` (" ..
+  "`factiontemplateID` smallint(3) unsigned NOT NULL," ..
+  "`factionID` smallint(3) unsigned NOT NULL," ..
+  "`A` smallint(1) NOT NULL," ..
+  "`H` smallint(1) NOT NULL" ..
+  ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='FactionTemplate'",
+  function(values)
+    local factiontemplate = values[1]
+    local faction = values[2]
+    local friendly = tonumber(values[5]) or 0
+    local hostile = tonumber(values[6]) or 0
+
+    local alliance = 0
+    local horde = 0
+
+    -- Horde logic (bit 2 = 4)
+    if (hostile % 8 >= 4) or hostile == 1 then
+      horde = -1
+    elseif (friendly % 8 >= 4) or friendly == 1 then
+      horde = 1
+    end
+
+    -- Alliance logic (bit 1 = 2)
+    if (hostile % 4 >= 2) or hostile == 1 then
+      alliance = -1
+    elseif (friendly % 4 >= 2) or friendly == 1 then
+      alliance = 1
+    end
+
+    return "INSERT INTO `FactionTemplate_" .. version .. "` VALUES (" .. factiontemplate .. ", " .. faction .. ", " .. alliance .. ", " .. horde .. ")"
+  end)
+
+-- Lock_wotlk (matching load-client-data.sh structure)
+load_dbc_csv("DBC/wotlk/Lock.dbc.csv", "Lock_" .. version,
+  "CREATE TABLE `Lock_" .. version .. "` (" ..
+  "`id` smallint(3) unsigned NOT NULL," ..
+  "`locktype` smallint(3) NOT NULL," ..
+  "`data` smallint(3) unsigned NOT NULL," ..
+  "`skill` smallint(3) unsigned NOT NULL" ..
+  ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='Lock'",
+  function(values)
+    local id = values[1]
+    local locktype = values[2]
+    -- Extract hex part after 'x' if present
+    if locktype:find("x") then
+      locktype = locktype:sub(locktype:find("x") + 1)
+    end
+    local data = values[10] or "0"
+    local skill = values[18] or "0"
+
+    -- Special case for chest (hackfix from original script)
+    if id == "57" then
+      return "INSERT INTO `Lock_" .. version .. "` VALUES (57, 2, 1, 0)"
+    else
+      return "INSERT INTO `Lock_" .. version .. "` VALUES (" .. id .. ", " .. locktype .. ", " .. data .. ", " .. skill .. ")"
+    end
+  end)
+
+-- AreaTable_wotlk (only enUS for now, matching load-client-data.sh)
+load_dbc_csv("DBC/wotlk/enUS/AreaTable.dbc.csv", "AreaTable_" .. version,
+  "CREATE TABLE `AreaTable_" .. version .. "` (" ..
+  "`id` int(3) unsigned NOT NULL," ..
+  "`zoneID` smallint(3) unsigned NOT NULL," ..
+  "`name_loc0` varchar(255) NOT NULL," ..
+  "`name_loc1` varchar(255) NOT NULL," ..
+  "`name_loc2` varchar(255) NOT NULL," ..
+  "`name_loc3` varchar(255) NOT NULL," ..
+  "`name_loc4` varchar(255) NOT NULL," ..
+  "`name_loc5` varchar(255) NOT NULL," ..
+  "`name_loc6` varchar(255) NOT NULL," ..
+  "`name_loc7` varchar(255) NOT NULL," ..
+  "`name_loc8` varchar(255) NOT NULL," ..
+  "`name_loc10` varchar(255) NOT NULL" ..
+  ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='AreaTable'",
+  function(values)
+    local id = values[1]
+    local zoneID = values[3] or "0"
+    local name = values[12] or ""
+    -- Handle quotes in name
+    name = name:gsub('""', '\\"')
+    if name ~= "" and name ~= '""' then
+      name = '"' .. name:gsub('"', '') .. '"'
+    else
+      name = '""'
+    end
+    return "INSERT INTO `AreaTable_" .. version .. "` VALUES (" .. id .. ", " .. zoneID .. ", " .. name .. ", '', '', '', '', '', '', '', '', '')"
+  end)
+
+-- SkillLine_wotlk (only enUS for now, matching load-client-data.sh)
+load_dbc_csv("DBC/wotlk/enUS/SkillLine.dbc.csv", "SkillLine_" .. version,
+  "CREATE TABLE `SkillLine_" .. version .. "` (" ..
+  "`id` smallint(3) unsigned NOT NULL," ..
+  "`name_loc0` varchar(255) NOT NULL," ..
+  "`name_loc1` varchar(255) NOT NULL," ..
+  "`name_loc2` varchar(255) NOT NULL," ..
+  "`name_loc3` varchar(255) NOT NULL," ..
+  "`name_loc4` varchar(255) NOT NULL," ..
+  "`name_loc5` varchar(255) NOT NULL," ..
+  "`name_loc6` varchar(255) NOT NULL," ..
+  "`name_loc7` varchar(255) NOT NULL," ..
+  "`name_loc8` varchar(255) NOT NULL," ..
+  "`name_loc10` varchar(255) NOT NULL" ..
+  ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='SkillLine'",
+  function(values)
+    local id = values[1]
+    local name = values[4] or "" -- enUS is at position 4
+    if name ~= "" and name ~= '""' then
+      name = '"' .. name:gsub('"', '') .. '"'
+    else
+      name = '""'
+    end
+    return "INSERT INTO `SkillLine_" .. version .. "` VALUES (" .. id .. ", " .. name .. ", '', '', '', '', '', '', '', '', '')"
+  end)
+
+-- WorldMapOverlay_wotlk (if file exists)
+if file_exists("DBC/wotlk/WorldMapOverlay.dbc.csv") then
+  load_dbc_csv("DBC/wotlk/WorldMapOverlay.dbc.csv", "WorldMapOverlay_" .. version,
+    "CREATE TABLE `WorldMapOverlay_" .. version .. "` (" ..
+    "`areaID` smallint(3) unsigned NOT NULL," ..
+    "`zoneID` smallint(3) unsigned NOT NULL," ..
+    "`texture` varchar(255)," ..
+    "`textureWidth` smallint(3) unsigned NOT NULL," ..
+    "`textureHeight` smallint(3) unsigned NOT NULL," ..
+    "`offsetX` smallint(3) unsigned NOT NULL," ..
+    "`offsetY` smallint(3) unsigned NOT NULL," ..
+    "`hitRectTop` smallint(3) unsigned NOT NULL," ..
+    "`hitRectLeft` smallint(3) unsigned NOT NULL," ..
+    "`hitRectBottom` smallint(3) unsigned NOT NULL," ..
+    "`hitRectRight` smallint(3) unsigned NOT NULL" ..
+    ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='WorldMapOverlay'",
+    function(values)
+      local areaID = values[3] or "0"
+      local zoneID = values[2] or "0"
+      local texture = '"' .. (values[9] or "") .. '"'
+      local textureWidth = values[10] or "0"
+      local textureHeight = values[11] or "0"
+      local offsetX = values[12] or "0"
+      local offsetY = values[13] or "0"
+      local top = values[14] or "0"
+      local left = values[15] or "0"
+      local bottom = values[16] or "0"
+      local right = values[17] or "0"
+
+      return "INSERT INTO `WorldMapOverlay_" .. version .. "` VALUES (" .. areaID .. ", " .. zoneID .. ", " .. texture .. ", " .. textureWidth .. ", " .. textureHeight .. ", " .. offsetX .. ", " .. offsetY .. ", " .. top .. ", " .. left .. ", " .. bottom .. ", " .. right .. ")"
+    end)
+end
 
 mysql:close()
 env:close()
