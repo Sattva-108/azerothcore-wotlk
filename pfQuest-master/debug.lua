@@ -372,7 +372,7 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
 
     -- Check unit objectives
     if quest.obj and quest.obj.U then
-        print("{rt8} Unit objectives:")
+        print(SKULL .. " Unit objectives:")
         for i, unitId in ipairs(quest.obj.U) do
             local unit = pfDB["units"]["data"][unitId]
             if unit then
@@ -390,7 +390,7 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
 
     -- Check item objectives
     if quest.obj and quest.obj.I then
-        print("{rt6} Item objectives:")
+        print(SQUARE .. " Item objectives:")
         for i, itemId in ipairs(quest.obj.I) do
             print("   Item " .. itemId)
         end
@@ -398,7 +398,7 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
 
     -- pfQuest working quest analysis
     print("")
-    print("{rt2} pfQuest Analysis:")
+    print(CIRCE .. " pfQuest Analysis:")
     local hasStarter = (quest.start and (quest.start.U or quest.start.O or quest.start.I))
     local hasFinisher = (quest["end"] and (quest["end"].U or quest["end"].O))
 
@@ -451,14 +451,14 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
         end
     end
 
-    print("   Has starter: " .. (hasStarter and "{rt1} YES" or "{rt8} NO"))
-    print("   Starter coords: " .. (starterHasCoords and "{rt1} YES" or "{rt8} NO"))
-    print("   Has finisher: " .. (hasFinisher and "{rt1} YES" or "{rt8} NO"))
-    print("   Finisher coords: " .. (finisherHasCoords and "{rt1} YES" or "{rt8} NO"))
+    print("   Has starter: " .. (hasStarter and STAR .. " YES" or SKULL .. " NO"))
+    print("   Starter coords: " .. (starterHasCoords and STAR .. " YES" or SKULL .. " NO"))
+    print("   Has finisher: " .. (hasFinisher and STAR .. " YES" or SKULL .. " NO"))
+    print("   Finisher coords: " .. (finisherHasCoords and STAR .. " YES" or SKULL .. " NO"))
 
     if hasStarter and hasFinisher and starterHasCoords and finisherHasCoords then
         print("   Status: {rt1} WORKING QUEST - should appear on map!")
-        print("   {rt4} Should appear on map if zone coordinates are correct")
+        print("   " .. TRIANGLE .. " Should appear on map if zone coordinates are correct")
 
         -- Additional map debugging
         if quest.start and quest.start.U then
@@ -467,15 +467,15 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
                 if unit and unit.coords and #unit.coords > 0 then
                     local coord = unit.coords[1]
                     local zoneId = coord[3]
-                    print("   {rt3} Map Debug: Quest starter at zone " .. zoneId)
+                    print("   " .. DIAMOND .. " Map Debug: Quest starter at zone " .. zoneId)
                     if zoneId == 14 then
-                        print("      {rt1} Should appear in Durotar area on Kalimdor map")
+                        print("      " .. STAR .. " Should appear in Durotar area on Kalimdor map")
                     elseif zoneId == 1519 then
-                        print("      {rt1} Should appear in Stormwind area on Eastern Kingdoms map")
+                        print("      " .. STAR .. " Should appear in Stormwind area on Eastern Kingdoms map")
                     elseif zoneId == 1637 then
-                        print("      {rt1} Should appear in Orgrimmar area on Kalimdor map")
+                        print("      " .. STAR .. " Should appear in Orgrimmar area on Kalimdor map")
                     else
-                        print("      {rt1} Zone mapping available - should appear on map")
+                        print("      " .. STAR .. " Zone mapping available - should appear on map")
                     end
                 end
             end
@@ -484,7 +484,7 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
         print("   Status: {rt8} BROKEN - missing starter or finisher")
     elseif not starterHasCoords or not finisherHasCoords then
         print("   Status: {rt8} BROKEN - NPCs/objects have no coordinates!")
-        print("   {rt6} This is why quest doesn't show on map")
+        print("   " .. SQUARE .. " This is why quest doesn't show on map")
     else
         print("   Status: {rt8} NOT a working quest")
     end
