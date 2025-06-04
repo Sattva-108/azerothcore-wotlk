@@ -14,12 +14,12 @@ local SKULL  = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:16:16|t"
 
 local function findWorkingQuests()
     if not pfDB then
-        print("❌ pfDB not loaded")
+        print(STAR .. " pfDB not loaded")
         return {}
     end
 
     if not pfDB["quests"] or not pfDB["quests"]["data"] then
-        print("❌ No quest data found")
+        print(STAR .. " No quest data found")
         return {}
     end
 
@@ -100,7 +100,7 @@ SlashCmdList["PFTEST"] = function()
 
     -- Check if pfDB is loaded
     if not pfDB then
-        print("{rt8} pfDB not loaded! Make sure pfQuest addon is running.")
+        print(SKULL .. " pfDB not loaded! Make sure pfQuest addon is running.")
         return
     end
 
@@ -119,13 +119,13 @@ SlashCmdList["PFTEST"] = function()
         end
     end
 
-    print("{rt6} Data loaded:")
+    print(SQUARE .. " Data loaded:")
     print("   Quests: " .. questCount)
     print("   Units: " .. unitCount .. " (" .. unitsWithCoords .. " with coords)")
     print("   Zones: " .. zoneCount)
 
     -- Find working quests
-    print("{rt3} Finding working quests...")
+    print(DIAMOND .. " Finding working quests...")
     local workingQuests = findWorkingQuests()
 
     -- Get player faction for sorting
@@ -150,7 +150,7 @@ SlashCmdList["PFTEST"] = function()
     end
 
     if #workingQuests > 0 then
-        print("{rt1} Found " .. #workingQuests .. " working quests total!")
+        print(STAR .. " Found " .. #workingQuests .. " working quests total!")
         print("   Horde only: " .. #hordeQuests)
         print("   Alliance only: " .. #allianceQuests)
         print("   Both factions: " .. #bothFactionsQuests)
@@ -170,7 +170,7 @@ SlashCmdList["PFTEST"] = function()
 
         -- Show first 15 examples
         local maxToShow = math.min(15, #displayQuests)
-        print("{rt4} Showing first " .. maxToShow .. " " .. playerFaction .. " examples:")
+        print(TRIANGLE .. " Showing first " .. maxToShow .. " " .. playerFaction .. " examples:")
 
         for i = 1, maxToShow do
             local questId = displayQuests[i]
@@ -242,7 +242,7 @@ SlashCmdList["PFTEST"] = function()
             print("   /pfq " .. displayQuests[i])
         end
     else
-        print("{rt8} No working quests found!")
+        print(SKULL .. " No working quests found!")
     end
 
     print("=== End Debug ===")
