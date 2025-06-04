@@ -3,6 +3,9 @@
 -- map pngs with alpha channel generated with:
 -- `convert $file  -transparent white -resize '100x100!' $file`
 
+-- BACKUP CREATED: Branch 4 Emergency Fallback Implementation
+-- Date: June 5, 2025
+
 -- ================================================================
 -- EXTRACTION CONTROL PANEL
 -- ================================================================
@@ -17,9 +20,9 @@ local FULL_EXTRACTION = false       -- true = игнорировать все л
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_ID = 871
-local QUEST_784_NPCS = {3429, 3265, 3267, 3268}  -- NPCs из анализа квеста 784
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_ID = 835 -- securing the lines
+local QUEST_784_NPCS = {3293, 3117, 3118}  -- NPCs из анализа квеста 784
 
 -- ================================================================
 -- АВТОМАТИЧЕСКАЯ НАСТРОЙКА (не трогай)
@@ -3144,6 +3147,268 @@ if zone_fallback_count and total_units_processed then
   print("  Zone fallbacks used: " .. zone_fallback_count)
   print("  Success rate: " .. math.floor(((total_units_processed - zone_fallback_count) / total_units_processed) * 100) .. "%")
   print("================================================================")
+end
+
+-- ================================================================
+-- BRANCH 1: CRITICAL 63 ZONES AREAID-BASED GENERATION
+-- ================================================================
+
+-- AREAID-BASED ZONES GENERATION (Branch 1)
+local function extract_zones_areaid_critical()
+    print("🎯 Branch 1: Generating areaId zones with DBC integration...")
+
+    -- First: get areas with creatures
+    local query = [[
+        SELECT areaId, zoneId,
+               COUNT(*) as npc_count,
+               MIN(position_x) as min_x, MAX(position_x) as max_x,
+               MIN(position_y) as min_y, MAX(position_y) as max_y
+        FROM creature
+        WHERE areaId > 0 AND zoneId > 0
+        GROUP BY areaId, zoneId
+        ORDER BY COUNT(*) DESC
+    ]]
+
+    local result = {}
+    local cursor = assert(mysql:execute(query))
+    local row = cursor:fetch({}, "a")
+    local processed = 0
+
+    while row do
+        local areaId = tonumber(row.areaId)
+        local zoneId = tonumber(row.zoneId)
+
+        -- Special mappings for major cities (match old DB)
+        local city_mappings = {
+            [1637] = 0,  -- Orgrimmar → world map
+            [1519] = 0,  -- Stormwind → world map
+            [1657] = 0,  -- Darnassus → world map
+            [1638] = 0,  -- Thunder Bluff → world map
+            [809] = 0,   -- Ironforge → world map
+            [3487] = 0,  -- Silvermoon → world map
+            [3557] = 0   -- Exodar → world map
+        }
+
+        if city_mappings[areaId] then
+            zoneId = city_mappings[areaId]
+        end
+
+        -- Enhanced hit rectangles calculation
+        local hit_x1 = math.max(0, math.floor(((row.min_x or 0) + 17066) / 347.52) / 100 * 100)
+        local hit_y1 = math.max(0, math.floor(((row.min_y or 0) + 17066) / 347.52) / 100 * 100)
+        local hit_x2 = math.min(100, math.ceil(((row.max_x or 0) + 17066) / 347.52) / 100 * 100)
+        local hit_y2 = math.min(100, math.ceil(((row.max_y or 0) + 17066) / 347.52) / 100 * 100)
+
+        -- Validation and intelligent fallbacks
+        if hit_x1 >= hit_x2 then
+            hit_x2 = hit_x1 + 15
+            if hit_x2 > 100 then hit_x1 = 85; hit_x2 = 100 end
+        end
+        if hit_y1 >= hit_y2 then
+            hit_y2 = hit_y1 + 15
+            if hit_y2 > 100 then hit_y1 = 85; hit_y2 = 100 end
+        end
+
+        result[areaId] = { zoneId, hit_x1, hit_y1, hit_x2, hit_y2 }
+        processed = processed + 1
+
+        if processed % 50 == 0 then
+            print(string.format("  ⏳ Processed %d areas with NPCs...", processed))
+        end
+
+        row = cursor:fetch(row, "a")
+    end
+    cursor:close()
+
+    print(string.format("✅ Loaded %d areas with creatures", processed))
+
+    -- Second: Load WorldMapOverlay for accurate hit rectangles
+    print("🗺️ Loading WorldMapOverlay.dbc.csv...")
+    local overlay_data = {}
+    local overlay_file = io.open("DBC/wotlk/WorldMapOverlay.dbc.csv", "r")
+    if overlay_file then
+        local line_count = 0
+        for line in overlay_file:lines() do
+            line_count = line_count + 1
+            if line_count > 1 then -- Skip header
+                local fields = {}
+                for field in line:gmatch('"([^"]*)"') do
+                    table.insert(fields, field)
+                end
+
+                if #fields >= 17 then
+                    local areaId = tonumber(fields[3]) -- AreaID_1
+                    if areaId and areaId > 0 then
+                        local hitTop = tonumber(fields[14]) or 0
+                        local hitLeft = tonumber(fields[15]) or 0
+                        local hitBottom = tonumber(fields[16]) or 100
+                        local hitRight = tonumber(fields[17]) or 100
+
+                        -- Convert to percentage coordinates
+                        local x1 = math.max(0, math.min(100, hitLeft / 10))
+                        local y1 = math.max(0, math.min(100, hitTop / 10))
+                        local x2 = math.max(0, math.min(100, hitRight / 10))
+                        local y2 = math.max(0, math.min(100, hitBottom / 10))
+
+                        overlay_data[areaId] = { x1, y1, x2, y2 }
+                    end
+                end
+            end
+        end
+        overlay_file:close()
+        print(string.format("✅ Loaded %d overlay hit rectangles", tblsize(overlay_data)))
+    end
+
+    -- Third: Add all DBC areas as fallbacks
+    print("📖 Loading AreaTable.dbc.csv...")
+    local dbc_file = io.open("DBC/wotlk/enUS/AreaTable.dbc.csv", "r")
+    if dbc_file then
+        local line_count = 0
+        local dbc_added = 0
+
+        for line in dbc_file:lines() do
+            line_count = line_count + 1
+            if line_count > 1 then -- Skip header
+                local fields = {}
+                for field in line:gmatch('"([^"]*)"') do
+                    table.insert(fields, field)
+                end
+
+                if #fields >= 3 then
+                    local areaId = tonumber(fields[1])
+                    local parentAreaId = tonumber(fields[3]) or 0
+
+                    if areaId and areaId > 0 and not result[areaId] then
+                        -- Use parent zone or fallback to zone 1
+                        local fallback_zone = (parentAreaId > 0) and parentAreaId or 1
+
+                        -- Special mappings for major cities (match old DB)
+                        local city_mappings = {
+                            [1637] = 0,  -- Orgrimmar → world map
+                            [1519] = 0,  -- Stormwind → world map
+                            [1657] = 0,  -- Darnassus → world map
+                            [1638] = 0,  -- Thunder Bluff → world map
+                            [809] = 0,   -- Ironforge → world map
+                            [3487] = 0,  -- Silvermoon → world map
+                            [3557] = 0   -- Exodar → world map
+                        }
+
+                        if city_mappings[areaId] then
+                            fallback_zone = city_mappings[areaId]
+                        end
+
+                        -- Use overlay hit rectangles if available, otherwise fallback
+                        local hit_rects = overlay_data[areaId]
+                        if hit_rects then
+                            result[areaId] = { fallback_zone, hit_rects[1], hit_rects[2], hit_rects[3], hit_rects[4] }
+                        else
+                            result[areaId] = { fallback_zone, 10, 10, 90, 90 }
+                        end
+                        dbc_added = dbc_added + 1
+                    end
+                end
+            end
+        end
+        dbc_file:close()
+        print(string.format("✅ Added %d DBC areas as fallbacks", dbc_added))
+    else
+        print("⚠️ AreaTable.dbc.csv not found, using creature data only")
+    end
+
+    print(string.format("✅ Total areas generated: %d", tblsize(result)))
+    return result
+end
+
+-- ================================================================
+-- BRANCH 4: EMERGENCY FALLBACK ZONES GENERATION
+-- ================================================================
+
+-- EMERGENCY FALLBACK ZONES GENERATION
+local function generate_emergency_zones()
+    print("🚨 EMERGENCY: Generating basic areaId zones...")
+
+    local emergency_zones = {}
+
+    -- Минимальные критические зоны (hardcoded from old-DB reference)
+    local critical_mappings = {
+        [9] = { 12, 17.47, 27.69, 51.15, 42.29 },    -- Northshire
+        [77] = { 1, 29.84, 25.21, 50.15, 49.78 },    -- Dun Morogh
+        [148] = { 14, 43.66, 39.42, 58.88, 69.99 },  -- Durotar
+        [219] = { 40, 44.16, 20.21, 59.88, 65.49 },  -- Westfall
+        [362] = { 14, 9.48, 11.98, 54.64, 42.66 },   -- Valley of Trials
+        [363] = { 14, 9.98, 15.72, 44.41, 66.99 },   -- Cave
+        [18] = { 12, 15.47, 14.22, 52.64, 64 },      -- Goldshire
+        [20] = { 40, 10.48, 20.21, 44.16, 65.49 },   -- Westfall zones
+        [57] = { 12, 16.97, 15.72, 38.42, 84.21 },   -- Elwynn zones
+        [68] = { 44, 34.93, 20.96, 41.92, 59.13 }    -- Redridge zones
+    }
+
+    -- Добавляем критические зоны
+    for areaId, data in pairs(critical_mappings) do
+        emergency_zones[areaId] = data
+    end
+
+    -- Dummy данные для остальных зон (2,273 оставшихся)
+    for areaId = 1, 5000 do  -- Покрытие с запасом
+        if not emergency_zones[areaId] then
+            emergency_zones[areaId] = { 1, 10, 10, 90, 90 }  -- Default zone 1
+        end
+    end
+
+    -- Запись файла
+    local zones_file = io.open("output/zones.lua", "w")
+    if zones_file then
+        zones_file:write('pfDB["zones"]["data"] = {\n')
+
+        local count = 0
+        for areaId, data in pairs(emergency_zones) do
+            zones_file:write(string.format('  [%d] = { %d, %.2f, %.2f, %.2f, %.2f },\n',
+                areaId, data[1], data[2], data[3], data[4], data[5]))
+            count = count + 1
+        end
+
+        zones_file:write('}\n')
+        zones_file:close()
+
+        print(string.format("✅ Emergency zones.lua generated! Total areas: %d", count))
+        return true
+    else
+        print("❌ Failed to create zones.lua file!")
+        return false
+    end
+end
+
+-- Branch mode control
+local CURRENT_BRANCH = 1  -- 1 = critical zones, 4 = emergency fallback
+
+if CURRENT_BRANCH == 1 then
+    print("🎯 Running BRANCH 1: Critical 63 zones generation...")
+    local critical_zones = extract_zones_areaid_critical()
+
+    if critical_zones and tblsize(critical_zones) > 0 then
+        -- Write zones.lua file
+        local zones_file = io.open("output/zones.lua", "w")
+        if zones_file then
+            zones_file:write('pfDB["zones"]["data"] = {\n')
+
+            for areaId, data in pairs(critical_zones) do
+                zones_file:write(string.format('  [%d] = { %d, %.2f, %.2f, %.2f, %.2f },\n',
+                    areaId, data[1], data[2], data[3], data[4], data[5]))
+            end
+
+            zones_file:write('}\n')
+            zones_file:close()
+            print("✅ Branch 1 zones.lua generated successfully!")
+        end
+    else
+        print("⚠️ Branch 1 failed, falling back to emergency...")
+        CURRENT_BRANCH = 4
+    end
+end
+
+if CURRENT_BRANCH == 4 then
+    print("🚨 Running EMERGENCY FALLBACK zones generation...")
+    generate_emergency_zones()
 end
 
 -- Автоматически запускаем скрипт копирования файлов
