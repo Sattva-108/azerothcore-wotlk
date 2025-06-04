@@ -511,7 +511,7 @@ SlashCmdList["PFQDEEP"] = function(msg)
 
   -- 1. Проверка наличия квеста
   local quest = pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][qid]
-  if not quest then print("❌ Quest not found in pfDB[quests][loc]") return end
+  if not quest then print(SKULL .. " Quest not found in pfDB[quests][loc]") return end
   print("✅ Quest found:", quest.T or "(no title)")
 
   -- 2. Проверка стартера/финишера
@@ -520,12 +520,12 @@ SlashCmdList["PFQDEEP"] = function(msg)
   if starter then
     print("✅ Starter:", starter.U and starter.U[1] or starter.O and starter.O[1] or starter.I and starter.I[1] or "Unknown")
   else
-    print("❌ No starter info")
+    print(SKULL .. " No starter info")
   end
   if finisher then
     print("✅ Finisher:", finisher.U and finisher.U[1] or finisher.O and finisher.O[1] or "Unknown")
   else
-    print("❌ No finisher info")
+    print(SKULL .. " No finisher info")
   end
 
   -- 3. Проверка целей (units/objects/coords)
@@ -536,7 +536,7 @@ SlashCmdList["PFQDEEP"] = function(msg)
       if unit and unit.coords and #unit.coords > 0 then
         print("✅ Unit objective:", unitId, "coords:", unit.coords[1][1], unit.coords[1][2], "zone:", unit.coords[1][3])
       else
-        print("❌ Unit", unitId, "has no coords!")
+        print(SKULL .. " Unit " .. unitId .. " has no coords!")
       end
     end
   end
@@ -546,7 +546,7 @@ SlashCmdList["PFQDEEP"] = function(msg)
       if obj and obj.coords and #obj.coords > 0 then
         print("✅ Object objective:", objId, "coords:", obj.coords[1][1], obj.coords[1][2], "zone:", obj.coords[1][3])
       else
-        print("❌ Object", objId, "has no coords!")
+        print(SKULL .. " Object " .. objId .. " has no coords!")
       end
     end
   end
@@ -563,10 +563,10 @@ SlashCmdList["PFQDEEP"] = function(msg)
     if zoneinfo then
       print("✅ Zone", zoneid, "found in zones.lua:", unpack(zoneinfo))
     else
-      print("❌ Zone", zoneid, "not found in zones.lua!")
+      print(SKULL .. " Zone " .. zoneid .. " not found in zones.lua!")
     end
   else
-    print("❌ No zoneID found for quest")
+    print(SKULL .. " No zoneID found for quest")
   end
 
   -- 5. Проверка наличия точек в pfMap.nodes после поиска
@@ -584,10 +584,10 @@ SlashCmdList["PFQDEEP"] = function(msg)
       end
     end
     if not found then
-      print("❌ No nodes for this quest in pfMap.nodes after SearchQuestID")
+      print(SKULL .. " No nodes for this quest in pfMap.nodes after SearchQuestID")
     end
   else
-    print("❌ pfDatabase:SearchQuestID not available")
+    print(SKULL .. " pfDatabase:SearchQuestID not available")
   end
 
   -- 6. Проверка сопоставления zoneID/mapID
