@@ -518,12 +518,12 @@ SlashCmdList["PFQDEEP"] = function(msg)
   local qdata = pfDB["quests"] and pfDB["quests"]["data"] and pfDB["quests"]["data"][qid]
   local starter, finisher = qdata and qdata.start, qdata and qdata["end"]
   if starter then
-    print("✅ Starter:", starter.U and starter.U[1] or starter.O and starter.O[1] or starter.I and starter.I[1] or "Unknown")
+    print(STAR .. " Starter:", starter.U and starter.U[1] or starter.O and starter.O[1] or starter.I and starter.I[1] or "Unknown")
   else
     print(SKULL .. " No starter info")
   end
   if finisher then
-    print("✅ Finisher:", finisher.U and finisher.U[1] or finisher.O and finisher.O[1] or "Unknown")
+    print(STAR .. " Finisher:", finisher.U and finisher.U[1] or finisher.O and finisher.O[1] or "Unknown")
   else
     print(SKULL .. " No finisher info")
   end
@@ -534,7 +534,7 @@ SlashCmdList["PFQDEEP"] = function(msg)
     for _, unitId in ipairs(objectives.U) do
       local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
       if unit and unit.coords and #unit.coords > 0 then
-        print("✅ Unit objective:", unitId, "coords:", unit.coords[1][1], unit.coords[1][2], "zone:", unit.coords[1][3])
+        print(STAR .. " Unit objective:", unitId, "coords:", unit.coords[1][1], unit.coords[1][2], "zone:", unit.coords[1][3])
       else
         print(SKULL .. " Unit " .. unitId .. " has no coords!")
       end
@@ -544,7 +544,7 @@ SlashCmdList["PFQDEEP"] = function(msg)
     for _, objId in ipairs(objectives.O) do
       local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objId]
       if obj and obj.coords and #obj.coords > 0 then
-        print("✅ Object objective:", objId, "coords:", obj.coords[1][1], obj.coords[1][2], "zone:", obj.coords[1][3])
+        print(STAR .. " Object objective:", objId, "coords:", obj.coords[1][1], obj.coords[1][2], "zone:", obj.coords[1][3])
       else
         print(SKULL .. " Object " .. objId .. " has no coords!")
       end
@@ -561,7 +561,7 @@ SlashCmdList["PFQDEEP"] = function(msg)
   if zoneid then
     local zoneinfo = pfDB["zones"] and pfDB["zones"]["data"] and pfDB["zones"]["data"][zoneid]
     if zoneinfo then
-      print("✅ Zone", zoneid, "found in zones.lua:", unpack(zoneinfo))
+      print(STAR .. " Zone", zoneid, "found in zones.lua:", unpack(zoneinfo))
     else
       print(SKULL .. " Zone " .. zoneid .. " not found in zones.lua!")
     end
@@ -578,7 +578,7 @@ SlashCmdList["PFQDEEP"] = function(msg)
     if nodes then
       for zid, points in pairs(nodes) do
         for coords, node in pairs(points) do
-          print("✅ Node in pfMap.nodes: zone", zid, "coords", coords)
+          print(STAR .. " Node in pfMap.nodes: zone", zid, "coords", coords)
           found = true
         end
       end
