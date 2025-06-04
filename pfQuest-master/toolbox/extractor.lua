@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -832,6 +832,32 @@ if config.expansions[expansion_to_process] then
     end
 
   do -- database query functions
+    -- ENHANCED: Adaptive GPS compensation function
+    function GetAdaptiveCompensation(mapid, zone_id, x, y)
+      -- Map-level corrections
+      local map_compensations = {
+        [0] = {x_offset = 0.5, y_offset = -0.3}, -- Eastern Kingdoms
+        [1] = {x_offset = -0.2, y_offset = 0.4}, -- Kalimdor
+        [530] = {x_offset = 0.1, y_offset = 0.1} -- Outland
+      }
+
+      -- Zone-specific adjustments
+      local zone_adjustments = {
+        [12] = {x_factor = 1.0, y_factor = 1.0, x_add = 0, y_add = 0},     -- Elwynn Forest
+        [40] = {x_factor = 0.9, y_factor = 0.95, x_add = 2, y_add = -1},   -- Westfall
+        [1] = {x_factor = 1.1, y_factor = 1.05, x_add = -1, y_add = 1},    -- Dun Morogh
+        [14] = {x_factor = 0.8, y_factor = 0.85, x_add = 5, y_add = 3},    -- Durotar
+      }
+
+      local map_comp = map_compensations[mapid] or {x_offset = 0, y_offset = 0}
+      local zone_adj = zone_adjustments[zone_id] or {x_factor = 1.0, y_factor = 1.0, x_add = 0, y_add = 0}
+
+      return {
+        x_offset = map_comp.x_offset + (x * (zone_adj.x_factor - 1.0)) + zone_adj.x_add,
+        y_offset = map_comp.y_offset + (y * (zone_adj.y_factor - 1.0)) + zone_adj.y_add
+      }
+    end
+
     function GetAreaTriggerCoords(id)
       local areatrigger = {}
       local ret = {}
@@ -965,6 +991,11 @@ if config.expansions[expansion_to_process] then
 
             local zone_x = (y - DBC_LocLeft) / ((DBC_LocRight - DBC_LocLeft) / 100)
             local zone_y = (x - DBC_LocTop) / ((DBC_LocBottom - DBC_LocTop) / 100)
+
+            -- ENHANCED: Adaptive GPS compensation
+            local compensation = GetAdaptiveCompensation(m, zone_id, zone_x, zone_y)
+            zone_x = zone_x + compensation.x_offset
+            zone_y = zone_y + compensation.y_offset
 
             -- Clamp to reasonable range but allow some overshoot
             zone_x = math.max(-10, math.min(110, zone_x))
