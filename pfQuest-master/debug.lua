@@ -237,7 +237,7 @@ SlashCmdList["PFTEST"] = function()
         end
 
         print("")
-        print("{rt2} TEST COMMANDS:")
+        print(MOON .. " TEST COMMANDS:")
         for i = 1, math.min(3, #displayQuests) do
             print("   /pfq " .. displayQuests[i])
         end
@@ -253,19 +253,19 @@ SLASH_PFQUESTTEST1 = "/pfq"
 SlashCmdList["PFQUESTTEST"] = function(questId)
     questId = tonumber(questId)
     if not questId then
-        print("{rt8} Usage: /pfq <questID>")
+        print(SKULL .. " Usage: /pfq <questID>")
         print("   Example: /pfq 784")
         return
     end
 
     local quest = pfDB["quests"]["data"][questId]
     if not quest then
-        print("{rt8} Quest " .. questId .. " not found in database")
+        print(SKULL .. " Quest " .. questId .. " not found in database")
         return
     end
 
     print("=== pfQuest Quest Analysis ===")
-    print("{rt3} Testing Quest " .. questId)
+    print(DIAMOND .. " Testing Quest " .. questId)
 
     -- Get quest name, handle if it's a table
     local questName = "Quest " .. questId
@@ -278,10 +278,10 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
         end
     end
 
-    print("{rt4} " .. questName)
+    print(TRIANGLE .. " " .. questName)
 
     -- Quest level and race info
-    print("{rt6} Level: " .. (quest.lvl or "Unknown") .. " (Min: " .. (quest.min or "Unknown") .. ")")
+    print(SQUARE .. " Level: " .. (quest.lvl or "Unknown") .. " (Min: " .. (quest.min or "Unknown") .. ")")
     local raceInfo = ""
     if quest.race then
         if quest.race == 1101 then raceInfo = "Alliance"
@@ -290,11 +290,11 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
     else
         raceInfo = "Both factions"
     end
-    print("{rt5} Faction: " .. raceInfo)
+    print(MOON .. " Faction: " .. raceInfo)
 
     -- Check quest starters
     if quest.start then
-        print("{rt1} Quest Starters:")
+        print(STAR .. " Quest Starters:")
         if quest.start.U then
             for i, unitId in ipairs(quest.start.U) do
                 local unit = pfDB["units"]["data"][unitId]
@@ -340,12 +340,12 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
             end
         end
     else
-        print("{rt8} No quest starters found!")
+        print(SKULL .. " No quest starters found!")
     end
 
     -- Check quest finishers
     if quest["end"] then
-        print("{rt7} Quest Finishers:")
+        print(CROSS .. " Quest Finishers:")
         if quest["end"].U then
             for i, unitId in ipairs(quest["end"].U) do
                 local unit = pfDB["units"]["data"][unitId]
@@ -367,7 +367,7 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
             end
         end
     else
-        print("{rt8} No quest finishers found!")
+        print(SKULL .. " No quest finishers found!")
     end
 
     -- Check unit objectives
