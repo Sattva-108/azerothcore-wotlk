@@ -457,7 +457,7 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
     print("   Finisher coords: " .. (finisherHasCoords and STAR .. " YES" or SKULL .. " NO"))
 
     if hasStarter and hasFinisher and starterHasCoords and finisherHasCoords then
-        print("   Status: {rt1} WORKING QUEST - should appear on map!")
+        print("   Status: " .. STAR .. " WORKING QUEST - should appear on map!")
         print("   " .. TRIANGLE .. " Should appear on map if zone coordinates are correct")
 
         -- Additional map debugging
@@ -481,12 +481,12 @@ SlashCmdList["PFQUESTTEST"] = function(questId)
             end
         end
     elseif not hasStarter or not hasFinisher then
-        print("   Status: {rt8} BROKEN - missing starter or finisher")
+        print("   Status: " .. SKULL .. " BROKEN - missing starter or finisher")
     elseif not starterHasCoords or not finisherHasCoords then
-        print("   Status: {rt8} BROKEN - NPCs/objects have no coordinates!")
+        print("   Status: " .. SKULL .. " BROKEN - NPCs/objects have no coordinates!")
         print("   " .. SQUARE .. " This is why quest doesn't show on map")
     else
-        print("   Status: {rt8} NOT a working quest")
+        print("   Status: " .. SKULL .. " NOT a working quest")
     end
 
     print("=== End Analysis ===")
@@ -500,7 +500,7 @@ function TableCount(t)
     return count
 end
 
-print("{rt1} Enhanced pfQuest debug loaded! Use /pftest and /pfq <questID>")
+print(STAR .. " Enhanced pfQuest debug loaded! Use /pftest and /pfq <questID>")
 
 -- === ГЛУБОКАЯ ПРОВЕРКА ДЛЯ /pfq ===
 SLASH_PFQDEEP1 = "/pfqdeep"
@@ -512,7 +512,7 @@ SlashCmdList["PFQDEEP"] = function(msg)
   -- 1. Проверка наличия квеста
   local quest = pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][qid]
   if not quest then print(SKULL .. " Quest not found in pfDB[quests][loc]") return end
-  print("✅ Quest found:", quest.T or "(no title)")
+  print(STAR .. " Quest found:", quest.T or "(no title)")
 
   -- 2. Проверка стартера/финишера
   local qdata = pfDB["quests"] and pfDB["quests"]["data"] and pfDB["quests"]["data"][qid]
