@@ -1,6 +1,17 @@
 -- pfQuest Debug Script - Enhanced Analysis
 -- Usage: /pftest and /pfq <questID>
 
+local STAR  = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:16:16|t"
+local CIRCE  = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_2:16:16|t"
+local DIAMOND  = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:16:16|t"
+local TRIANGLE  = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_4:16:16|t"
+local MOON  = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_5:16:16|t"
+local SQUARE  = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_6:16:16|t"
+local CROSS = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:16:16|t"
+local SKULL  = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:16:16|t"
+
+
+
 local function findWorkingQuests()
     if not pfDB then
         print("❌ pfDB not loaded")
@@ -143,6 +154,7 @@ SlashCmdList["PFTEST"] = function()
         print("   Horde only: " .. #hordeQuests)
         print("   Alliance only: " .. #allianceQuests)
         print("   Both factions: " .. #bothFactionsQuests)
+
 
         -- Create display list prioritizing player faction
         local displayQuests = {}

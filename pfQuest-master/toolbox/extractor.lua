@@ -10,7 +10,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -910,20 +910,13 @@ if config.expansions[expansion_to_process] then
       local worldmap = {}
       local ret = {}
 
-      -- For AzerothCore, use real zoneId from database instead of hardcoded mapping
+      -- Hybrid approach: database zoneId + WorldMapArea boundaries
       if core == "acore" then
-        -- DISABLED hardcoded mapping - use real zoneId from creature table
-        -- We now have proper zoneId values in database from our SQL fixes
-
-        -- Use mapId as fallback only if we can't determine zone from coordinates
         local fallback_zones = {
-          [0] = 12,      -- Eastern Kingdoms -> Elwynn Forest (fallback only)
-          [1] = 14,      -- Kalimdor -> Durotar (fallback only)
-          [530] = 3520,  -- Outland -> Hellfire Peninsula (fallback only)
-          [571] = 65     -- Northrend -> Dragonblight (fallback only)
+          [0] = 12, [1] = 14, [530] = 3520, [571] = 65
         }
 
-        -- Try to get zone from coordinates using database lookup
+        -- Get zone from database (most reliable after SQL fixes)
         local zone_query = string.format([[
           SELECT zoneId FROM creature
           WHERE map = %d AND zoneId > 0
@@ -936,19 +929,55 @@ if config.expansions[expansion_to_process] then
 
         local zone_result = {}
         local query = mysql:execute(zone_query)
-        local actual_zone_id = nil
+        local zone_id = nil
 
         if query then
           if query:fetch(zone_result, "a") then
-            actual_zone_id = tonumber(zone_result.zoneId)
+            zone_id = tonumber(zone_result.zoneId)
           end
         end
 
-        -- Use actual zone or fallback
-        local zone_id = actual_zone_id or fallback_zones[m] or m
+        zone_id = zone_id or fallback_zones[m] or m
 
+        -- Get WorldMapArea boundaries for this zone for coordinate conversion
+        local bounds_sql = string.format([[
+          SELECT x_min, x_max, y_min, y_max
+          FROM WorldMapArea_%s
+          WHERE areatableID = %d
+          LIMIT 1
+        ]], expansion, zone_id)
+
+        local bounds_query = mysql:execute(bounds_sql)
+        local bounds = {}
+
+        if bounds_query and bounds_query:fetch(bounds, "a") then
+          local x_min = tonumber(bounds.x_min)
+          local x_max = tonumber(bounds.x_max)
+          local y_min = tonumber(bounds.y_min)
+          local y_max = tonumber(bounds.y_max)
+
+          if x_min and x_max and y_min and y_max then
+            -- Use GPS coordinate formula with WorldMapArea boundaries
+            local DBC_LocLeft = x_max
+            local DBC_LocRight = x_min
+            local DBC_LocTop = y_max
+            local DBC_LocBottom = y_min
+
+            local zone_x = (y - DBC_LocLeft) / ((DBC_LocRight - DBC_LocLeft) / 100)
+            local zone_y = (x - DBC_LocTop) / ((DBC_LocBottom - DBC_LocTop) / 100)
+
+            -- Clamp to reasonable range but allow some overshoot
+            zone_x = math.max(-10, math.min(110, zone_x))
+            zone_y = math.max(-10, math.min(110, zone_y))
+
+            local coord = { zone_x, zone_y, zone_id, 0 }
+            table.insert(ret, coord)
+            return ret
+          end
+        end
+
+        -- Fallback: simple coordinate conversion
         if zone_id and x and y then
-          -- Simple world to zone coordinate conversion
           local zone_x = ((x + 17066.666) / 533.33333) * 100
           local zone_y = ((y + 17066.666) / 533.33333) * 100
           zone_x = math.max(0, math.min(100, zone_x))
@@ -1023,7 +1052,7 @@ if config.expansions[expansion_to_process] then
 
             if x and y and map_id then
               -- Smart zone determination: prefer areaId, fallback to parent zone for boundaries
-              local final_zone = zone_id or area_id or 14 -- Initialize with safe default
+              local final_zone = nil
               local use_parent_boundaries = false
 
               if area_id and area_id > 0 then
@@ -1073,31 +1102,40 @@ if config.expansions[expansion_to_process] then
                 LIMIT 1
               ]])
 
+              -- Hybrid approach: use database zone but WorldMapArea boundaries for coordinates
+              local worldmap_query = mysql:execute([[
+                SELECT areatableID FROM WorldMapArea_wotlk
+                WHERE mapID = ]] .. map_id .. [[
+                  AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
+                  AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
+                ORDER BY (x_max - x_min) * (y_max - y_min) ASC
+                LIMIT 1
+              ]])
+
+              local worldmap_zone = nil
               if worldmap_query then
                 local worldmap_result = {}
                 if worldmap_query:fetch(worldmap_result, "a") then
-                  final_zone = tonumber(worldmap_result.areatableID)
-                else
-                  -- Only use database values if WorldMapArea fails
+                  worldmap_zone = tonumber(worldmap_result.areatableID)
+                end
+              end
+
+              -- Priority: database zone, but validate with WorldMapArea
               if zone_id and zone_id > 0 then
                 final_zone = zone_id
               elseif area_id and area_id > 0 then
                 final_zone = area_id
-                  end
-                end
+              elseif worldmap_zone then
+                final_zone = worldmap_zone -- Use spatial detection as fallback
               else
                 final_zone = 14 -- Final fallback
               end
 
-              -- Simple unit counting for statistics
-              total_units_processed = (total_units_processed or 0) + 1
-              if not zone_id or zone_id == 0 then
-                zone_fallback_count = (zone_fallback_count or 0) + 1
-              end
-              -- Debug key NPCs to track zone assignment
-              if id == 3139 or id == 3293 then
-                print(string.format("ZONE: NPC %d -> DB:%s FINAL:%d",
-                  id, zone_id or "nil", final_zone))
+              -- Debug: log zone usage for critical NPCs and problem cases
+              -- Debug only zone conflicts and key NPCs
+              if (worldmap_zone and worldmap_zone ~= final_zone) or id == 3139 or id == 3293 then
+                print(string.format("ZONE: NPC %d -> DB:%s WMA:%s FINAL:%d",
+                  id, zone_id or "nil", worldmap_zone or "nil", final_zone))
               end
 
               -- Convert world coordinates to zone percentage using WorldMapArea bounds
@@ -3067,10 +3105,14 @@ end
 -- АВТОМАТИЧЕСКОЕ КОПИРОВАНИЕ ФАЙЛОВ ПОСЛЕ ЭКСТРАКЦИИ
 -- ================================================================
 
--- Zone statistics (compact)
+-- Zone fallback statistics
 if zone_fallback_count and total_units_processed then
-  local success_rate = math.floor(((total_units_processed - zone_fallback_count) / total_units_processed) * 100)
-  print("Zone Stats: " .. total_units_processed .. " units, " .. zone_fallback_count .. " fallbacks (" .. success_rate .. "% DB coverage)")
+  print("================================================================")
+  print("Zone Detection Statistics:")
+  print("  Total units processed: " .. total_units_processed)
+  print("  Zone fallbacks used: " .. zone_fallback_count)
+  print("  Success rate: " .. math.floor(((total_units_processed - zone_fallback_count) / total_units_processed) * 100) .. "%")
+  print("================================================================")
 end
 
 -- Автоматически запускаем скрипт копирования файлов
