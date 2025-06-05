@@ -20,10 +20,12 @@ local FULL_EXTRACTION = false       -- true = игнорировать все л
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_ID = 176 -- securing the lines
-local QUEST_784_NPCS = {448}  -- NPCs из анализа квеста 784
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_ID = 816 -- securing the lines
+local QUEST_784_NPCS = {3193, 3110, 3231}  -- NPCs из анализа квеста 784
+local QUEST_784_ITEMS = {4891}  -- Items для тестирования (quest items, rewards)
 local QUEST_784_OBJECTS = {68}  -- Objects для тестирования (примеры)
+
 
 -- ================================================================
 -- АВТОМАТИЧЕСКАЯ НАСТРОЙКА (не трогай)
@@ -1870,7 +1872,16 @@ if config.expansions[expansion_to_process] then
     -- iterate over all items
     local item_template = {}
     local limit_clause = ITEMS_LIMIT and (' LIMIT ' .. ITEMS_LIMIT) or ''
-    local query = mysql:execute('SELECT entry, name FROM item_template ORDER BY entry ASC' .. limit_clause)
+    local where_clause = ""
+
+    -- QUEST 784 DEBUG MODE - фильтруем только нужные предметы
+    if QUEST_784_TEST then
+      local item_list = table.concat(QUEST_784_ITEMS, ",")
+      where_clause = " WHERE entry IN (" .. item_list .. ") "
+      print("🎯 QUEST 784 DEBUG: Processing only items " .. item_list)
+    end
+
+    local query = mysql:execute('SELECT entry, name FROM item_template' .. where_clause .. ' ORDER BY entry ASC' .. limit_clause)
     if query then
       while query:fetch(item_template, "a") do
       if debug("items") then break end
@@ -1907,16 +1918,16 @@ if config.expansions[expansion_to_process] then
 
         -- fill unit table
         local creature_loot_template = {}
-        local query = mysql:execute('SELECT entry, ChanceOrQuestChance FROM creature_loot_template WHERE item = ' .. entry .. ' ORDER BY entry')
+        local query = mysql:execute('SELECT Entry, Chance FROM creature_loot_template WHERE Item = ' .. entry .. ' AND Reference = 0 ORDER BY Entry')
         if query then
           while query:fetch(creature_loot_template, "a") do
             if debug("items_unit") then break end
-            local chance = math.abs(creature_loot_template.ChanceOrQuestChance) * chance
+            local chance = math.abs(creature_loot_template.Chance) * chance
             chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
 
             if chance > 0 then
               pfDB["items"][data][entry]["U"] = pfDB["items"][data][entry]["U"] or {}
-              pfDB["items"][data][entry]["U"][tonumber(creature_loot_template.entry)] = chance
+              pfDB["items"][data][entry]["U"][tonumber(creature_loot_template.Entry)] = chance
             end
           end
         end
@@ -3069,8 +3080,16 @@ if config.expansions[expansion_to_process] then
         local locales_item = {}
         local locale_code = GetLocaleCode(loc)
         local limit_clause = ITEMS_LIMIT and (' LIMIT ' .. ITEMS_LIMIT) or ''  -- Use ITEMS_LIMIT
+        local where_clause = ""
 
-        local query = mysql:execute('SELECT item_template.entry, item_template.name, item_template_locale.Name AS locale_name FROM item_template LEFT JOIN item_template_locale ON item_template_locale.ID = item_template.entry AND item_template_locale.locale = \'' .. locale_code .. '\' ORDER BY item_template.entry ASC' .. limit_clause)
+        -- QUEST 784 DEBUG MODE - фильтруем только нужные предметы
+        if QUEST_784_TEST then
+          local item_list = table.concat(QUEST_784_ITEMS, ",")
+          where_clause = " WHERE item_template.entry IN (" .. item_list .. ") "
+        end
+
+        local query_sql = 'SELECT item_template.entry, item_template.name, item_template_locale.Name AS locale_name FROM item_template LEFT JOIN item_template_locale ON item_template_locale.ID = item_template.entry AND item_template_locale.locale = \'' .. locale_code .. '\'' .. where_clause .. ' ORDER BY item_template.entry ASC' .. limit_clause
+        local query = mysql:execute(query_sql)
 
         if query then
           while query:fetch(locales_item, "a") do
