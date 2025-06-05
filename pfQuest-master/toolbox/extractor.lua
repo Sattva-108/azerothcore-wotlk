@@ -13,17 +13,17 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
-local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
 local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_ID = 835 -- securing the lines
-local QUEST_784_NPCS = {3293, 3117, 3118}  -- NPCs из анализа квеста 784
-local QUEST_784_OBJECTS = {2059, 1690, 1691}  -- Objects для тестирования (примеры)
+local QUEST_784_ID = 176 -- securing the lines
+local QUEST_784_NPCS = {448}  -- NPCs из анализа квеста 784
+local QUEST_784_OBJECTS = {68}  -- Objects для тестирования (примеры)
 
 -- ================================================================
 -- АВТОМАТИЧЕСКАЯ НАСТРОЙКА (не трогай)
@@ -765,7 +765,7 @@ function debug_statistics()
   for name, data in pairs(debugsql) do
     local count = data[2] or 0
     if count == 0 then
-      print("WARNING: \27[1m\27[31m" .. count .. "\27[0m \27[1m" .. name .. "\27[0m \27[2m-- " .. data[1] .. "\27[0m")
+--       print("WARNING: \27[1m\27[31m" .. count .. "\27[0m \27[1m" .. name .. "\27[0m \27[2m-- " .. data[1] .. "\27[0m")
     end
     debugsql[name][2] = nil
   end
@@ -2545,7 +2545,7 @@ if config.expansions[expansion_to_process] then
     if core == "acore" then
       -- For AzerothCore, use loaded DBC tables
       local minimap_size = {}
-      local query = mysql:execute('SELECT * FROM WorldMapArea_'..expansion..' ORDER BY areatableID ASC')
+      local query = mysql:execute('SELECT * FROM WorldMapArea_wotlk ORDER BY areatableID ASC')
       if query then
         while query:fetch(minimap_size, "a") do
           if debug("minimap") then break end
@@ -2557,10 +2557,20 @@ if config.expansions[expansion_to_process] then
           local x_max = minimap_size.x_max
           local y_max = minimap_size.y_max
 
-          local x = -1 * x_min + x_max
-          local y = -1 * y_min + y_max
+            local world_y_bottom = tonumber(minimap_size.x_min)
+            local world_x_left = tonumber(minimap_size.y_min)
+            local world_y_top = tonumber(minimap_size.x_max)
+            local world_x_right = tonumber(minimap_size.y_max)
 
-          pfDB["minimap"..exp][tonumber(areaID)] = { tonumber(y+.0), tonumber(x+.0) }
+            -- Используем math.abs для гарантии положительных размеров
+            local calculated_width = math.abs(world_x_right - world_x_left)
+            local calculated_height = math.abs(world_y_top - world_y_bottom)
+
+            -- Проверка на нулевые размеры, чтобы избежать деления на ноль где-либо дальше
+            if calculated_width == 0 then calculated_width = 1 end -- Минимальная ширина
+            if calculated_height == 0 then calculated_height = 1 end -- Минимальная высота
+
+            pfDB["minimap"..exp][tonumber(areaID)] = { calculated_height, calculated_width }
         end
       else
         print("  Warning: Failed to query minimap from DBC tables - run load_dbc.lua first")
