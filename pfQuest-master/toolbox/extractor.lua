@@ -13,8 +13,8 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
-local OTHER_LIMIT = 150             -- Лимит для всего остального
+local FOCUS_LIMIT = 10           -- Лимит для того что тестируем
+local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
@@ -2073,6 +2073,19 @@ if config.expansions[expansion_to_process] then
     return result
   end
 
+  -- Deep copy function for quest data
+  local function deepCopy(original)
+    local copy = {}
+    for k, v in pairs(original) do
+      if type(v) == "table" then
+        copy[k] = deepCopy(v)
+      else
+        copy[k] = v
+      end
+    end
+    return copy
+  end
+
   do -- quests
     print("- loading quests...")
 
@@ -2090,7 +2103,7 @@ if config.expansions[expansion_to_process] then
     local where_clause = ""
     local limit_clause = ""
     if QUEST_784_TEST then
-      where_clause = " WHERE " .. quest_pk_column .. " = " .. QUEST_784_ID .. " "
+      where_clause = " WHERE qt." .. quest_pk_column .. " = " .. QUEST_784_ID .. " "
       print("🎯 QUEST 784 DEBUG: Processing only quest " .. QUEST_784_ID)
     else
       limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
@@ -2099,26 +2112,57 @@ if config.expansions[expansion_to_process] then
     local query_string = 'SELECT qt.*, qta.AllowableClasses, qta.PrevQuestID as AddonPrevQuestID, qta.NextQuestID as AddonNextQuestID, qta.ExclusiveGroup as AddonExclusiveGroup FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID' .. where_clause .. ' ORDER BY qt.' .. quest_pk_column .. limit_clause
 
     -- Count total quests first for progress
-    local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template' .. where_clause .. limit_clause)
+    local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID' .. where_clause .. limit_clause)
     local count_result = {}
     count_query:fetch(count_result, "a")
     local total_quests = tonumber(count_result.total) or 0
     print("  Processing " .. total_quests .. " quests...")
 
-    local query = mysql:execute(query_string) -- Modified for AzerothCore
+    -- PASS 1: Collect all quest data and build chain relationship maps
+    print("  Pass 1: Building quest chain maps...")
+    local all_fetched_quests = {}
+    local reward_next_leads_to_prev = {}
+    local addon_next_leads_to_prev = {}
+    local quest_has_addon_prev = {}
+
+    local query = mysql:execute(query_string)
     if query then
-      local processed = 0
       while query:fetch(quest_template, "a") do
+        local current_id = tonumber(quest_template[quest_pk_column])
+        local reward_next = tonumber(quest_template.RewardNextQuest)
+        local addon_next = tonumber(quest_template.AddonNextQuestID)
+        local addon_prev = tonumber(quest_template.AddonPrevQuestID)
+
+        -- Store quest data for pass 2
+        table.insert(all_fetched_quests, deepCopy(quest_template))
+
+        -- Build chain relationship maps
+        if reward_next and reward_next > 0 then
+          reward_next_leads_to_prev[reward_next] = reward_next_leads_to_prev[reward_next] or {}
+          table.insert(reward_next_leads_to_prev[reward_next], current_id)
+        end
+        if addon_next and addon_next > 0 then
+          addon_next_leads_to_prev[addon_next] = addon_next_leads_to_prev[addon_next] or {}
+          table.insert(addon_next_leads_to_prev[addon_next], current_id)
+        end
+        if addon_prev and addon_prev > 0 then
+          quest_has_addon_prev[current_id] = addon_prev
+        end
+      end
+    end
+
+    -- PASS 2: Process each quest and populate pre/chain fields
+    print("  Pass 2: Processing quests with chain data...")
+    for i, current_quest_data in ipairs(all_fetched_quests) do
       if debug("quests") then break end
 
-        processed = processed + 1
-        -- Show progress every 1000 quests
-        if processed % 1000 == 0 then
-          print("  Processed " .. processed .. "/" .. total_quests .. " quests (" .. math.floor(processed/total_quests*100) .. "%)")
-        end
+      -- Show progress every 1000 quests
+      if i % 1000 == 0 then
+        print("  Processed " .. i .. "/" .. total_quests .. " quests (" .. math.floor(i/total_quests*100) .. "%)")
+      end
 
-        local entry = tonumber(quest_template[quest_pk_column]) -- Modified for AzerothCore
-        local quest_id = quest_template[quest_pk_column] or quest_template.entry -- For SQL queries
+      local entry = tonumber(current_quest_data[quest_pk_column])
+      local quest_id = current_quest_data[quest_pk_column] or current_quest_data.entry
         local minlevel = tonumber(quest_template.MinLevel)
       local questlevel = tonumber(quest_template.QuestLevel)
       local class_column = C.RequiredClasses or "RequiredClasses" -- Default if not in C
@@ -3223,7 +3267,7 @@ if config.expansions[expansion_to_process] then
   debug_statistics()
 else
   print("Error: Expansion '" .. expansion_to_process .. "' not found in config.expansions")
-end
+end 
 
 -- === DEBUG/ПАТЧ: Явная генерация локализованного zones.lua ===
 for loc in pairs(locales) do
