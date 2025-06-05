@@ -13,7 +13,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 1000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -1279,76 +1279,94 @@ if config.expansions[expansion_to_process] then
     end
   end
 
-  do -- zones (NEW LOGIC - EXECUTES BEFORE UNITS)
-    print("- loading zones (new logic)...")
+  do -- zones
+      print("- loading zones (new logic)...")
+      pfDB["zones"] = pfDB["zones"] or {}
+      pfDB["zones"][data] = {} -- Очищаем или создаем таблицу для данных
 
-    pfDB["zones"] = pfDB["zones"] or {}
-    pfDB["zones"]["data"] = {}
+      local zones_query_sql = [[
+  SELECT
+      at.ID AS SourceAreaID,
+      at.name_loc0 AS SourceAreaName,
+      at.continentID,
+      COALESCE(parent_map_at.ID, at.ID) AS ParentZoneIdForMapTexture,
+      parent_map_at.name_loc0 AS ParentZoneName,
+      wmo.HitRectLeft AS WMO_HR_Left,
+      wmo.HitRectTop AS WMO_HR_Top,
+      wmo.HitRectRight AS WMO_HR_Right,
+      wmo.HitRectBottom AS WMO_HR_Bottom,
+      (CASE WHEN wmo.areaID IS NOT NULL AND wmo.HitRectLeft IS NOT NULL AND wmo.HitRectRight IS NOT NULL AND wmo.HitRectTop IS NOT NULL AND wmo.HitRectBottom IS NOT NULL THEN 1 ELSE 0 END) AS IsRealOverlay
+  FROM
+      AreaTable_wotlk at
+  LEFT JOIN
+      WorldMapOverlay_wotlk wmo ON at.ID = wmo.areaID
+  LEFT JOIN
+      WorldMapArea_wotlk wma_parent_for_overlay ON wmo.zoneID = wma_parent_for_overlay.zoneID
+  LEFT JOIN
+      AreaTable_wotlk parent_map_at ON wma_parent_for_overlay.areatableID = parent_map_at.ID AND parent_map_at.continentID = at.continentID
+  WHERE
+      at.ID IN (SELECT DISTINCT areaId FROM creature WHERE areaId != 0 UNION SELECT DISTINCT zoneId FROM creature WHERE zoneId !=0)
+      AND at.ID != 0
+  ORDER BY
+      at.ID
+  ]]
 
-    -- Generate zones data using WorldMapArea + AreaTable + canvas calculation
-    local table_suffix = "wotlk" -- Use wotlk tables, not vanilla
-    local zones_query = mysql:execute([[
-      SELECT
-        at.id as area_id,
-        at.parentAreaID as parent_area_id,
-        at.name_loc0 as area_name,
-        wma.mapID as map_id,
-        wma.x_min, wma.x_max, wma.y_min, wma.y_max
-      FROM AreaTable_]] .. table_suffix .. [[ at
-      LEFT JOIN WorldMapArea_]] .. table_suffix .. [[ wma ON at.id = wma.areatableID
-      WHERE at.id > 0
-      ORDER BY at.id
-    ]])
+      local query_cursor = mysql:execute(zones_query_sql)
+      if not query_cursor then
+          print("ERROR: Failed to execute SQL query for zones!")
+      else
+          local row = {}
+          while query_cursor:fetch(row, "a") do
+              local sourceAreaID = tonumber(row.SourceAreaID)
+              local parentZoneIdForMapTexture = tonumber(row.ParentZoneIdForMapTexture)
+              local isRealOverlay = (tonumber(row.IsRealOverlay) == 1)
 
-    if zones_query then
-      local zones_processed = 0
-      local zone_data = {}
-      while zones_query:fetch(zone_data, "a") do
-        if debug("zones_generation") then break end
-        zones_processed = zones_processed + 1
+              local hrLeft, hrTop, hrRight, hrBottom
 
-        local area_id = tonumber(zone_data.area_id)
-        local parent_area_id = tonumber(zone_data.parent_area_id) or 0
-        local map_id = tonumber(zone_data.map_id) or 0
+              if isRealOverlay then
+                  hrLeft = tonumber(row.WMO_HR_Left)
+                  hrTop = tonumber(row.WMO_HR_Top)
+                  hrRight = tonumber(row.WMO_HR_Right)
+                  hrBottom = tonumber(row.WMO_HR_Bottom)
+              else -- Основная зона или подзона без валидного оверлея в WMO
+                  parentZoneIdForMapTexture = sourceAreaID -- Использует свою карту
+                  hrLeft = 0
+                  hrTop = 0
+                  hrRight = CANVAS_WIDTH
+                  hrBottom = CANVAS_HEIGHT
+              end
 
-        if area_id then
-          -- For parent zones (major zones), use their map boundaries
-          if parent_area_id == 0 and map_id > 0 then
-            -- This is a main zone with WorldMapArea boundaries
-            pfDB["zones"]["data"][area_id] = { map_id, 0, 0, 100, 100 }
-          elseif parent_area_id > 0 then
-            -- This is a sub-zone, calculate percentage coordinates within parent
-            local x_min = tonumber(zone_data.x_min) or 0
-            local x_max = tonumber(zone_data.x_max) or 100
-            local y_min = tonumber(zone_data.y_min) or 0
-            local y_max = tonumber(zone_data.y_max) or 100
+              local pixelWidth = hrRight - hrLeft
+              local pixelHeight = hrBottom - hrTop
 
-            -- Calculate percentage coordinates within parent zone (using canvas approach)
-            local width = x_max - x_min
-            local height = y_max - y_min
+              if pixelWidth <= 0 then pixelWidth = CANVAS_WIDTH; hrLeft = 0; hrRight = CANVAS_WIDTH; end
+              if pixelHeight <= 0 then pixelHeight = CANVAS_HEIGHT; hrTop = 0; hrBottom = CANVAS_HEIGHT; end
 
-            -- Convert to percentage coordinates (0-100 scale)
-            local y1_percent = math.max(0, math.min(100, (y_min / CANVAS_HEIGHT) * 100))
-            local x1_percent = math.max(0, math.min(100, (x_min / CANVAS_WIDTH) * 100))
-            local y2_percent = math.max(0, math.min(100, (y_max / CANVAS_HEIGHT) * 100))
-            local x2_percent = math.max(0, math.min(100, (x_max / CANVAS_WIDTH) * 100))
+              local pixelCX = hrLeft + pixelWidth / 2
+              local pixelCY = hrTop + pixelHeight / 2
 
-            -- Store in zones.lua format: [areaId] = { parentZoneId, y1, x1, y2, x2 }
-            pfDB["zones"]["data"][area_id] = {
-              parent_area_id,
-              round(y1_percent, 2),
-              round(x1_percent, 2),
-              round(y2_percent, 2),
-              round(x2_percent, 2)
-            }
+              local width_pct = (pixelWidth / CANVAS_WIDTH) * 100
+              local height_pct = (pixelHeight / CANVAS_HEIGHT) * 100
+              local centerX_pct = (pixelCX / CANVAS_WIDTH) * 100
+              local centerY_pct = (pixelCY / CANVAS_HEIGHT) * 100
+
+              width_pct = math.max(1, math.min(100, width_pct))
+              height_pct = math.max(1, math.min(100, height_pct))
+              centerX_pct = math.max(0, math.min(100, centerX_pct))
+              centerY_pct = math.max(0, math.min(100, centerY_pct))
+
+              pfDB["zones"][data][sourceAreaID] = {
+                  parentZoneIdForMapTexture,
+                  round(width_pct, 2),
+                  round(height_pct, 2),
+                  round(centerX_pct, 2),
+                  round(centerY_pct, 2)
+              }
           end
-        end
+          query_cursor:close()
+          print("  SUCCESS: zones.lua data generated with new logic. Total zones: " .. TableCount(pfDB["zones"][data]))
       end
-      print("  SUCCESS: zones.lua data generated with new logic. Total zones: " .. zones_processed)
-    else
-      print("  WARNING: Failed to execute zones generation query")
     end
-  end
 
   do -- units
     print("- loading units...")
@@ -2343,94 +2361,7 @@ if config.expansions[expansion_to_process] then
     end
   end
 
-  do -- zones
-    print("- loading zones (new logic)...")
-    pfDB["zones"] = pfDB["zones"] or {}
-    pfDB["zones"][data] = {} -- Очищаем или создаем таблицу для данных
 
-    local zones_query_sql = [[
-SELECT
-    at.ID AS SourceAreaID,
-    at.name_loc0 AS SourceAreaName,
-    at.continentID,
-    COALESCE(parent_map_at.ID, at.ID) AS ParentZoneIdForMapTexture,
-    parent_map_at.name_loc0 AS ParentZoneName,
-    wmo.HitRectLeft AS WMO_HR_Left,
-    wmo.HitRectTop AS WMO_HR_Top,
-    wmo.HitRectRight AS WMO_HR_Right,
-    wmo.HitRectBottom AS WMO_HR_Bottom,
-    (CASE WHEN wmo.areaID IS NOT NULL AND wmo.HitRectLeft IS NOT NULL AND wmo.HitRectRight IS NOT NULL AND wmo.HitRectTop IS NOT NULL AND wmo.HitRectBottom IS NOT NULL THEN 1 ELSE 0 END) AS IsRealOverlay
-FROM
-    AreaTable_wotlk at
-LEFT JOIN
-    WorldMapOverlay_wotlk wmo ON at.ID = wmo.areaID
-LEFT JOIN
-    WorldMapArea_wotlk wma_parent_for_overlay ON wmo.zoneID = wma_parent_for_overlay.zoneID
-LEFT JOIN
-    AreaTable_wotlk parent_map_at ON wma_parent_for_overlay.areatableID = parent_map_at.ID AND parent_map_at.continentID = at.continentID
-WHERE
-    at.ID IN (SELECT DISTINCT areaId FROM creature WHERE areaId != 0 UNION SELECT DISTINCT zoneId FROM creature WHERE zoneId !=0)
-    AND at.ID != 0
-ORDER BY
-    at.ID
-]]
-
-    local query_cursor = mysql:execute(zones_query_sql)
-    if not query_cursor then
-        print("ERROR: Failed to execute SQL query for zones!")
-    else
-        local row = {}
-        while query_cursor:fetch(row, "a") do
-            local sourceAreaID = tonumber(row.SourceAreaID)
-            local parentZoneIdForMapTexture = tonumber(row.ParentZoneIdForMapTexture)
-            local isRealOverlay = (tonumber(row.IsRealOverlay) == 1)
-
-            local hrLeft, hrTop, hrRight, hrBottom
-
-            if isRealOverlay then
-                hrLeft = tonumber(row.WMO_HR_Left)
-                hrTop = tonumber(row.WMO_HR_Top)
-                hrRight = tonumber(row.WMO_HR_Right)
-                hrBottom = tonumber(row.WMO_HR_Bottom)
-            else -- Основная зона или подзона без валидного оверлея в WMO
-                parentZoneIdForMapTexture = sourceAreaID -- Использует свою карту
-                hrLeft = 0
-                hrTop = 0
-                hrRight = CANVAS_WIDTH
-                hrBottom = CANVAS_HEIGHT
-            end
-
-            local pixelWidth = hrRight - hrLeft
-            local pixelHeight = hrBottom - hrTop
-
-            if pixelWidth <= 0 then pixelWidth = CANVAS_WIDTH; hrLeft = 0; hrRight = CANVAS_WIDTH; end
-            if pixelHeight <= 0 then pixelHeight = CANVAS_HEIGHT; hrTop = 0; hrBottom = CANVAS_HEIGHT; end
-
-            local pixelCX = hrLeft + pixelWidth / 2
-            local pixelCY = hrTop + pixelHeight / 2
-
-            local width_pct = (pixelWidth / CANVAS_WIDTH) * 100
-            local height_pct = (pixelHeight / CANVAS_HEIGHT) * 100
-            local centerX_pct = (pixelCX / CANVAS_WIDTH) * 100
-            local centerY_pct = (pixelCY / CANVAS_HEIGHT) * 100
-
-            width_pct = math.max(1, math.min(100, width_pct))
-            height_pct = math.max(1, math.min(100, height_pct))
-            centerX_pct = math.max(0, math.min(100, centerX_pct))
-            centerY_pct = math.max(0, math.min(100, centerY_pct))
-
-            pfDB["zones"][data][sourceAreaID] = {
-                parentZoneIdForMapTexture,
-                round(width_pct, 2),
-                round(height_pct, 2),
-                round(centerX_pct, 2),
-                round(centerY_pct, 2)
-            }
-        end
-        query_cursor:close()
-        print("  SUCCESS: zones.lua data generated with new logic. Total zones: " .. TableCount(pfDB["zones"][data]))
-    end
-  end
 
   do -- minimap
     print("- loading minimap...")
