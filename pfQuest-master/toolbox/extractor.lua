@@ -13,9 +13,9 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
-local OTHER_LIMIT = 15             -- Лимит для всего остального
-local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
+local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
+local OTHER_LIMIT = 150             -- Лимит для всего остального
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить

@@ -500,7 +500,7 @@ function TableCount(t)
     return count
 end
 
-print(STAR .. " Enhanced pfQuest debug loaded! Use /pftest, /pfq <questID>, and /pfr [rareID]")
+ print(STAR .. " Enhanced pfQuest debug loaded! Use /pftest, /pfq <questID>, and /pfr [rareID]")
 
 -- Register slash command for rares testing
 SLASH_PFRARETEST1 = "/pfr"
