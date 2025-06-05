@@ -23,6 +23,7 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_ID = 835 -- securing the lines
 local QUEST_784_NPCS = {3293, 3117, 3118}  -- NPCs из анализа квеста 784
+local QUEST_784_OBJECTS = {2059, 1690, 1691}  -- Objects для тестирования (примеры)
 
 -- ================================================================
 -- АВТОМАТИЧЕСКАЯ НАСТРОЙКА (не трогай)
@@ -106,6 +107,7 @@ print("pfQuest Extraction Settings:")
 if QUEST_784_TEST then
   print("   Mode: QUEST 784 DEBUG - Quest ID " .. QUEST_784_ID)
   print("   NPCs: " .. table.concat(QUEST_784_NPCS, ", "))
+  print("   Objects: " .. table.concat(QUEST_784_OBJECTS, ", "))
 elseif FULL_EXTRACTION then
   print("   Mode: FULL EXTRACTION")
 else
@@ -1748,8 +1750,19 @@ if config.expansions[expansion_to_process] then
 
     -- iterate over all objects (LIMITED FOR TESTING)
     local gameobject_template = {}
-    local limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. OBJECTS_LIMIT) or ''
-    local query = mysql:execute('SELECT * FROM gameobject_template ORDER BY gameobject_template.entry ASC' .. limit_clause)
+    local limit_clause = ""
+    local where_clause = ""
+
+    -- QUEST 784 DEBUG MODE - фильтруем только нужные объекты
+    if QUEST_784_TEST then
+      local object_list = table.concat(QUEST_784_OBJECTS, ",")
+      where_clause = " WHERE entry IN (" .. object_list .. ") "
+      print("🎯 QUEST 784 DEBUG: Processing only Objects " .. object_list)
+    else
+      limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. OBJECTS_LIMIT) or ''
+    end
+
+    local query = mysql:execute('SELECT * FROM gameobject_template' .. where_clause .. ' ORDER BY gameobject_template.entry ASC' .. limit_clause)
     if query then
       while query:fetch(gameobject_template, "a") do
       if debug("objects") then break end
