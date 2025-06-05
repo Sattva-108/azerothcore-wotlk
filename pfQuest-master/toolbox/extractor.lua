@@ -13,7 +13,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 10           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -1992,45 +1992,71 @@ if config.expansions[expansion_to_process] then
     -- iterate over all reference loots (LIMITED FOR TESTING)
     local reference_loot_template = {}
     local limit_clause = REFLOOT_LIMIT and (' LIMIT ' .. REFLOOT_LIMIT) or ''
-    local query = mysql:execute('SELECT entry, ChanceOrQuestChance FROM reference_loot_template ORDER BY entry' .. limit_clause)
+    local query = mysql:execute('SELECT Entry, Item, Chance FROM reference_loot_template ORDER BY Entry' .. limit_clause)
     if query then
       while query:fetch(reference_loot_template, "a") do
         if debug("refloot") then break end
 
-        local entry = tonumber(reference_loot_template.entry)
+        local entry = tonumber(reference_loot_template.Entry)
+        local item = tonumber(reference_loot_template.Item)
+        local chance = tonumber(reference_loot_template.Chance)
 
-        -- fill unit table
-        local creature_loot_template = {}
-        local count = 0
-        local query = mysql:execute([[
-          SELECT entry FROM creature_loot_template
-          WHERE creature_loot_template.mincountOrRef < 0
-          AND item = ]] .. entry .. [[ ORDER BY entry
-        ]])
-        if query then
-          while query:fetch(creature_loot_template, "a") do
-            if debug("refloot_unit") then break end
-            pfDB["refloot"][data][entry] = pfDB["refloot"][data][entry] or {}
-            pfDB["refloot"][data][entry]["U"] = pfDB["refloot"][data][entry]["U"] or {}
-            pfDB["refloot"][data][entry]["U"][tonumber(creature_loot_template.entry)] = 1
+        if item and item > 0 then
+          local chance_value = (chance and chance < 0.01) and round(chance, 5) or round(chance, 2)
+          pfDB["refloot"][data][entry] = pfDB["refloot"][data][entry] or {}
+          pfDB["refloot"][data][entry][item] = chance_value
+        end
+      end
+    end
+
+    -- Build reference usage maps
+    local ref_to_creatures = {}
+    local ref_to_objects = {}
+
+    -- Map references to creatures
+    local creature_ref_query = mysql:execute('SELECT Reference as ref_id, Entry as creature_id FROM creature_loot_template WHERE Reference > 0')
+    if creature_ref_query then
+      while creature_ref_query:fetch(reference_loot_template, "a") do
+        if debug("refloot_unit") then break end
+        local ref_id = tonumber(reference_loot_template.ref_id)
+        local creature_id = tonumber(reference_loot_template.creature_id)
+
+        if ref_id and creature_id then
+          ref_to_creatures[ref_id] = ref_to_creatures[ref_id] or {}
+          ref_to_creatures[ref_id][creature_id] = 1
+        end
+      end
+    end
+
+    -- Map references to gameobjects
+    local object_ref_query = mysql:execute('SELECT Reference as ref_id, Entry as object_id FROM gameobject_loot_template WHERE Reference > 0')
+    if object_ref_query then
+      while object_ref_query:fetch(reference_loot_template, "a") do
+        if debug("refloot_object") then break end
+        local ref_id = tonumber(reference_loot_template.ref_id)
+        local object_id = tonumber(reference_loot_template.object_id)
+
+        if ref_id and object_id then
+          ref_to_objects[ref_id] = ref_to_objects[ref_id] or {}
+          ref_to_objects[ref_id][object_id] = 1
+        end
+      end
+    end
+
+    -- Add creature/object mappings to refloot entries
+    for ref_entry, items in pairs(pfDB["refloot"][data]) do
+      if type(items) == "table" then
+        if ref_to_creatures[ref_entry] then
+          pfDB["refloot"][data][ref_entry]["U"] = pfDB["refloot"][data][ref_entry]["U"] or {}
+          for creature_id, _ in pairs(ref_to_creatures[ref_entry]) do
+            pfDB["refloot"][data][ref_entry]["U"][creature_id] = 1
           end
         end
 
-        -- fill object table
-        local gameobject_template = {}
-        local count = 0
-        local query = mysql:execute([[
-          SELECT gameobject_template.entry FROM gameobject_template, gameobject_loot_template
-          WHERE gameobject_template.data1 = gameobject_loot_template.entry
-          AND gameobject_loot_template.mincountOrRef < 0
-          AND gameobject_loot_template.item = ]] .. entry .. [[ ORDER BY gameobject_template.entry ;
-        ]])
-        if query then
-          while query:fetch(gameobject_template, "a") do
-            if debug("refloot_object") then break end
-            pfDB["refloot"][data][entry] = pfDB["refloot"][data][entry] or {}
-            pfDB["refloot"][data][entry]["O"] = pfDB["refloot"][data][entry]["O"] or {}
-            pfDB["refloot"][data][entry]["O"][tonumber(gameobject_template.entry)] = 1
+        if ref_to_objects[ref_entry] then
+          pfDB["refloot"][data][ref_entry]["O"] = pfDB["refloot"][data][ref_entry]["O"] or {}
+          for object_id, _ in pairs(ref_to_objects[ref_entry]) do
+            pfDB["refloot"][data][ref_entry]["O"][object_id] = 1
           end
         end
       end
@@ -2244,14 +2270,50 @@ if config.expansions[expansion_to_process] then
       pfDB["quests"][data][entry]["lvl"] = questlevel ~= 0 and questlevel
 
       -- Store AllowableClasses as number (pfQuest expects bit.band operations)
-      local allowable_classes_mask = tonumber(quest_template.AllowableClasses) or 0
+      local allowable_classes_mask = tonumber(current_quest_data.AllowableClasses) or 0
+      local allowable_races_mask = tonumber(current_quest_data.AllowableRaces) or 0
+
       if allowable_classes_mask ~= 0 then
         pfDB["quests"][data][entry]["class"] = allowable_classes_mask
       end
 
-      pfDB["quests"][data][entry]["race"] = race ~= 0 and race
+      pfDB["quests"][data][entry]["race"] = allowable_races_mask ~= 0 and allowable_races_mask or race
       pfDB["quests"][data][entry]["skill"] = skill ~= 0 and skill
       pfDB["quests"][data][entry]["event"] = event ~= 0 and event
+
+      -- Build pre-quest relationships
+      local pre_quests_list = {}
+      if quest_has_addon_prev[entry] then
+        table.insert(pre_quests_list, quest_has_addon_prev[entry])
+      end
+      if reward_next_leads_to_prev[entry] then
+        for _, prev_id in ipairs(reward_next_leads_to_prev[entry]) do
+          table.insert(pre_quests_list, prev_id)
+        end
+      end
+      if addon_next_leads_to_prev[entry] then
+        for _, prev_id in ipairs(addon_next_leads_to_prev[entry]) do
+          table.insert(pre_quests_list, prev_id)
+        end
+      end
+
+      -- Build chain (next quest) relationships
+      local chain_quests_list = {}
+      local reward_next_val = tonumber(current_quest_data.RewardNextQuest)
+      local addon_next_val = tonumber(current_quest_data.AddonNextQuestID)
+      if reward_next_val and reward_next_val > 0 then
+        table.insert(chain_quests_list, reward_next_val)
+      end
+      if addon_next_val and addon_next_val > 0 then
+        table.insert(chain_quests_list, addon_next_val)
+      end
+
+      if #pre_quests_list > 0 then
+        pfDB["quests"][data][entry]["pre"] = remove_duplicates_from_table(pre_quests_list)
+      end
+      if #chain_quests_list > 0 then
+        pfDB["quests"][data][entry]["chain"] = remove_duplicates_from_table(chain_quests_list)
+      end
 
       -- quest objectives
       local units, objects, items, itemreq, areatrigger, zones, pre = {}, {}, {}, {}, {}, {}, {}
@@ -2892,7 +2954,14 @@ if config.expansions[expansion_to_process] then
       local creature_loc_pk_col = "entry"
       local creature_template_pk_col = "entry"
 
-      local query = mysql:execute('SELECT *, creature_template.'..creature_template_pk_col..' AS _entry FROM creature_template LEFT JOIN ' .. (C.locales_creature or "creature_template_locale") .. ' ON ' .. (C.locales_creature or "creature_template_locale") .. '.' .. creature_loc_pk_col .. ' = creature_template.' .. creature_template_pk_col .. ' GROUP BY creature_template.' .. creature_template_pk_col .. ' ORDER BY creature_template.' .. creature_template_pk_col .. ' ASC')
+      local where_clause = ""
+      -- QUEST 784 DEBUG MODE - фильтруем только нужных NPC
+      if QUEST_784_TEST then
+        local npc_list = table.concat(QUEST_784_NPCS, ",")
+        where_clause = " WHERE creature_template." .. creature_template_pk_col .. " IN (" .. npc_list .. ") "
+      end
+
+      local query = mysql:execute('SELECT *, creature_template.'..creature_template_pk_col..' AS _entry FROM creature_template LEFT JOIN ' .. (C.locales_creature or "creature_template_locale") .. ' ON ' .. (C.locales_creature or "creature_template_locale") .. '.' .. creature_loc_pk_col .. ' = creature_template.' .. creature_template_pk_col .. where_clause .. ' GROUP BY creature_template.' .. creature_template_pk_col .. ' ORDER BY creature_template.' .. creature_template_pk_col .. ' ASC')
 
       if query then
         while query:fetch(locales_creature, "a") do
@@ -2958,7 +3027,14 @@ if config.expansions[expansion_to_process] then
       local go_loc_pk_col = "entry"
       local go_template_pk_col = "entry"
 
-      local query = mysql:execute('SELECT *, gameobject_template.'..go_template_pk_col..' AS _entry FROM gameobject_template LEFT JOIN ' .. (C.locales_gameobject or "gameobject_template_locale") .. ' ON ' .. (C.locales_gameobject or "gameobject_template_locale") .. '.' .. go_loc_pk_col .. ' = gameobject_template.' .. go_template_pk_col .. ' GROUP BY gameobject_template.' .. go_template_pk_col .. ' ORDER BY gameobject_template.' .. go_template_pk_col .. ' ASC')
+      local where_clause = ""
+      -- QUEST 784 DEBUG MODE - фильтруем только нужные объекты
+      if QUEST_784_TEST then
+        local object_list = table.concat(QUEST_784_OBJECTS, ",")
+        where_clause = " WHERE gameobject_template." .. go_template_pk_col .. " IN (" .. object_list .. ") "
+      end
+
+      local query = mysql:execute('SELECT *, gameobject_template.'..go_template_pk_col..' AS _entry FROM gameobject_template LEFT JOIN ' .. (C.locales_gameobject or "gameobject_template_locale") .. ' ON ' .. (C.locales_gameobject or "gameobject_template_locale") .. '.' .. go_loc_pk_col .. ' = gameobject_template.' .. go_template_pk_col .. where_clause .. ' GROUP BY gameobject_template.' .. go_template_pk_col .. ' ORDER BY gameobject_template.' .. go_template_pk_col .. ' ASC')
 
       if query then
         while query:fetch(locales_gameobject, "a") do
