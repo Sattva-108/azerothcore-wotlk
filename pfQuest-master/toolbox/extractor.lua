@@ -13,9 +13,9 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
 local OTHER_LIMIT = 150             -- Лимит для всего остального
-local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -2037,6 +2037,42 @@ if config.expansions[expansion_to_process] then
     end
   end
 
+  -- ================================================================
+  -- CLASS AND QUEST CHAIN HELPERS
+  -- ================================================================
+
+  -- Class masks for AllowableClasses field (WoW class bit flags)
+  local CLASS_MASKS = {
+    [1] = 1,     -- Warrior
+    [2] = 2,     -- Paladin
+    [3] = 4,     -- Hunter
+    [4] = 8,     -- Rogue
+    [5] = 16,    -- Priest
+    [7] = 64,    -- Shaman
+    [8] = 128,   -- Mage
+    [9] = 256,   -- Warlock
+    [11] = 1024, -- Druid
+  }
+
+  -- Check if bit is set using arithmetic (no bitop needed)
+  local function isBitSet(N, B)
+    return N % (B + B) >= B
+  end
+
+  -- Remove duplicates from table
+  local function remove_duplicates_from_table(input_table)
+    if not input_table then return {} end
+    local seen = {}
+    local result = {}
+    for _, value in ipairs(input_table) do
+      if not seen[value] then
+        table.insert(result, value)
+        seen[value] = true
+      end
+    end
+    return result
+  end
+
   do -- quests
     print("- loading quests...")
 
@@ -2060,7 +2096,7 @@ if config.expansions[expansion_to_process] then
       limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
     end
 
-    local query_string = 'SELECT * FROM quest_template' .. where_clause .. ' ORDER BY quest_template.' .. quest_pk_column .. limit_clause
+    local query_string = 'SELECT qt.*, qta.AllowableClasses, qta.PrevQuestID as AddonPrevQuestID, qta.NextQuestID as AddonNextQuestID, qta.ExclusiveGroup as AddonExclusiveGroup FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID' .. where_clause .. ' ORDER BY qt.' .. quest_pk_column .. limit_clause
 
     -- Count total quests first for progress
     local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template' .. where_clause .. limit_clause)
@@ -2162,7 +2198,13 @@ if config.expansions[expansion_to_process] then
       pfDB["quests"][data][entry]["min"] = minlevel ~= 0 and minlevel
       pfDB["quests"][data][entry]["skill"] = skill ~= 0 and skill
       pfDB["quests"][data][entry]["lvl"] = questlevel ~= 0 and questlevel
-      pfDB["quests"][data][entry]["class"] = class ~= 0 and class
+
+      -- Store AllowableClasses as number (pfQuest expects bit.band operations)
+      local allowable_classes_mask = tonumber(quest_template.AllowableClasses) or 0
+      if allowable_classes_mask ~= 0 then
+        pfDB["quests"][data][entry]["class"] = allowable_classes_mask
+      end
+
       pfDB["quests"][data][entry]["race"] = race ~= 0 and race
       pfDB["quests"][data][entry]["skill"] = skill ~= 0 and skill
       pfDB["quests"][data][entry]["event"] = event ~= 0 and event
