@@ -13,14 +13,14 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 1000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
 local QUEST_784_ID = 835 -- securing the lines
 local QUEST_784_NPCS = {3293, 3117, 3118}  -- NPCs из анализа квеста 784
 
@@ -186,6 +186,10 @@ function removedupes(coords)
 
   return result
 end
+
+-- Canvas constants for zone coordinate calculation
+local CANVAS_WIDTH = 1002
+local CANVAS_HEIGHT = 668
 
 -- Round function for floating point numbers
 function round(num, decimals)
@@ -1063,9 +1067,6 @@ if config.expansions[expansion_to_process] then
       local ret = {}
 
       if core == "acore" then
-        -- DISABLED HARDCODED ZONE MAPPING - now use database zoneId values!
-        -- We have proper zoneId values in creature table from our SQL fixes
-
         -- For AzerothCore, get coordinates from creature table
         local creature_coords = {}
         local query = mysql:execute([[
@@ -1085,138 +1086,24 @@ if config.expansions[expansion_to_process] then
             local area_id = tonumber(creature_coords.areaId)
 
             if x and y and map_id then
-              -- Smart zone determination: prefer areaId, fallback to parent zone for boundaries
-              local final_zone = nil
-              local use_parent_boundaries = false
-
-              if area_id and area_id > 0 then
-                -- First try to use areaId (subzone like Razor Hill)
-                final_zone = area_id
-
-                -- Check if subzone has boundaries in WorldMapArea_wotlk
-                local subzone_check = mysql:execute([[
-                  SELECT areatableID FROM WorldMapArea_wotlk
-                  WHERE areatableID = ]] .. area_id .. [[
-                  LIMIT 1
-                ]])
-
-                if subzone_check then
-                  local subzone_result = {}
-                  if not subzone_check:fetch(subzone_result, "a") then
-                    -- Subzone has no boundaries, find parent zone
-                    local parent_query = mysql:execute([[
-                      SELECT zoneID FROM AreaTable_wotlk
-                      WHERE id = ]] .. area_id .. [[
-                      LIMIT 1
-                    ]])
-                    if parent_query then
-                      local parent_result = {}
-                      if parent_query:fetch(parent_result, "a") then
-                        local parent_zone = tonumber(parent_result.zoneID)
-                        if parent_zone and parent_zone > 0 then
-                          final_zone = parent_zone
-                          use_parent_boundaries = true
-                        end
-                      end
-                    end
-                  end
-                end
-              elseif zone_id and zone_id > 0 then
-                final_zone = zone_id
+              -- Simplified display_zone determination per plan
+              local display_zone = tonumber(area_id) -- Prefer areaId
+              if not display_zone or display_zone == 0 then
+                display_zone = tonumber(zone_id) -- Fallback to zoneId
               end
-
-              -- Force WorldMapArea lookup instead of trusting database zoneId
-              -- Database zoneId is unreliable, use coordinate-based detection
-              local worldmap_query = mysql:execute([[
-                SELECT areatableID FROM WorldMapArea_wotlk
-                WHERE mapID = ]] .. map_id .. [[
-                  AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
-                  AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
-                ORDER BY (x_max - x_min) * (y_max - y_min) ASC
-                LIMIT 1
-              ]])
-
-              -- Hybrid approach: use database zone but WorldMapArea boundaries for coordinates
-              local worldmap_query = mysql:execute([[
-                SELECT areatableID FROM WorldMapArea_wotlk
-                WHERE mapID = ]] .. map_id .. [[
-                  AND x_min < ]] .. x .. [[ AND x_max > ]] .. x .. [[
-                  AND y_min < ]] .. y .. [[ AND y_max > ]] .. y .. [[
-                ORDER BY (x_max - x_min) * (y_max - y_min) ASC
-                LIMIT 1
-              ]])
-
-              local worldmap_zone = nil
-              if worldmap_query then
-                local worldmap_result = {}
-                if worldmap_query:fetch(worldmap_result, "a") then
-                  worldmap_zone = tonumber(worldmap_result.areatableID)
+              if not display_zone or display_zone == 0 then
+                -- Fallback for remaining ~472 NPC with zoneId = 0
+                local coords_fallback = GetCustomCoords(tonumber(map_id), tonumber(x), tonumber(y))
+                if coords_fallback and coords_fallback[1] and coords_fallback[1][3] then
+                   display_zone = coords_fallback[1][3]
+                else
+                   display_zone = tonumber(map_id) or 1 -- Final fallback
                 end
               end
 
-              -- Priority: database zone, but validate with WorldMapArea
-              if zone_id and zone_id > 0 then
-                final_zone = zone_id
-              elseif area_id and area_id > 0 then
-                final_zone = area_id
-              elseif worldmap_zone then
-                final_zone = worldmap_zone -- Use spatial detection as fallback
-              else
-                final_zone = 14 -- Final fallback
-              end
-
-              -- Debug: log zone usage for critical NPCs and problem cases
-              -- Debug only zone conflicts and key NPCs
-              if (worldmap_zone and worldmap_zone ~= final_zone) or id == 3139 or id == 3293 then
-                print(string.format("ZONE: NPC %d -> DB:%s WMA:%s FINAL:%d",
-                  id, zone_id or "nil", worldmap_zone or "nil", final_zone))
-              end
-
-              -- Convert world coordinates to zone percentage using WorldMapArea bounds
-              local zone_x, zone_y = 50, 50 -- Default center
-
-              -- Get proper zone bounds from WorldMapArea
-              local bounds_query = mysql:execute([[
-                SELECT x_min, x_max, y_min, y_max FROM WorldMapArea_wotlk
-                WHERE areatableID = ]] .. final_zone .. [[
-                LIMIT 1
-              ]])
-
-              if bounds_query then
-                local bounds = {}
-                if bounds_query:fetch(bounds, "a") then
-                  local x_min = tonumber(bounds.x_min)
-                  local x_max = tonumber(bounds.x_max)
-                  local y_min = tonumber(bounds.y_min)
-                  local y_max = tonumber(bounds.y_max)
-
-                  if x_min and x_max and y_min and y_max then
-                    -- GPS-matching formula using ORIGINAL CSV values (not sorted):
-                    -- Our SQL has sorted values, need to restore original CSV order
-                    -- For Durotar: LocLeft=-1962.5, LocRight=-7250, LocTop=1808.333, LocBottom=-1716.667
-
-                    local DBC_LocLeft = x_max     -- Original LocLeft: -1962.5
-                    local DBC_LocRight = x_min    -- Original LocRight: -7250
-                    local DBC_LocTop = y_max      -- Original LocTop: 1808.333
-                    local DBC_LocBottom = y_min   -- Original LocBottom: -1716.667
-
-                    -- GPS-matching formula from Cursor analysis:
-                    zone_x = (y - DBC_LocLeft) / ((DBC_LocRight - DBC_LocLeft) / 100)  -- Uses Y-coord for ZoneX
-                    zone_y = (x - DBC_LocTop) / ((DBC_LocBottom - DBC_LocTop) / 100)   -- Uses X-coord for ZoneY
-
-                    -- Clamp to 0-100 range
-                    zone_x = math.max(0, math.min(100, zone_x))
-                    zone_y = math.max(0, math.min(100, zone_y))
-
-                    if id == 3139 then
-                      print("DEBUG: NPC 3139 final coords:", zone_x, zone_y)
-                    end
-                  end
-                end
-              end
-
-              -- Use correct zone for display: if we calculated using parent boundaries, show parent zone
-              local display_zone = use_parent_boundaries and final_zone or (area_id and area_id > 0 and area_id or final_zone)
+              -- Simple coordinate approach: 50,50 (center)
+              -- Let pfQuest handle positioning within zone hitboxes
+              local zone_x, zone_y = 50, 50
 
               local coord = { zone_x, zone_y, display_zone, 0 }
               table.insert(ret, coord)
@@ -2348,61 +2235,91 @@ if config.expansions[expansion_to_process] then
   end
 
   do -- zones
-    print("- loading zones...")
+    print("- loading zones (new logic)...")
     pfDB["zones"] = pfDB["zones"] or {}
-    pfDB["zones"][data] = {}
+    pfDB["zones"][data] = {} -- Очищаем или создаем таблицу для данных
 
-    if core == "acore" then
-      -- For AzerothCore, extract zones from creature spawns since AreaTable_vanilla is empty
-      local zones = {}
-      local query = mysql:execute('SELECT DISTINCT zoneId, areaId FROM creature WHERE zoneId > 0')  -- NO LIMIT for zones
-      if query then
-        while query:fetch(zones, "a") do
-          if debug("zones") then break end
-          local zone_id = tonumber(zones.zoneId)
-          local area_id = tonumber(zones.areaId)
+    local zones_query_sql = [[
+SELECT
+    at.ID AS SourceAreaID,
+    at.name_loc0 AS SourceAreaName,
+    at.continentID,
+    COALESCE(parent_map_at.ID, at.ID) AS ParentZoneIdForMapTexture,
+    parent_map_at.name_loc0 AS ParentZoneName,
+    wmo.HitRectLeft AS WMO_HR_Left,
+    wmo.HitRectTop AS WMO_HR_Top,
+    wmo.HitRectRight AS WMO_HR_Right,
+    wmo.HitRectBottom AS WMO_HR_Bottom,
+    (CASE WHEN wmo.areaID IS NOT NULL AND wmo.HitRectLeft IS NOT NULL AND wmo.HitRectRight IS NOT NULL AND wmo.HitRectTop IS NOT NULL AND wmo.HitRectBottom IS NOT NULL THEN 1 ELSE 0 END) AS IsRealOverlay
+FROM
+    AreaTable_wotlk at
+LEFT JOIN
+    WorldMapOverlay_wotlk wmo ON at.ID = wmo.areaID
+LEFT JOIN
+    WorldMapArea_wotlk wma_parent_for_overlay ON wmo.zoneID = wma_parent_for_overlay.zoneID
+LEFT JOIN
+    AreaTable_wotlk parent_map_at ON wma_parent_for_overlay.areatableID = parent_map_at.ID AND parent_map_at.continentID = at.continentID
+WHERE
+    at.ID IN (SELECT DISTINCT areaId FROM creature WHERE areaId != 0 UNION SELECT DISTINCT zoneId FROM creature WHERE zoneId !=0)
+    AND at.ID != 0
+ORDER BY
+    at.ID
+]]
 
-          if zone_id and zone_id > 0 then
-            pfDB["zones"][data][zone_id] = { zone_id, 100, 100, 50, 50 } -- zone, width, height, cx, cy
-          end
-          if area_id and area_id > 0 and area_id ~= zone_id then
-            pfDB["zones"][data][area_id] = { zone_id or area_id, 100, 100, 50, 50 }
-          end
-        end
-      else
-        print("  Warning: Failed to query zones from creature table")
-      end
+    local query_cursor = mysql:execute(zones_query_sql)
+    if not query_cursor then
+        print("ERROR: Failed to execute SQL query for zones!")
     else
-      -- Original zones logic for cores with pfquest DBC data
-      local zones = {}
-      local query = mysql:execute('SELECT * FROM pfquest.WorldMapOverlay_'..expansion..' LEFT JOIN pfquest.AreaTable_'..expansion..' ON pfquest.WorldMapOverlay_'..expansion..'.areaID = pfquest.AreaTable_'..expansion..'.id')
-      while query:fetch(zones, "a") do
-        if debug("zones") then break end
-        local entry = tonumber(zones.id)
-        local zone = tonumber(zones.zoneID)
-        local textureWidth = tonumber(zones.textureWidth)
-        local textureHeight = tonumber(zones.textureHeight)
-        local offsetX = tonumber(zones.offsetX)
-        local offsetY = tonumber(zones.offsetY)
+        local row = {}
+        while query_cursor:fetch(row, "a") do
+            local sourceAreaID = tonumber(row.SourceAreaID)
+            local parentZoneIdForMapTexture = tonumber(row.ParentZoneIdForMapTexture)
+            local isRealOverlay = (tonumber(row.IsRealOverlay) == 1)
 
-        -- convert square to map scale
-        local hitRectTop = tonumber(zones.hitRectTop)/668*100
-        local hitRectLeft = tonumber(zones.hitRectLeft)/1002*100
-        local hitRectBottom = tonumber(zones.hitRectBottom)/668*100
-        local hitRectRight = tonumber(zones.hitRectRight)/1002*100
+            local hrLeft, hrTop, hrRight, hrBottom
 
-        -- area size
-        local width = hitRectRight - hitRectLeft
-        local height = hitRectBottom - hitRectTop
+            if isRealOverlay then
+                hrLeft = tonumber(row.WMO_HR_Left)
+                hrTop = tonumber(row.WMO_HR_Top)
+                hrRight = tonumber(row.WMO_HR_Right)
+                hrBottom = tonumber(row.WMO_HR_Bottom)
+            else -- Основная зона или подзона без валидного оверлея в WMO
+                parentZoneIdForMapTexture = sourceAreaID -- Использует свою карту
+                hrLeft = 0
+                hrTop = 0
+                hrRight = CANVAS_WIDTH
+                hrBottom = CANVAS_HEIGHT
+            end
 
-        -- area center
-        local cx = (hitRectLeft+hitRectRight)/2
-        local cy = (hitRectTop+hitRectBottom)/2
+            local pixelWidth = hrRight - hrLeft
+            local pixelHeight = hrBottom - hrTop
 
-        if entry then
-          pfDB["zones"][data][entry] = { zone, round(width,2), round(height,2), round(cx,2), round(cy,2)}
+            if pixelWidth <= 0 then pixelWidth = CANVAS_WIDTH; hrLeft = 0; hrRight = CANVAS_WIDTH; end
+            if pixelHeight <= 0 then pixelHeight = CANVAS_HEIGHT; hrTop = 0; hrBottom = CANVAS_HEIGHT; end
+
+            local pixelCX = hrLeft + pixelWidth / 2
+            local pixelCY = hrTop + pixelHeight / 2
+
+            local width_pct = (pixelWidth / CANVAS_WIDTH) * 100
+            local height_pct = (pixelHeight / CANVAS_HEIGHT) * 100
+            local centerX_pct = (pixelCX / CANVAS_WIDTH) * 100
+            local centerY_pct = (pixelCY / CANVAS_HEIGHT) * 100
+
+            width_pct = math.max(1, math.min(100, width_pct))
+            height_pct = math.max(1, math.min(100, height_pct))
+            centerX_pct = math.max(0, math.min(100, centerX_pct))
+            centerY_pct = math.max(0, math.min(100, centerY_pct))
+
+            pfDB["zones"][data][sourceAreaID] = {
+                parentZoneIdForMapTexture,
+                round(width_pct, 2),
+                round(height_pct, 2),
+                round(centerX_pct, 2),
+                round(centerY_pct, 2)
+            }
         end
-      end
+        query_cursor:close()
+        print("  SUCCESS: zones.lua data generated with new logic. Total zones: " .. TableCount(pfDB["zones"][data]))
     end
   end
 
@@ -3150,267 +3067,10 @@ if zone_fallback_count and total_units_processed then
   print("================================================================")
 end
 
--- ================================================================
--- BRANCH 1: CRITICAL 63 ZONES AREAID-BASED GENERATION
--- ================================================================
+  debug_statistics()
 
--- AREAID-BASED ZONES GENERATION (Branch 1)
-local function extract_zones_areaid_critical()
-    print("🎯 Branch 1: Generating areaId zones with DBC integration...")
+print("Extraction completed!")
 
-    -- First: get areas with creatures
-    local query = [[
-        SELECT areaId, zoneId,
-               COUNT(*) as npc_count,
-               MIN(position_x) as min_x, MAX(position_x) as max_x,
-               MIN(position_y) as min_y, MAX(position_y) as max_y
-        FROM creature
-        WHERE areaId > 0 AND zoneId > 0
-        GROUP BY areaId, zoneId
-        ORDER BY COUNT(*) DESC
-    ]]
-
-    local result = {}
-    local cursor = assert(mysql:execute(query))
-    local row = cursor:fetch({}, "a")
-    local processed = 0
-
-    while row do
-        local areaId = tonumber(row.areaId)
-        local zoneId = tonumber(row.zoneId)
-
-        -- Special mappings for major cities (match old DB)
-        local city_mappings = {
-            [1637] = 0,  -- Orgrimmar → world map
-            [1519] = 0,  -- Stormwind → world map
-            [1657] = 0,  -- Darnassus → world map
-            [1638] = 0,  -- Thunder Bluff → world map
-            [809] = 0,   -- Ironforge → world map
-            [3487] = 0,  -- Silvermoon → world map
-            [3557] = 0   -- Exodar → world map
-        }
-
-        if city_mappings[areaId] then
-            zoneId = city_mappings[areaId]
-        end
-
-        -- Enhanced hit rectangles calculation
-        local hit_x1 = math.max(0, math.floor(((row.min_x or 0) + 17066) / 347.52) / 100 * 100)
-        local hit_y1 = math.max(0, math.floor(((row.min_y or 0) + 17066) / 347.52) / 100 * 100)
-        local hit_x2 = math.min(100, math.ceil(((row.max_x or 0) + 17066) / 347.52) / 100 * 100)
-        local hit_y2 = math.min(100, math.ceil(((row.max_y or 0) + 17066) / 347.52) / 100 * 100)
-
-        -- Validation and intelligent fallbacks
-        if hit_x1 >= hit_x2 then
-            hit_x2 = hit_x1 + 15
-            if hit_x2 > 100 then hit_x1 = 85; hit_x2 = 100 end
-        end
-        if hit_y1 >= hit_y2 then
-            hit_y2 = hit_y1 + 15
-            if hit_y2 > 100 then hit_y1 = 85; hit_y2 = 100 end
-        end
-
-        result[areaId] = { zoneId, hit_x1, hit_y1, hit_x2, hit_y2 }
-        processed = processed + 1
-
-        if processed % 50 == 0 then
-            print(string.format("  ⏳ Processed %d areas with NPCs...", processed))
-        end
-
-        row = cursor:fetch(row, "a")
-    end
-    cursor:close()
-
-    print(string.format("✅ Loaded %d areas with creatures", processed))
-
-    -- Second: Load WorldMapOverlay for accurate hit rectangles
-    print("🗺️ Loading WorldMapOverlay.dbc.csv...")
-    local overlay_data = {}
-    local overlay_file = io.open("DBC/wotlk/WorldMapOverlay.dbc.csv", "r")
-    if overlay_file then
-        local line_count = 0
-        for line in overlay_file:lines() do
-            line_count = line_count + 1
-            if line_count > 1 then -- Skip header
-                local fields = {}
-                for field in line:gmatch('"([^"]*)"') do
-                    table.insert(fields, field)
-                end
-
-                if #fields >= 17 then
-                    local areaId = tonumber(fields[3]) -- AreaID_1
-                    if areaId and areaId > 0 then
-                        local hitTop = tonumber(fields[14]) or 0
-                        local hitLeft = tonumber(fields[15]) or 0
-                        local hitBottom = tonumber(fields[16]) or 100
-                        local hitRight = tonumber(fields[17]) or 100
-
-                        -- Convert to percentage coordinates
-                        local x1 = math.max(0, math.min(100, hitLeft / 10))
-                        local y1 = math.max(0, math.min(100, hitTop / 10))
-                        local x2 = math.max(0, math.min(100, hitRight / 10))
-                        local y2 = math.max(0, math.min(100, hitBottom / 10))
-
-                        overlay_data[areaId] = { x1, y1, x2, y2 }
-                    end
-                end
-            end
-        end
-        overlay_file:close()
-        print(string.format("✅ Loaded %d overlay hit rectangles", tblsize(overlay_data)))
-    end
-
-    -- Third: Add all DBC areas as fallbacks
-    print("📖 Loading AreaTable.dbc.csv...")
-    local dbc_file = io.open("DBC/wotlk/enUS/AreaTable.dbc.csv", "r")
-    if dbc_file then
-        local line_count = 0
-        local dbc_added = 0
-
-        for line in dbc_file:lines() do
-            line_count = line_count + 1
-            if line_count > 1 then -- Skip header
-                local fields = {}
-                for field in line:gmatch('"([^"]*)"') do
-                    table.insert(fields, field)
-                end
-
-                if #fields >= 3 then
-                    local areaId = tonumber(fields[1])
-                    local parentAreaId = tonumber(fields[3]) or 0
-
-                    if areaId and areaId > 0 and not result[areaId] then
-                        -- Use parent zone or fallback to zone 1
-                        local fallback_zone = (parentAreaId > 0) and parentAreaId or 1
-
-                        -- Special mappings for major cities (match old DB)
-                        local city_mappings = {
-                            [1637] = 0,  -- Orgrimmar → world map
-                            [1519] = 0,  -- Stormwind → world map
-                            [1657] = 0,  -- Darnassus → world map
-                            [1638] = 0,  -- Thunder Bluff → world map
-                            [809] = 0,   -- Ironforge → world map
-                            [3487] = 0,  -- Silvermoon → world map
-                            [3557] = 0   -- Exodar → world map
-                        }
-
-                        if city_mappings[areaId] then
-                            fallback_zone = city_mappings[areaId]
-                        end
-
-                        -- Use overlay hit rectangles if available, otherwise fallback
-                        local hit_rects = overlay_data[areaId]
-                        if hit_rects then
-                            result[areaId] = { fallback_zone, hit_rects[1], hit_rects[2], hit_rects[3], hit_rects[4] }
-                        else
-                            result[areaId] = { fallback_zone, 10, 10, 90, 90 }
-                        end
-                        dbc_added = dbc_added + 1
-                    end
-                end
-            end
-        end
-        dbc_file:close()
-        print(string.format("✅ Added %d DBC areas as fallbacks", dbc_added))
-    else
-        print("⚠️ AreaTable.dbc.csv not found, using creature data only")
-    end
-
-    print(string.format("✅ Total areas generated: %d", tblsize(result)))
-    return result
-end
-
--- ================================================================
--- BRANCH 4: EMERGENCY FALLBACK ZONES GENERATION
--- ================================================================
-
--- EMERGENCY FALLBACK ZONES GENERATION
-local function generate_emergency_zones()
-    print("🚨 EMERGENCY: Generating basic areaId zones...")
-
-    local emergency_zones = {}
-
-    -- Минимальные критические зоны (hardcoded from old-DB reference)
-    local critical_mappings = {
-        [9] = { 12, 17.47, 27.69, 51.15, 42.29 },    -- Northshire
-        [77] = { 1, 29.84, 25.21, 50.15, 49.78 },    -- Dun Morogh
-        [148] = { 14, 43.66, 39.42, 58.88, 69.99 },  -- Durotar
-        [219] = { 40, 44.16, 20.21, 59.88, 65.49 },  -- Westfall
-        [362] = { 14, 9.48, 11.98, 54.64, 42.66 },   -- Valley of Trials
-        [363] = { 14, 9.98, 15.72, 44.41, 66.99 },   -- Cave
-        [18] = { 12, 15.47, 14.22, 52.64, 64 },      -- Goldshire
-        [20] = { 40, 10.48, 20.21, 44.16, 65.49 },   -- Westfall zones
-        [57] = { 12, 16.97, 15.72, 38.42, 84.21 },   -- Elwynn zones
-        [68] = { 44, 34.93, 20.96, 41.92, 59.13 }    -- Redridge zones
-    }
-
-    -- Добавляем критические зоны
-    for areaId, data in pairs(critical_mappings) do
-        emergency_zones[areaId] = data
-    end
-
-    -- Dummy данные для остальных зон (2,273 оставшихся)
-    for areaId = 1, 5000 do  -- Покрытие с запасом
-        if not emergency_zones[areaId] then
-            emergency_zones[areaId] = { 1, 10, 10, 90, 90 }  -- Default zone 1
-        end
-    end
-
-    -- Запись файла
-    local zones_file = io.open("output/zones.lua", "w")
-    if zones_file then
-        zones_file:write('pfDB["zones"]["data"] = {\n')
-
-        local count = 0
-        for areaId, data in pairs(emergency_zones) do
-            zones_file:write(string.format('  [%d] = { %d, %.2f, %.2f, %.2f, %.2f },\n',
-                areaId, data[1], data[2], data[3], data[4], data[5]))
-            count = count + 1
-        end
-
-        zones_file:write('}\n')
-        zones_file:close()
-
-        print(string.format("✅ Emergency zones.lua generated! Total areas: %d", count))
-        return true
-    else
-        print("❌ Failed to create zones.lua file!")
-        return false
-    end
-end
-
--- Branch mode control
-local CURRENT_BRANCH = 1  -- 1 = critical zones, 4 = emergency fallback
-
-if CURRENT_BRANCH == 1 then
-    print("🎯 Running BRANCH 1: Critical 63 zones generation...")
-    local critical_zones = extract_zones_areaid_critical()
-
-    if critical_zones and tblsize(critical_zones) > 0 then
-        -- Write zones.lua file
-        local zones_file = io.open("output/zones.lua", "w")
-        if zones_file then
-            zones_file:write('pfDB["zones"]["data"] = {\n')
-
-            for areaId, data in pairs(critical_zones) do
-                zones_file:write(string.format('  [%d] = { %d, %.2f, %.2f, %.2f, %.2f },\n',
-                    areaId, data[1], data[2], data[3], data[4], data[5]))
-            end
-
-            zones_file:write('}\n')
-            zones_file:close()
-            print("✅ Branch 1 zones.lua generated successfully!")
-        end
-    else
-        print("⚠️ Branch 1 failed, falling back to emergency...")
-        CURRENT_BRANCH = 4
-    end
-end
-
-if CURRENT_BRANCH == 4 then
-    print("🚨 Running EMERGENCY FALLBACK zones generation...")
-    generate_emergency_zones()
-end
 
 -- Автоматически запускаем скрипт копирования файлов
 local transfer_result = os.execute("copy_files.bat auto")
