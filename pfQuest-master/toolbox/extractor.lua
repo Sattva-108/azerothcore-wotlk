@@ -13,7 +13,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 10           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -2244,14 +2244,50 @@ if config.expansions[expansion_to_process] then
       pfDB["quests"][data][entry]["lvl"] = questlevel ~= 0 and questlevel
 
       -- Store AllowableClasses as number (pfQuest expects bit.band operations)
-      local allowable_classes_mask = tonumber(quest_template.AllowableClasses) or 0
+      local allowable_classes_mask = tonumber(current_quest_data.AllowableClasses) or 0
+      local allowable_races_mask = tonumber(current_quest_data.AllowableRaces) or 0
+
       if allowable_classes_mask ~= 0 then
         pfDB["quests"][data][entry]["class"] = allowable_classes_mask
       end
 
-      pfDB["quests"][data][entry]["race"] = race ~= 0 and race
+      pfDB["quests"][data][entry]["race"] = allowable_races_mask ~= 0 and allowable_races_mask or race
       pfDB["quests"][data][entry]["skill"] = skill ~= 0 and skill
       pfDB["quests"][data][entry]["event"] = event ~= 0 and event
+
+      -- Build pre-quest relationships
+      local pre_quests_list = {}
+      if quest_has_addon_prev[entry] then
+        table.insert(pre_quests_list, quest_has_addon_prev[entry])
+      end
+      if reward_next_leads_to_prev[entry] then
+        for _, prev_id in ipairs(reward_next_leads_to_prev[entry]) do
+          table.insert(pre_quests_list, prev_id)
+        end
+      end
+      if addon_next_leads_to_prev[entry] then
+        for _, prev_id in ipairs(addon_next_leads_to_prev[entry]) do
+          table.insert(pre_quests_list, prev_id)
+        end
+      end
+
+      -- Build chain (next quest) relationships
+      local chain_quests_list = {}
+      local reward_next_val = tonumber(current_quest_data.RewardNextQuest)
+      local addon_next_val = tonumber(current_quest_data.AddonNextQuestID)
+      if reward_next_val and reward_next_val > 0 then
+        table.insert(chain_quests_list, reward_next_val)
+      end
+      if addon_next_val and addon_next_val > 0 then
+        table.insert(chain_quests_list, addon_next_val)
+      end
+
+      if #pre_quests_list > 0 then
+        pfDB["quests"][data][entry]["pre"] = remove_duplicates_from_table(pre_quests_list)
+      end
+      if #chain_quests_list > 0 then
+        pfDB["quests"][data][entry]["chain"] = remove_duplicates_from_table(chain_quests_list)
+      end
 
       -- quest objectives
       local units, objects, items, itemreq, areatrigger, zones, pre = {}, {}, {}, {}, {}, {}, {}
