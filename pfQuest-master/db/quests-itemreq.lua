@@ -1,2 +1,0 @@
-pfDB["quests-itemreq"]["data"] = {
-}
