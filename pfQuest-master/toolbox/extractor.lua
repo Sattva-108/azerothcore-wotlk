@@ -13,7 +13,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 1000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -3002,9 +3002,10 @@ if config.expansions[expansion_to_process] then
         end
       end
     else
-      -- Original logic for other cores
+      -- Original logic for other cores, updated for AzerothCore schema
       local locales_zones = {}
-      local query = mysql:execute('SELECT * FROM pfquest.AreaTable_'..expansion..' ORDER BY id ASC')
+      local table_prefix = core == "acore" and "" or "pfquest."
+      local query = mysql:execute('SELECT * FROM ' .. table_prefix .. 'AreaTable_'..expansion..' ORDER BY id ASC')
       if query then
         while query:fetch(locales_zones, "a") do
           if debug("locales_zone") then break end

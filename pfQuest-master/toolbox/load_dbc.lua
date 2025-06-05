@@ -223,11 +223,13 @@ load_dbc_csv("DBC/wotlk/Lock.dbc.csv", "Lock_" .. version,
     end
   end)
 
--- AreaTable_wotlk (only enUS for now, matching load-client-data.sh)
+-- AreaTable_wotlk (CORRECTED schema and parsing)
 load_dbc_csv("DBC/wotlk/enUS/AreaTable.dbc.csv", "AreaTable_" .. version,
   "CREATE TABLE `AreaTable_" .. version .. "` (" ..
   "`id` int(3) unsigned NOT NULL," ..
-  "`zoneID` smallint(3) unsigned NOT NULL," ..
+  "`continentID` smallint(3) unsigned NOT NULL," ..
+  "`parentAreaID` smallint(3) unsigned NOT NULL," ..
+  "`flags` int(10) unsigned NOT NULL," ..
   "`name_loc0` varchar(255) NOT NULL," ..
   "`name_loc1` varchar(255) NOT NULL," ..
   "`name_loc2` varchar(255) NOT NULL," ..
@@ -237,12 +239,16 @@ load_dbc_csv("DBC/wotlk/enUS/AreaTable.dbc.csv", "AreaTable_" .. version,
   "`name_loc6` varchar(255) NOT NULL," ..
   "`name_loc7` varchar(255) NOT NULL," ..
   "`name_loc8` varchar(255) NOT NULL," ..
-  "`name_loc10` varchar(255) NOT NULL" ..
+  "`name_loc10` varchar(255) NOT NULL," ..
+  "PRIMARY KEY (`id`)" ..
   ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='AreaTable'",
   function(values)
     local id = values[1]
-    local zoneID = values[3] or "0"
-    local name = values[12] or ""
+    local continentID = values[2] or "0"     -- ContinentID
+    local parentAreaID = values[3] or "0"    -- ParentAreaID
+    local flags = values[5] or "0"           -- Flags
+    local name = values[12] or ""            -- AreaName_Lang_enUS
+
     -- Handle quotes in name
     name = name:gsub('""', '\\"')
     if name ~= "" and name ~= '""' then
@@ -250,7 +256,8 @@ load_dbc_csv("DBC/wotlk/enUS/AreaTable.dbc.csv", "AreaTable_" .. version,
     else
       name = '""'
     end
-    return "INSERT INTO `AreaTable_" .. version .. "` VALUES (" .. id .. ", " .. zoneID .. ", " .. name .. ", '', '', '', '', '', '', '', '', '')"
+
+    return "INSERT INTO `AreaTable_" .. version .. "` VALUES (" .. id .. ", " .. continentID .. ", " .. parentAreaID .. ", " .. flags .. ", " .. name .. ", '', '', '', '', '', '', '', '', '')"
   end)
 
 -- SkillLine_wotlk (only enUS for now, matching load-client-data.sh)
