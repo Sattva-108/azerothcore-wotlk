@@ -1079,33 +1079,71 @@ if config.expansions[expansion_to_process] then
           while query:fetch(creature_coords, "a") do
             if debug("creature_coords") then break end
 
-            local x = tonumber(creature_coords.position_x)
-            local y = tonumber(creature_coords.position_y)
+            local npc_world_x = tonumber(creature_coords.position_x)
+            local npc_world_y = tonumber(creature_coords.position_y)
             local map_id = tonumber(creature_coords.map)
             local zone_id = tonumber(creature_coords.zoneId)
             local area_id = tonumber(creature_coords.areaId)
 
-            if x and y and map_id then
+            if npc_world_x and npc_world_y and map_id then
               -- Simplified display_zone determination per plan
-              local display_zone = tonumber(area_id) -- Prefer areaId
+              local display_zone = area_id and area_id > 0 and area_id or zone_id and zone_id > 0 and zone_id
+
               if not display_zone or display_zone == 0 then
-                display_zone = tonumber(zone_id) -- Fallback to zoneId
-              end
-              if not display_zone or display_zone == 0 then
-                -- Fallback for remaining ~472 NPC with zoneId = 0
-                local coords_fallback = GetCustomCoords(tonumber(map_id), tonumber(x), tonumber(y))
+                -- Fallback for remaining NPCs with both areaId and zoneId = 0
+                local coords_fallback = GetCustomCoords(map_id, npc_world_x, npc_world_y)
                 if coords_fallback and coords_fallback[1] and coords_fallback[1][3] then
                    display_zone = coords_fallback[1][3]
                 else
-                   display_zone = tonumber(map_id) or 1 -- Final fallback
+                   display_zone = map_id or 1 -- Final fallback
                 end
               end
 
-              -- Simple coordinate approach: 50,50 (center)
-              -- Let pfQuest handle positioning within zone hitboxes
-              local zone_x, zone_y = 50, 50
+              -- Get parent map ID for NPC coordinate calculation
+              local parent_map_id_for_npc_coords = display_zone
+              if pfDB["zones"]["data"][display_zone] and pfDB["zones"]["data"][display_zone][1] then
+                parent_map_id_for_npc_coords = pfDB["zones"]["data"][display_zone][1]
+              end
 
-              local coord = { zone_x, zone_y, display_zone, 0 }
+              -- Get WorldMapArea boundaries for the parent map
+              local bounds_sql = string.format([[
+                SELECT x_min, x_max, y_min, y_max
+                FROM WorldMapArea_wotlk
+                WHERE areatableID = %d
+                LIMIT 1
+              ]], parent_map_id_for_npc_coords)
+
+              local bounds_query = mysql:execute(bounds_sql)
+              local bounds = {}
+              local zone_x, zone_y = 50, 50 -- Fallback
+
+              if bounds_query and bounds_query:fetch(bounds, "a") then
+                local x_min = tonumber(bounds.x_min)
+                local x_max = tonumber(bounds.x_max)
+                local y_min = tonumber(bounds.y_min)
+                local y_max = tonumber(bounds.y_max)
+
+                if x_min and x_max and y_min and y_max then
+                  -- Use the working "cross" GPS formula from the plan
+                  local DBC_LocLeft = x_max    -- World Y Top
+                  local DBC_LocRight = x_min   -- World Y Bottom
+                  local DBC_LocTop = y_max     -- World X Right
+                  local DBC_LocBottom = y_min  -- World X Left
+
+                  local temp_x = (npc_world_y - DBC_LocLeft) / ((DBC_LocRight - DBC_LocLeft) / 100)
+                  local temp_y = (npc_world_x - DBC_LocTop) / ((DBC_LocBottom - DBC_LocTop) / 100)
+
+                  -- Per plan: temp_x (from Y world) goes to zone_x, temp_y (from X world) goes to zone_y
+                  zone_x = temp_x
+                  zone_y = temp_y
+                end
+              end
+
+              -- Clamp coordinates to valid range
+              zone_x = math.max(0, math.min(100, zone_x))
+              zone_y = math.max(0, math.min(100, zone_y))
+
+              local coord = { round(zone_x, 2), round(zone_y, 2), display_zone, 0 }
               table.insert(ret, coord)
             end
           end
@@ -1238,6 +1276,77 @@ if config.expansions[expansion_to_process] then
           end
         end
       end
+    end
+  end
+
+  do -- zones (NEW LOGIC - EXECUTES BEFORE UNITS)
+    print("- loading zones (new logic)...")
+
+    pfDB["zones"] = pfDB["zones"] or {}
+    pfDB["zones"]["data"] = {}
+
+    -- Generate zones data using WorldMapArea + AreaTable + canvas calculation
+    local table_suffix = "wotlk" -- Use wotlk tables, not vanilla
+    local zones_query = mysql:execute([[
+      SELECT
+        at.id as area_id,
+        at.parentAreaID as parent_area_id,
+        at.name_loc0 as area_name,
+        wma.mapID as map_id,
+        wma.x_min, wma.x_max, wma.y_min, wma.y_max
+      FROM AreaTable_]] .. table_suffix .. [[ at
+      LEFT JOIN WorldMapArea_]] .. table_suffix .. [[ wma ON at.id = wma.areatableID
+      WHERE at.id > 0
+      ORDER BY at.id
+    ]])
+
+    if zones_query then
+      local zones_processed = 0
+      local zone_data = {}
+      while zones_query:fetch(zone_data, "a") do
+        if debug("zones_generation") then break end
+        zones_processed = zones_processed + 1
+
+        local area_id = tonumber(zone_data.area_id)
+        local parent_area_id = tonumber(zone_data.parent_area_id) or 0
+        local map_id = tonumber(zone_data.map_id) or 0
+
+        if area_id then
+          -- For parent zones (major zones), use their map boundaries
+          if parent_area_id == 0 and map_id > 0 then
+            -- This is a main zone with WorldMapArea boundaries
+            pfDB["zones"]["data"][area_id] = { map_id, 0, 0, 100, 100 }
+          elseif parent_area_id > 0 then
+            -- This is a sub-zone, calculate percentage coordinates within parent
+            local x_min = tonumber(zone_data.x_min) or 0
+            local x_max = tonumber(zone_data.x_max) or 100
+            local y_min = tonumber(zone_data.y_min) or 0
+            local y_max = tonumber(zone_data.y_max) or 100
+
+            -- Calculate percentage coordinates within parent zone (using canvas approach)
+            local width = x_max - x_min
+            local height = y_max - y_min
+
+            -- Convert to percentage coordinates (0-100 scale)
+            local y1_percent = math.max(0, math.min(100, (y_min / CANVAS_HEIGHT) * 100))
+            local x1_percent = math.max(0, math.min(100, (x_min / CANVAS_WIDTH) * 100))
+            local y2_percent = math.max(0, math.min(100, (y_max / CANVAS_HEIGHT) * 100))
+            local x2_percent = math.max(0, math.min(100, (x_max / CANVAS_WIDTH) * 100))
+
+            -- Store in zones.lua format: [areaId] = { parentZoneId, y1, x1, y2, x2 }
+            pfDB["zones"]["data"][area_id] = {
+              parent_area_id,
+              round(y1_percent, 2),
+              round(x1_percent, 2),
+              round(y2_percent, 2),
+              round(x2_percent, 2)
+            }
+          end
+        end
+      end
+      print("  SUCCESS: zones.lua data generated with new logic. Total zones: " .. zones_processed)
+    else
+      print("  WARNING: Failed to execute zones generation query")
     end
   end
 
@@ -2853,93 +2962,6 @@ ORDER BY
                 local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
                 pfDB["professions"][locale] = pfDB["professions"][locale] or {}
                 pfDB["professions"][locale][entry] = sanitize(name)
-              end
-            end
-          end
-        end
-      end
-    end
-  end
-
-  do -- zones locales
-    if core == "acore" then
-      -- For AzerothCore, use loaded DBC AreaTable table
-      local locales_zones = {}
-      local table_name = (expansion == "vanilla") and "areatable_wotlk" or "AreaTable_" .. expansion
-      print("  Attempting to query zones from table: " .. table_name)
-
-      local query = mysql:execute('SELECT * FROM ' .. table_name .. ' ORDER BY id ASC')  -- NO LIMIT for zones
-      if query then
-        while query:fetch(locales_zones, "a") do
-          if debug("locales_zone") then break end
-
-          local entry = tonumber(locales_zones.id)
-
-          if entry then
-            for loc in pairs(locales) do
-              local name = locales_zones["name_loc0"] -- Only enUS from DBC
-              if name and name ~= "" then
-                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-                pfDB["zones"][locale] = pfDB["zones"][locale] or {}
-                pfDB["zones"][locale][entry] = sanitize(name)
-                -- DEBUG PRINT: после добавления зоны
-                if entry == 14 or entry == 1 or entry == 12 then
-                  print("DEBUG: zones locale=", locale, "entry=", entry, "name=", name)
-                end
-              end
-            end
-          end
-        end
-      else
-        print("  Warning: Failed to query zones from table " .. table_name .. " - checking alternative names")
-
-        -- Try alternative table names
-        local alt_names = {"AreaTable", "pfquest.AreaTable_" .. expansion}
-        for _, alt_name in ipairs(alt_names) do
-          local alt_query = mysql:execute('SELECT * FROM ' .. alt_name .. ' ORDER BY id ASC LIMIT 10')
-          if alt_query then
-            while alt_query:fetch(locales_zones, "a") do
-              if debug("locales_zone") then break end
-              local entry = tonumber(locales_zones.id)
-              if entry then
-                for loc in pairs(locales) do
-                  local name = locales_zones["name_loc0"]
-                  if name and name ~= "" then
-                    local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-                    pfDB["zones"][locale] = pfDB["zones"][locale] or {}
-                    pfDB["zones"][locale][entry] = sanitize(name)
-                  end
-                end
-              end
-            end
-            break
-          else
-            print("  Warning: Table " .. alt_name .. " not found")
-          end
-        end
-      end
-    else
-      -- Original logic for other cores, updated for AzerothCore schema
-      local locales_zones = {}
-      local table_prefix = core == "acore" and "" or "pfquest."
-      local query = mysql:execute('SELECT * FROM ' .. table_prefix .. 'AreaTable_'..expansion..' ORDER BY id ASC')
-      if query then
-        while query:fetch(locales_zones, "a") do
-          if debug("locales_zone") then break end
-
-          local entry = tonumber(locales_zones.id)
-
-          if entry then
-            for loc in pairs(locales) do
-              local name = locales_zones["name_loc" .. locales[loc]]
-              if name and name ~= "" then
-                local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
-                pfDB["zones"][locale] = pfDB["zones"][locale] or {}
-                pfDB["zones"][locale][entry] = sanitize(name)
-                -- DEBUG PRINT: после добавления зоны
-                if entry == 14 or entry == 1 or entry == 12 then
-                  print("DEBUG: zones locale=", locale, "entry=", entry, "name=", name)
-                end
               end
             end
           end
