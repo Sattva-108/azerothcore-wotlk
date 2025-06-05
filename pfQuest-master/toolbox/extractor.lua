@@ -1241,53 +1241,117 @@ if config.expansions[expansion_to_process] then
         return ret
     end
 
-    function GetGameObjectCoords(id)
-      local ret = {}
+    function GetGameObjectCoords(id1_template) -- id1_template это gameobject_template.entry
+        local ret = {}
+        if core == "acore" then
+            local gameobject_spawn_data_cache = {}
+            -- ВАЖНО: Проверьте, какое поле в таблице 'gameobject' соответствует 'gameobject_template.entry'.
+            -- Обычно это 'id', но может быть 'entry' или 'id1' в зависимости от вашей схемы.
+            -- Я использую 'id' согласно вашему предыдущему коду для GetGameObjectCoords.
+            local sql_get_gameobjects = string.format(
+                "SELECT guid, map, position_x, position_y, zoneId, areaId FROM gameobject WHERE id = %d",
+                id1_template
+            )
+            local cursor_gameobjects = mysql:execute(sql_get_gameobjects)
 
-      if core == "acore" then
-        -- For AzerothCore, get coordinates from gameobject table
-        local object_coords = {}
-        local query = mysql:execute([[
-          SELECT gameobject.position_x, gameobject.position_y, gameobject.map, gameobject.zoneId, gameobject.areaId
-          FROM gameobject
-          WHERE gameobject.id = ]] .. id .. [[
-          LIMIT 50
-        ]])
-
-        if query then
-          while query:fetch(object_coords, "a") do
-            if debug("object_coords") then break end
-
-            local x = tonumber(object_coords.position_x)
-            local y = tonumber(object_coords.position_y)
-            local map_id = tonumber(object_coords.map)
-            local zone_id = tonumber(object_coords.zoneId)
-            local area_id = tonumber(object_coords.areaId)
-
-            if x and y and map_id then
-              -- Use zone_id as primary (main zone), fallback to area_id, otherwise map_id
-              local final_zone = zone_id and zone_id > 0 and zone_id or area_id and area_id > 0 and area_id or map_id
-
-              -- Convert world coordinates to zone percentage (simplified)
-              local zone_x = math.floor((x + 17066) / 340 * 100) / 100
-              local zone_y = math.floor((y + 17066) / 340 * 100) / 100
-
-              -- Clamp to 0-100 range
-              zone_x = math.max(0, math.min(100, zone_x))
-              zone_y = math.max(0, math.min(100, zone_y))
-
-              local coord = { zone_x, zone_y, final_zone, 0 }
-              table.insert(ret, coord)
-              -- Debug print removed to avoid spam
+            if not cursor_gameobjects then
+                print("ERROR: Failed to query gameobject spawns for template ID: " .. id1_template)
+                return ret
             end
-          end
-        end
 
+            local temp_row = {}
+            while cursor_gameobjects:fetch(temp_row, "a") do
+                table.insert(gameobject_spawn_data_cache, {
+                    guid = temp_row.guid, map = tonumber(temp_row.map),
+                    position_x = tonumber(temp_row.position_x), position_y = tonumber(temp_row.position_y),
+                    zoneId = tonumber(temp_row.zoneId), areaId = tonumber(temp_row.areaId)
+                })
+                temp_row = {}
+            end
+            cursor_gameobjects:close()
+
+            -- Опционально: отладочный вывод, если для тестовых объектов не найдено спавнов
+            -- if #gameobject_spawn_data_cache == 0 and DEBUG_EXTRACTION and QUEST_784_TEST then
+            --     -- print(string.format("WARNING: No spawns found in 'gameobject' table for template ID: %d", id1_template))
+            -- end
+
+            for _, gobject_data in ipairs(gameobject_spawn_data_cache) do
+                local gobj_world_x = gobject_data.position_x
+                local gobj_world_y = gobject_data.position_y
+                local map_id = gobject_data.map -- Это continent_id
+
+                local db_zoneId = gobject_data.zoneId
+                local db_areaId = gobject_data.areaId
+
+                local display_map_areatable_id -- ID карты, на которой объект будет отображаться
+
+                if db_zoneId ~= 0 then
+                    display_map_areatable_id = db_zoneId
+                elseif db_areaId ~= 0 then
+                    local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
+                    if parent_of_area ~= 0 then
+                        display_map_areatable_id = parent_of_area
+                    else
+                        display_map_areatable_id = db_areaId
+                    end
+                end
+
+                if not display_map_areatable_id or display_map_areatable_id == 0 then
+                    if gobj_world_x and gobj_world_y and map_id then
+                        local coords_fallback_data = GetCustomCoords(map_id, gobj_world_x, gobj_world_y)
+                        if coords_fallback_data and coords_fallback_data[1] and coords_fallback_data[1][3] then
+                            display_map_areatable_id = coords_fallback_data[1][3]
+                            if display_map_areatable_id == 0 then display_map_areatable_id = map_id end
+                        else
+                            display_map_areatable_id = map_id
+                        end
+                    else
+                        display_map_areatable_id = 1
+                    end
+                    if not display_map_areatable_id or display_map_areatable_id == 0 then display_map_areatable_id = 1 end
+                    -- print(string.format("INFO: GObject GUID %s (template %s) using fallback display_map_areatable_id: %d", gobject_data.guid or "N/A", id1_template, display_map_areatable_id))
+                end
+
+                local zone_x, zone_y = 50, 50 -- Default
+
+                local zone_bounds = GetWorldMapAreaBoundariesForZone(display_map_areatable_id, map_id)
+
+                if gobj_world_x and gobj_world_y and zone_bounds then
+                    local Z_WorldX_L = zone_bounds.x_left
+                    local Z_WorldX_R = zone_bounds.x_right
+                    local Z_WorldY_T = zone_bounds.y_top
+                    local Z_WorldY_B = zone_bounds.y_bottom
+
+                    local zone_map_world_width = Z_WorldX_R - Z_WorldX_L
+                    local zone_map_world_height = Z_WorldY_T - Z_WorldY_B
+
+                    if zone_map_world_width > 0 and zone_map_world_height > 0 then
+                        local pfQuest_X_pct = ((Z_WorldY_T - gobj_world_y) / zone_map_world_height) * 100
+                        local pfQuest_Y_pct = 100 - (((gobj_world_x - Z_WorldX_L) / zone_map_world_width) * 100)
+
+                        zone_x = pfQuest_X_pct
+                        zone_y = pfQuest_Y_pct
+                    else
+                        -- print(string.format("WARNING: Invalid zone map dimensions for GObject AreaTable.ID %d. GObject GUID %s defaulting to 50,50.", display_map_areatable_id, gobject_data.guid or "N/A"))
+                    end
+                else
+                    -- Логирование предупреждений, если нужно
+                    -- if not gobj_world_x or not gobj_world_y then
+                    --     print(string.format("WARNING: GObject GUID %s (template %s) missing world coordinates. Defaulting to 50,50.", gobject_data.guid or "N/A", id1_template))
+                    -- end
+                    -- if not zone_bounds then
+                    --      print(string.format("WARNING: No WMA boundaries for GObject AreaTable.ID %d on MapID %d. GObject GUID %s defaulting to 50,50.", display_map_areatable_id, map_id, gobject_data.guid or "N/A"))
+                    -- end
+                end
+
+                zone_x = math.max(0, math.min(100, zone_x))
+                zone_y = math.max(0, math.min(100, zone_y))
+
+                -- display_map_areatable_id здесь используется как ID карты, на которой объект будет показан
+                table.insert(ret, { round(zone_x,2), round(zone_y,2), display_map_areatable_id, 0 }) -- 0 это spawntimesecs
+            end
+        end
         return ret
-      else
-        -- Original function code for other cores would go here
-        return {}
-      end
     end
   end
 
