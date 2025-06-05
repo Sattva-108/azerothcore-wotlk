@@ -13,14 +13,14 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
-local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_ID = 835 -- securing the lines
 local QUEST_784_NPCS = {3293, 3117, 3118}  -- NPCs из анализа квеста 784
 
@@ -1063,97 +1063,180 @@ if config.expansions[expansion_to_process] then
       return {}
     end
 
-    function GetCreatureCoords(id)
-      local ret = {}
-
-      if core == "acore" then
-        -- For AzerothCore, get coordinates from creature table
-        local creature_coords = {}
-        local query = mysql:execute([[
-          SELECT creature.position_x, creature.position_y, creature.map, creature.zoneId, creature.areaId
-          FROM creature
-          WHERE creature.id1 = ]] .. id .. [[
-        ]])
-
-        if query then
-          while query:fetch(creature_coords, "a") do
-            if debug("creature_coords") then break end
-
-            local npc_world_x = tonumber(creature_coords.position_x)
-            local npc_world_y = tonumber(creature_coords.position_y)
-            local map_id = tonumber(creature_coords.map)
-            local zone_id = tonumber(creature_coords.zoneId)
-            local area_id = tonumber(creature_coords.areaId)
-
-            if npc_world_x and npc_world_y and map_id then
-              -- Simplified display_zone determination per plan
-              local display_zone = area_id and area_id > 0 and area_id or zone_id and zone_id > 0 and zone_id
-
-              if not display_zone or display_zone == 0 then
-                -- Fallback for remaining NPCs with both areaId and zoneId = 0
-                local coords_fallback = GetCustomCoords(map_id, npc_world_x, npc_world_y)
-                if coords_fallback and coords_fallback[1] and coords_fallback[1][3] then
-                   display_zone = coords_fallback[1][3]
-                else
-                   display_zone = map_id or 1 -- Final fallback
-                end
-              end
-
-              -- Get parent map ID for NPC coordinate calculation
-              local parent_map_id_for_npc_coords = display_zone
-              if pfDB["zones"]["data"][display_zone] and pfDB["zones"]["data"][display_zone][1] then
-                parent_map_id_for_npc_coords = pfDB["zones"]["data"][display_zone][1]
-              end
-
-              -- Get WorldMapArea boundaries for the parent map
-              local bounds_sql = string.format([[
-                SELECT x_min, x_max, y_min, y_max
-                FROM WorldMapArea_wotlk
-                WHERE areatableID = %d
-                LIMIT 1
-              ]], parent_map_id_for_npc_coords)
-
-              local bounds_query = mysql:execute(bounds_sql)
-              local bounds = {}
-              local zone_x, zone_y = 50, 50 -- Fallback
-
-              if bounds_query and bounds_query:fetch(bounds, "a") then
-                local x_min = tonumber(bounds.x_min)
-                local x_max = tonumber(bounds.x_max)
-                local y_min = tonumber(bounds.y_min)
-                local y_max = tonumber(bounds.y_max)
-
-                if x_min and x_max and y_min and y_max then
-                  -- Use the working "cross" GPS formula from the plan
-                  local DBC_LocLeft = x_max    -- World Y Top
-                  local DBC_LocRight = x_min   -- World Y Bottom
-                  local DBC_LocTop = y_max     -- World X Right
-                  local DBC_LocBottom = y_min  -- World X Left
-
-                  local temp_x = (npc_world_y - DBC_LocLeft) / ((DBC_LocRight - DBC_LocLeft) / 100)
-                  local temp_y = (npc_world_x - DBC_LocTop) / ((DBC_LocBottom - DBC_LocTop) / 100)
-
-                  -- Per plan: temp_x (from Y world) goes to zone_x, temp_y (from X world) goes to zone_y
-                  zone_x = temp_x
-                  zone_y = temp_y
-                end
-              end
-
-              -- Clamp coordinates to valid range
-              zone_x = math.max(0, math.min(100, zone_x))
-              zone_y = math.max(0, math.min(100, zone_y))
-
-              local coord = { round(zone_x, 2), round(zone_y, 2), display_zone, 0 }
-              table.insert(ret, coord)
-            end
-          end
+    -- Кэш для границ зон из WorldMapArea_wotlk
+    local zone_map_world_boundaries_cache = {}
+    function GetWorldMapAreaBoundariesForZone(target_areatable_id, continent_map_id)
+        local cache_key = tostring(target_areatable_id) .. "_" .. tostring(continent_map_id)
+        if zone_map_world_boundaries_cache[cache_key] then
+            return zone_map_world_boundaries_cache[cache_key]
         end
 
+        if not target_areatable_id or not continent_map_id then
+            print(string.format("ERROR: Missing target_areatable_id (%s) or continent_map_id (%s) in GetWorldMapAreaBoundariesForZone", tostring(target_areatable_id), tostring(continent_map_id)))
+            return nil
+        end
+
+        local sql = string.format(
+            "SELECT y_min, y_max, x_max, x_min FROM WorldMapArea_wotlk WHERE mapID = %d AND areatableID = %d LIMIT 1",
+            continent_map_id, target_areatable_id
+        )
+        local cursor = mysql:execute(sql)
+        if cursor then
+            local row = cursor:fetch({}, "a")
+            cursor:close()
+            if row and row.y_min and row.y_max and row.x_max and row.x_min then
+                local bounds = {
+                    x_left = tonumber(row.y_min),   -- WorldX_Left
+                    x_right = tonumber(row.y_max),  -- WorldX_Right
+                    y_top = tonumber(row.x_max),    -- WorldY_Top (большее значение Y в мире)
+                    y_bottom = tonumber(row.x_min)  -- WorldY_Bottom (меньшее значение Y в мире)
+                }
+                zone_map_world_boundaries_cache[cache_key] = bounds
+                return bounds
+            end
+        end
+        -- print(string.format("WARNING: Could not fetch WorldMapArea boundaries for AreaTable.ID: %d on MapID: %d", target_areatable_id, continent_map_id))
+        zone_map_world_boundaries_cache[cache_key] = false -- Кэшируем неудачу, чтобы не повторять запрос
+        return nil
+    end
+
+    -- Кэш для ParentAreaID из AreaTable_wotlk
+    local area_table_parent_cache = {}
+    function GetParentAreaFromAreaTable(child_area_id)
+        if not child_area_id or child_area_id == 0 then return 0 end -- или nil
+        if area_table_parent_cache[child_area_id] then
+            return area_table_parent_cache[child_area_id]
+        end
+        local sql = string.format("SELECT parentAreaID FROM AreaTable_wotlk WHERE ID = %d LIMIT 1", child_area_id)
+        local cursor = mysql:execute(sql)
+        if cursor then
+            local row = cursor:fetch({}, "a")
+            cursor:close()
+            if row and row.parentAreaID then
+                local parent_id = tonumber(row.parentAreaID)
+                area_table_parent_cache[child_area_id] = parent_id
+                return parent_id
+            end
+        end
+        -- print(string.format("WARNING: Could not fetch parentAreaID for AreaTable.ID: %d", child_area_id))
+        area_table_parent_cache[child_area_id] = 0 -- Кэшируем неудачу (0 означает нет родителя или ошибка)
+        return 0
+    end
+
+    function GetCreatureCoords(id1_template) -- id1_template это creature_template.entry
+        local ret = {}
+        if core == "acore" then
+            local creature_spawn_data_cache = {}
+            local sql_get_creatures = string.format(
+                "SELECT guid, map, position_x, position_y, zoneId, areaId FROM creature WHERE id1 = %d",
+                id1_template
+            )
+            local cursor_creatures = mysql:execute(sql_get_creatures) -- Переименовал, чтобы не конфликтовать с cursor для границ
+
+            if not cursor_creatures then
+                print("ERROR: Failed to query creature spawns for template ID: " .. id1_template)
+                return ret
+            end
+
+            local temp_row = {}
+            while cursor_creatures:fetch(temp_row, "a") do
+                table.insert(creature_spawn_data_cache, {
+                    guid = temp_row.guid, map = tonumber(temp_row.map),
+                    position_x = tonumber(temp_row.position_x), position_y = tonumber(temp_row.position_y),
+                    zoneId = tonumber(temp_row.zoneId), areaId = tonumber(temp_row.areaId)
+                })
+                temp_row = {}
+            end
+            cursor_creatures:close()
+
+            if #creature_spawn_data_cache == 0 and DEBUG_EXTRACTION and QUEST_784_TEST then
+                 if id1_template == 3293 or id1_template == 3117 or id1_template == 3118 then
+                    print(string.format("WARNING: No spawns found in 'creature' table for template ID: %d (Quest 835 NPC)", id1_template))
+                 end
+            end
+
+            for _, creature_data in ipairs(creature_spawn_data_cache) do
+                local npc_world_x = creature_data.position_x
+                local npc_world_y = creature_data.position_y
+                local map_id = creature_data.map -- Это continent_id
+
+                local db_zoneId = creature_data.zoneId
+                local db_areaId = creature_data.areaId -- Это специфичный AreaTable.ID
+
+                -- Определяем display_zone_for_units_lua (карта, на которой NPC будет отображаться)
+                local display_zone_for_units_lua
+
+                if db_zoneId ~= 0 then
+                    display_zone_for_units_lua = db_zoneId
+                elseif db_areaId ~= 0 then
+                    local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
+                    if parent_of_area ~= 0 then
+                        display_zone_for_units_lua = parent_of_area
+                    else
+                        display_zone_for_units_lua = db_areaId -- areaId сам себе основная зона
+                    end
+                end
+
+                if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then
+                    if npc_world_x and npc_world_y and map_id then
+                        local coords_fallback_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
+                        if coords_fallback_data and coords_fallback_data[1] and coords_fallback_data[1][3] then
+                            display_zone_for_units_lua = coords_fallback_data[1][3]
+                            if display_zone_for_units_lua == 0 then display_zone_for_units_lua = map_id end
+                        else
+                            display_zone_for_units_lua = map_id
+                        end
+                    else
+                        display_zone_for_units_lua = 1
+                    end
+                    if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then display_zone_for_units_lua = 1 end
+                    -- print(string.format("INFO: NPC GUID %s (template %s) using fallback display_zone_for_units_lua: %d", creature_data.guid or "N/A", id1_template, display_zone_for_units_lua))
+                end
+
+                local zone_x, zone_y = 50, 50 -- Default
+
+                -- Получаем мировые границы для display_zone_for_units_lua
+                local zone_bounds = GetWorldMapAreaBoundariesForZone(display_zone_for_units_lua, map_id)
+
+                if npc_world_x and npc_world_y and zone_bounds then
+                    local Z_WorldX_L = zone_bounds.x_left
+                    local Z_WorldX_R = zone_bounds.x_right
+                    local Z_WorldY_T = zone_bounds.y_top    -- Большее значение Y в мире
+                    local Z_WorldY_B = zone_bounds.y_bottom -- Меньшее значение Y в мире
+
+                    local zone_map_world_width = Z_WorldX_R - Z_WorldX_L
+                    local zone_map_world_height = Z_WorldY_T - Z_WorldY_B -- Y_Top > Y_Bottom, поэтому разница положительная
+
+                    if zone_map_world_width > 0 and zone_map_world_height > 0 then
+                        -- pfQuest_X_Coord = ((WorldY_Top_Zone - npc_world_y) / ZoneMap_World_Height) * 100
+                        local pfQuest_X_pct = ((Z_WorldY_T - npc_world_y) / zone_map_world_height) * 100
+
+                        -- pfQuest_Y_Coord = 100 - (((npc_world_x - WorldX_Left_Zone) / ZoneMap_World_Width) * 100)
+                        local pfQuest_Y_pct = 100 - (((npc_world_x - Z_WorldX_L) / zone_map_world_width) * 100)
+
+                        zone_x = pfQuest_X_pct
+                        zone_y = pfQuest_Y_pct
+                    else
+                        -- print(string.format("WARNING: Invalid zone map dimensions for AreaTable.ID %d. NPC GUID %s defaulting to 50,50.", display_zone_for_units_lua, creature_data.guid or "N/A"))
+                    end
+                else
+                    -- if not npc_world_x or not npc_world_y then
+                    --     print(string.format("WARNING: NPC GUID %s (template %s) missing world coordinates. Defaulting to 50,50.", creature_data.guid or "N/A", id1_template))
+                    -- end
+                    -- if not zone_bounds then
+                    --      print(string.format("WARNING: No WMA boundaries for AreaTable.ID %d on MapID %d. NPC GUID %s defaulting to 50,50.", display_zone_for_units_lua, map_id, creature_data.guid or "N/A"))
+                    -- end
+                end
+
+                zone_x = math.max(0, math.min(100, zone_x))
+                zone_y = math.max(0, math.min(100, zone_y))
+
+                -- ВАЖНО: Третий элемент здесь - это ID карты, на которой NPC будет отображаться.
+                -- Это display_zone_for_units_lua.
+                table.insert(ret, { round(zone_x,2), round(zone_y,2), display_zone_for_units_lua, 0 })
+            end
+        end
         return ret
-      else
-        -- Original function code for other cores would go here
-        return {}
-      end
     end
 
     function GetGameObjectCoords(id)
@@ -1279,10 +1362,10 @@ if config.expansions[expansion_to_process] then
     end
   end
 
-  do -- zones
+    do -- zones
       print("- loading zones (new logic)...")
       pfDB["zones"] = pfDB["zones"] or {}
-      pfDB["zones"][data] = {} -- Очищаем или создаем таблицу для данных
+      pfDB["zones"]["data"] = {} -- Очищаем или создаем таблицу для данных
 
       local zones_query_sql = [[
   SELECT
@@ -1290,7 +1373,7 @@ if config.expansions[expansion_to_process] then
       at.name_loc0 AS SourceAreaName,
       at.continentID,
       COALESCE(parent_map_at.ID, at.ID) AS ParentZoneIdForMapTexture,
-      parent_map_at.name_loc0 AS ParentZoneName,
+      parent_map_at.name_loc0 AS ParentZoneName, -- Для отладки
       wmo.HitRectLeft AS WMO_HR_Left,
       wmo.HitRectTop AS WMO_HR_Top,
       wmo.HitRectRight AS WMO_HR_Right,
@@ -1301,14 +1384,14 @@ if config.expansions[expansion_to_process] then
   LEFT JOIN
       WorldMapOverlay_wotlk wmo ON at.ID = wmo.areaID
   LEFT JOIN
-      WorldMapArea_wotlk wma_parent_for_overlay ON wmo.zoneID = wma_parent_for_overlay.zoneID
+      WorldMapArea_wotlk wma_parent_for_overlay ON wmo.zoneID = wma_parent_for_overlay.zoneID -- wmo.zoneID = ID WMA-записи родителя
   LEFT JOIN
       AreaTable_wotlk parent_map_at ON wma_parent_for_overlay.areatableID = parent_map_at.ID AND parent_map_at.continentID = at.continentID
   WHERE
       at.ID IN (SELECT DISTINCT areaId FROM creature WHERE areaId != 0 UNION SELECT DISTINCT zoneId FROM creature WHERE zoneId !=0)
       AND at.ID != 0
   ORDER BY
-      at.ID
+      at.ID;
   ]]
 
       local query_cursor = mysql:execute(zones_query_sql)
@@ -1316,19 +1399,31 @@ if config.expansions[expansion_to_process] then
           print("ERROR: Failed to execute SQL query for zones!")
       else
           local row = {}
+          local processed_zones_count = 0
           while query_cursor:fetch(row, "a") do
+              processed_zones_count = processed_zones_count + 1
               local sourceAreaID = tonumber(row.SourceAreaID)
               local parentZoneIdForMapTexture = tonumber(row.ParentZoneIdForMapTexture)
               local isRealOverlay = (tonumber(row.IsRealOverlay) == 1)
 
               local hrLeft, hrTop, hrRight, hrBottom
 
-              if isRealOverlay then
+              if isRealOverlay and row.WMO_HR_Left ~= nil then -- Добавил проверку на nil для WMO_HR_Left как индикатор
                   hrLeft = tonumber(row.WMO_HR_Left)
                   hrTop = tonumber(row.WMO_HR_Top)
                   hrRight = tonumber(row.WMO_HR_Right)
                   hrBottom = tonumber(row.WMO_HR_Bottom)
-              else -- Основная зона или подзона без валидного оверлея в WMO
+
+                  -- Дополнительная проверка на валидность HitRect для оверлея
+                  if not hrRight or not hrBottom or hrLeft >= hrRight or hrTop >= hrBottom then
+                      -- print(string.format("WARNING: Invalid HitRect for overlay AreaID: %d. Reverting to full canvas for this entry.", sourceAreaID))
+                      parentZoneIdForMapTexture = sourceAreaID -- Использует свою карту, так как хитбокс оверлея некорректен
+                      hrLeft = 0
+                      hrTop = 0
+                      hrRight = CANVAS_WIDTH
+                      hrBottom = CANVAS_HEIGHT
+                  end
+              else -- Основная зона или подзона без валидного/полного оверлея в WMO
                   parentZoneIdForMapTexture = sourceAreaID -- Использует свою карту
                   hrLeft = 0
                   hrTop = 0
@@ -1364,9 +1459,11 @@ if config.expansions[expansion_to_process] then
               }
           end
           query_cursor:close()
-          print("  SUCCESS: zones.lua data generated with new logic. Total zones: " .. TableCount(pfDB["zones"][data]))
+          print("  SUCCESS: zones.lua data generated with new logic. Total zones processed from SQL: " .. processed_zones_count .. ", Populated in pfDB: " .. TableCount(pfDB["zones"][data]))
       end
-    end
+    end -- конец do -- zones
+
+
 
   do -- units
     print("- loading units...")
