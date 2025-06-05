@@ -2615,7 +2615,7 @@ if config.expansions[expansion_to_process] then
                       table.insert(pfDB["quests"][data][entry]["end"]["O"], tonumber(gameobject_involvedrelation.id))
                   end
               end
-          end
+
           end
       end
     end
@@ -3267,7 +3267,7 @@ if config.expansions[expansion_to_process] then
   debug_statistics()
 else
   print("Error: Expansion '" .. expansion_to_process .. "' not found in config.expansions")
-end 
+end
 
 -- === DEBUG/ПАТЧ: Явная генерация локализованного zones.lua ===
 for loc in pairs(locales) do
