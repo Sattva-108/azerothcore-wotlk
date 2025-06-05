@@ -1433,13 +1433,14 @@ if config.expansions[expansion_to_process] then
       pfDB["zones"] = pfDB["zones"] or {}
       pfDB["zones"]["data"] = {} -- Очищаем или создаем таблицу для данных
 
+      -- В блоке do -- zones (new logic)...
       local zones_query_sql = [[
   SELECT
       at.ID AS SourceAreaID,
       at.name_loc0 AS SourceAreaName,
       at.continentID,
       COALESCE(parent_map_at.ID, at.ID) AS ParentZoneIdForMapTexture,
-      parent_map_at.name_loc0 AS ParentZoneName, -- Для отладки
+      parent_map_at.name_loc0 AS ParentZoneName,
       wmo.HitRectLeft AS WMO_HR_Left,
       wmo.HitRectTop AS WMO_HR_Top,
       wmo.HitRectRight AS WMO_HR_Right,
@@ -1450,14 +1451,13 @@ if config.expansions[expansion_to_process] then
   LEFT JOIN
       WorldMapOverlay_wotlk wmo ON at.ID = wmo.areaID
   LEFT JOIN
-      WorldMapArea_wotlk wma_parent_for_overlay ON wmo.zoneID = wma_parent_for_overlay.zoneID -- wmo.zoneID = ID WMA-записи родителя
+      WorldMapArea_wotlk wma_parent_for_overlay ON wmo.zoneID = wma_parent_for_overlay.zoneID
   LEFT JOIN
       AreaTable_wotlk parent_map_at ON wma_parent_for_overlay.areatableID = parent_map_at.ID AND parent_map_at.continentID = at.continentID
   WHERE
-      at.ID IN (SELECT DISTINCT areaId FROM creature WHERE areaId != 0 UNION SELECT DISTINCT zoneId FROM creature WHERE zoneId !=0)
-      AND at.ID != 0
+      at.ID != 0
   ORDER BY
-      at.ID;
+      at.ID ASC;
   ]]
 
       local query_cursor = mysql:execute(zones_query_sql)
@@ -2663,61 +2663,77 @@ if config.expansions[expansion_to_process] then
     do -- raremobs
       local creature_template = {}
       local rank_field = C.Rank or "rank"
-      local limit_clause = UNITS_LIMIT and (' LIMIT ' .. UNITS_LIMIT) or ''  -- Use UNITS_LIMIT for raremobs
-      local query = mysql:execute([[
-        SELECT * FROM `creature_template` WHERE ]] .. rank_field .. [[ = 4 OR ]] .. rank_field .. [[ = 2 ORDER BY entry]] .. limit_clause)
+      local entry_field = C.Entry or "entry"
+      local minlevel_field = C.MinLevel or "minlevel"
+      local limit_clause = UNITS_LIMIT and (' LIMIT ' .. UNITS_LIMIT) or ''
 
-      if query then
+      print(string.format("  DEBUG: Using fields - entry:%s, minlevel:%s, rank:%s", entry_field, minlevel_field, rank_field))
+      local query_sql_rares = string.format([[
+        SELECT `%s`, `%s` FROM `creature_template` WHERE `%s` = 4 OR `%s` = 2 ORDER BY `%s`%s
+      ]], entry_field, minlevel_field, rank_field, rank_field, entry_field, limit_clause)
+      print(string.format("  DEBUG: SQL for rares = %s", query_sql_rares))
+
+      local query, err_rares = mysql:execute(query_sql_rares)
+      if not query then
+        print(string.format("  ERROR executing raremobs query: %s", err_rares or "Unknown MySQL error"))
+      else
+        local processed_rares_count = 0
         while query:fetch(creature_template, "a") do
           if debug("meta_rares") then break end
-          local entry_field = C.Entry or "entry"
-          local minlevel_field = C.MinLevel or "minlevel"
           local entry = tonumber(creature_template[entry_field])
           local level = tonumber(creature_template[minlevel_field])
           if entry and level then
-            pfDB["meta"..exp].rares[entry] = level
+            pfDB["meta"..exp]["rares"][entry] = level
+            processed_rares_count = processed_rares_count + 1
           end
         end
-      else
-        print("  Warning: Failed to execute raremobs query")
+        query:close()
+        print(string.format("  Processed %d creatures for rares FROM LUA.", processed_rares_count))
       end
     end
 
     do -- gameobject relations
       if core == "acore" then
         -- For AzerothCore, use loaded DBC Lock table
-        local gameobject_template = {}
-        local limit_clause = OBJECTS_LIMIT and (' LIMIT ' .. OBJECTS_LIMIT) or ''  -- Use OBJECTS_LIMIT for gameobjects
-        local query = mysql:execute([[
-          SELECT * FROM `gameobject_template`, Lock_]]..expansion..[[
-          WHERE `type` = 3 AND `locktype` = 2 AND `flags` = 0 AND `data1` > 0 and id = data0 GROUP BY `gameobject_template`.entry ORDER BY `gameobject_template`.entry ASC]] .. limit_clause .. [[
-        ]])
+        local gameobject_meta_info = {}
+        local limit_clause = OBJECTS_LIMIT and not FULL_EXTRACTION and (' LIMIT ' .. OBJECTS_LIMIT) or ''
+        print(string.format("  DEBUG: Using hardcoded 'wotlk' for Lock table (AzerothCore)"))
+        local meta_farm_query_sql = string.format([[
+            SELECT gt.entry, l.data AS lock_data_type, l.skill AS required_skill
+            FROM gameobject_template gt
+            JOIN Lock_wotlk l ON gt.data0 = l.id
+            WHERE gt.type = 3 AND l.locktype = 2
+            ORDER BY gt.entry ASC
+            %s
+        ]], limit_clause)
+        print(string.format("  DEBUG: SQL = %s", meta_farm_query_sql))
 
-        if not query then
-          -- Fallback without Lock table
-          query = mysql:execute([[
-            SELECT * FROM `gameobject_template`
-            WHERE `type` = 3 AND `data1` > 0
-            ORDER BY entry ASC]] .. limit_clause .. [[
-          ]])
-        end
-
-        if query then
-          while query:fetch(gameobject_template, "a") do
+        local farm_query, err_farm = mysql:execute(meta_farm_query_sql)
+        if not farm_query then
+          print(string.format("  ERROR executing farm query for meta: %s", err_farm or "Unknown MySQL error"))
+        else
+          local processed_farm_count = 0
+          while farm_query:fetch(gameobject_meta_info, "a") do
             if debug("meta_farm") then break end
-            local entry   = tonumber(gameobject_template.entry) * -1
-            local data = tonumber(gameobject_template.data)
-            local skill = tonumber(gameobject_template.skill)
-            if data == 1 then
-              pfDB["meta"..exp]["chests"][entry] = skill
-            elseif data == 2 then
-              pfDB["meta"..exp]["herbs"][entry] = skill
-            elseif data == 3 then
-              pfDB["meta"..exp]["mines"][entry] = skill
+
+            local entry = tonumber(gameobject_meta_info.entry)
+            local lock_type = tonumber(gameobject_meta_info.lock_data_type)
+            local required_skill = tonumber(gameobject_meta_info.required_skill)
+
+            if entry and lock_type and required_skill then
+              local negative_entry = -entry
+              if lock_type == 1 then
+                pfDB["meta"..exp]["chests"][negative_entry] = required_skill
+              elseif lock_type == 2 then
+                pfDB["meta"..exp]["herbs"][negative_entry] = required_skill
+              elseif lock_type == 3 then
+                pfDB["meta"..exp]["mines"][negative_entry] = required_skill
+              end
+              processed_farm_count = processed_farm_count + 1
             end
           end
-        else
-          print("  Warning: Failed to query gameobject relations from DBC tables - run load_dbc.lua first")
+          farm_query:close()
+          print(string.format("  Processed %d gameobjects for chests/herbs/mines FROM LUA.", processed_farm_count))
         end
       else
         -- Original logic for other cores

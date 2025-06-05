@@ -500,7 +500,198 @@ function TableCount(t)
     return count
 end
 
-print(STAR .. " Enhanced pfQuest debug loaded! Use /pftest and /pfq <questID>")
+print(STAR .. " Enhanced pfQuest debug loaded! Use /pftest, /pfq <questID>, and /pfr [rareID]")
+
+-- Register slash command for rares testing
+SLASH_PFRARETEST1 = "/pfr"
+SlashCmdList["PFRARETEST"] = function(rareId)
+    if not pfDB then
+        print(SKULL .. " pfDB not loaded! Make sure pfQuest addon is running.")
+        return
+    end
+
+    -- DEBUG: Check pfDB structure for meta
+    print("=== DEBUG pfDB Meta Structure ===")
+    print("pfDB type:", type(pfDB))
+
+    if pfDB then
+        print("pfDB keys:")
+        for k, v in pairs(pfDB) do
+            print("  " .. tostring(k) .. " = " .. tostring(type(v)))
+        end
+
+        if pfDB["meta"] then
+            print("pfDB['meta'] exists, checking contents:")
+            for k, v in pairs(pfDB["meta"]) do
+                if k == "rares" and type(v) == "table" then
+                    local count = 0
+                    for _ in pairs(v) do count = count + 1 end
+                    print("  Found rares table with " .. count .. " entries")
+                    -- Show first few entries
+                    local shown = 0
+                    for rareId, level in pairs(v) do
+                        if shown < 3 then
+                            print("    Rare " .. rareId .. " = level " .. level)
+                            shown = shown + 1
+                        else
+                            break
+                        end
+                    end
+                else
+                    print("  Key: " .. tostring(k) .. " = " .. tostring(type(v)))
+                end
+            end
+        else
+            print("pfDB['meta'] does not exist")
+        end
+    else
+        print("pfDB is nil!")
+    end
+    print("=== End DEBUG ===")
+
+    -- Check if specific rare ID provided
+    if rareId and rareId ~= "" then
+        rareId = tonumber(rareId)
+        if not rareId then
+            print(SKULL .. " Usage: /pfr <rareID> or /pfr for overview")
+            return
+        end
+
+        -- Detailed rare analysis
+        print("=== pfQuest Rare Analysis ===")
+        print(DIAMOND .. " Testing Rare " .. rareId)
+
+        -- Check in meta rares
+        local rareLevel = nil
+        if pfDB["meta"] and pfDB["meta"]["rares"] then
+            rareLevel = pfDB["meta"]["rares"][rareId]
+        end
+
+        if not rareLevel then
+            print(SKULL .. " Rare " .. rareId .. " not found in meta.rares")
+            return
+        end
+
+        print(TRIANGLE .. " Level: " .. rareLevel)
+
+        -- Check in units data
+        local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][rareId]
+        if unit then
+            local coords_count = unit.coords and #unit.coords or 0
+            print(STAR .. " Spawn locations: " .. coords_count)
+
+            if coords_count > 0 then
+                for i, coord in ipairs(unit.coords) do
+                    local zone_names = {
+                        [14] = "Durotar", [1519] = "Stormwind City", [1637] = "Orgrimmar",
+                        [17] = "The Barrens", [141] = "Teldrassil", [215] = "Mulgore",
+                        [3520] = "Hellfire Peninsula", [65] = "Dragonblight"
+                    }
+                    local zone_name = zone_names[coord[3]] or ("Zone " .. coord[3])
+                    print("   " .. MOON .. " Spawn " .. i .. ": " .. coord[1] .. ", " .. coord[2] .. " in " .. zone_name)
+                    if i >= 3 then break end -- Limit to first 3 spawns
+                end
+            else
+                print(SKULL .. " No spawn coordinates found!")
+            end
+
+            -- Check name from locales
+            local rareName = "Rare " .. rareId
+            if pfDB["units"]["loc"] and pfDB["units"]["loc"][rareId] then
+                rareName = pfDB["units"]["loc"][rareId]
+            end
+            print(SQUARE .. " Name: " .. rareName)
+
+            -- Additional unit info
+            if unit.lvl then print(CROSS .. " Unit level range: " .. unit.lvl) end
+            if unit.fac then print(CROSS .. " Faction: " .. unit.fac) end
+            if unit.rnk then print(CROSS .. " Rank: " .. unit.rnk) end
+        else
+            print(SKULL .. " Rare " .. rareId .. " not found in units data!")
+        end
+
+        print("=== End Rare Analysis ===")
+    else
+        -- Overview of all rares
+        print("=== pfQuest Rares Overview ===")
+
+        local raresCount = 0
+        local raresWithCoords = 0
+        local raresList = {}
+
+        if pfDB["meta"] and pfDB["meta"]["rares"] then
+            for rareId, level in pairs(pfDB["meta"]["rares"]) do
+                raresCount = raresCount + 1
+
+                -- Check if has coordinates
+                local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][rareId]
+                if unit and unit.coords and #unit.coords > 0 then
+                    raresWithCoords = raresWithCoords + 1
+                    table.insert(raresList, {id = rareId, level = level, unit = unit})
+                end
+            end
+        end
+
+        print(SQUARE .. " Rares total: " .. raresCount .. " | With coords: " .. raresWithCoords)
+
+        if raresWithCoords > 0 then
+            -- Sort by level
+            table.sort(raresList, function(a, b) return a.level < b.level end)
+
+            print(DIAMOND .. " Level distribution (with coords only):")
+            local levelGroups = {}
+            for _, rare in ipairs(raresList) do
+                local levelRange = math.floor(rare.level / 10) * 10
+                levelGroups[levelRange] = (levelGroups[levelRange] or 0) + 1
+            end
+
+            for level, count in pairs(levelGroups) do
+                print("   Level " .. level .. "-" .. (level + 9) .. ": " .. count .. " rares")
+            end
+
+            -- Show examples with zones
+            local maxToShow = math.min(10, #raresList)
+            print(TRIANGLE .. " First " .. maxToShow .. " rares with coordinates:")
+
+            for i = 1, maxToShow do
+                local rare = raresList[i]
+                local name = "Rare " .. rare.id
+
+                if pfDB["units"]["loc"] and pfDB["units"]["loc"][rare.id] then
+                    name = pfDB["units"]["loc"][rare.id]
+                end
+
+                local zoneId = rare.unit.coords[1][3]
+                local zone_name = "Zone " .. zoneId
+
+                -- Try to get zone name from pfDB
+                if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                    zone_name = pfDB["zones"]["loc"][zoneId]
+                else
+                    -- Fallback to common zone names
+                    local zone_names = {
+                        [14] = "Durotar", [1519] = "Stormwind City", [1637] = "Orgrimmar",
+                        [17] = "The Barrens", [141] = "Teldrassil", [215] = "Mulgore",
+                        [3520] = "Hellfire Peninsula", [65] = "Dragonblight"
+                    }
+                    zone_name = zone_names[zoneId] or zone_name
+                end
+
+                print("   " .. rare.id .. ": " .. name .. " [Lv" .. rare.level .. "] in " .. zone_name .. " (" .. #rare.unit.coords .. " spawns)")
+            end
+
+            print("")
+            print(MOON .. " TEST COMMANDS:")
+            for i = 1, math.min(3, #raresList) do
+                print("   /pfr " .. raresList[i].id)
+            end
+        else
+            print(SKULL .. " No rares found in meta database!")
+        end
+
+        print("=== End Rares Overview ===")
+    end
+end
 
 -- === ГЛУБОКАЯ ПРОВЕРКА ДЛЯ /pfq ===
 SLASH_PFQDEEP1 = "/pfqdeep"
