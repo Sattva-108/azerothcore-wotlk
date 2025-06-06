@@ -13,7 +13,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -2234,8 +2234,8 @@ if config.expansions[expansion_to_process] then
 
       local entry = tonumber(current_quest_data[quest_pk_column])
       local quest_id = current_quest_data[quest_pk_column] or current_quest_data.entry
-        local minlevel = tonumber(quest_template.MinLevel)
-      local questlevel = tonumber(quest_template.QuestLevel)
+        local minlevel = tonumber(current_quest_data.MinLevel)
+      local questlevel = tonumber(current_quest_data.QuestLevel)
       local class_column = C.RequiredClasses or "RequiredClasses" -- Default if not in C
       local race_column = C.RequiredRaces or "AllowableRaces" -- Default to AC if not in C
       local skill_column = C.RequiredSkill or "RequiredSkillId" -- Default to AC if not in C
@@ -2870,11 +2870,11 @@ if config.expansions[expansion_to_process] then
       local minlevel_field = C.MinLevel or "minlevel"
       local limit_clause = UNITS_LIMIT and (' LIMIT ' .. UNITS_LIMIT) or ''
 
-      print(string.format("  DEBUG: Using fields - entry:%s, minlevel:%s, rank:%s", entry_field, minlevel_field, rank_field))
+--       print(string.format("  DEBUG: Using fields - entry:%s, minlevel:%s, rank:%s", entry_field, minlevel_field, rank_field))
       local query_sql_rares = string.format([[
         SELECT `%s`, `%s` FROM `creature_template` WHERE `%s` = 4 OR `%s` = 2 ORDER BY `%s`%s
       ]], entry_field, minlevel_field, rank_field, rank_field, entry_field, limit_clause)
-      print(string.format("  DEBUG: SQL for rares = %s", query_sql_rares))
+--       print(string.format("  DEBUG: SQL for rares = %s", query_sql_rares))
 
       local query, err_rares = mysql:execute(query_sql_rares)
       if not query then
@@ -2909,7 +2909,7 @@ if config.expansions[expansion_to_process] then
             ORDER BY gt.entry ASC
             %s
         ]], limit_clause)
-        print(string.format("  DEBUG: SQL = %s", meta_farm_query_sql))
+--         print(string.format("  DEBUG: SQL = %s", meta_farm_query_sql))
 
         local farm_query, err_farm = mysql:execute(meta_farm_query_sql)
         if not farm_query then
@@ -3454,12 +3454,16 @@ end
 
   debug_statistics()
 
-print("\\n================================================================")
+print("================================================================")
 print("BLOCK EXECUTION TIMES:")
 if execution_times and #execution_times > 0 then
+    local total_time = 0
     for _, data in ipairs(execution_times) do
         print(string.format("  BLOCK '%s' execution time: %.4f seconds", data.name, data.time))
+        total_time = total_time + data.time
     end
+    print("  --------------------------------------------------------")
+    print(string.format("  TOTAL execution time: %.4f seconds", total_time))
 else
     print("  No execution times recorded.")
 end
