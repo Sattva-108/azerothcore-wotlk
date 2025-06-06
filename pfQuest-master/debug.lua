@@ -796,3 +796,170 @@ SlashCmdList["PFQDEEP"] = function(msg)
 
   print("=== End pfQuest Deep Map Debug ===")
 end
+
+-- Вставьте этот ИСПРАВЛЕННЫЙ код в конец вашего debug.lua
+
+local function AnalyzeRefLootQuests(questIdFilter)
+    if not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] or not pfDB["items"] or not pfDB["items"]["data"] then
+        print(SKULL .. " pfDB, quests.data, or items.data not loaded!")
+        return
+    end
+
+    print(DIAMOND .. " === pfQuest RefLoot Analysis === ")
+
+    local questsToAnalyze = {}
+    if questIdFilter then
+        if pfDB["quests"]["data"][questIdFilter] then
+            table.insert(questsToAnalyze, questIdFilter)
+            print(TRIANGLE .. " Analyzing specific Quest ID: " .. questIdFilter)
+        else
+            print(SKULL .. " Quest ID " .. questIdFilter .. " not found.")
+            return
+        end
+    else
+        print(TRIANGLE .. " Searching all quests for item objectives...")
+        for qId, qData in pairs(pfDB["quests"]["data"]) do
+            if qData.obj and qData.obj.I and #qData.obj.I > 0 then
+                table.insert(questsToAnalyze, qId)
+            end
+        end
+        table.sort(questsToAnalyze)
+        print(STAR .. " Found " .. #questsToAnalyze .. " quests with item objectives.")
+        if #questsToAnalyze == 0 then
+            print(DIAMOND .. " === End pfQuest RefLoot Analysis === ") -- Добавил вывод конца анализа
+            return
+        end
+        local maxToShow = math.min(15, #questsToAnalyze)
+        print(SQUARE .. " Showing first " .. maxToShow .. " quests:")
+    end
+
+    local questsWithRefLootInfo = 0
+    local questsWithAnyLootInfo = 0
+    local displayedCount = 0
+
+    for _, qId in ipairs(questsToAnalyze) do
+        if not questIdFilter and displayedCount >= 15 then break end
+
+        local qData = pfDB["quests"]["data"][qId]
+        local qLoc = pfDB["quests"]["loc"][qId]
+        local qName = (qLoc and qLoc.T) or "Quest " .. qId
+
+        local hasItemObjectives = qData.obj and qData.obj.I and #qData.obj.I > 0
+
+        -- Оборачиваем основную логику в if hasItemObjectives
+        if hasItemObjectives then
+            if questIdFilter then -- Детальный вывод для одного квеста
+                print(MOON .. " Quest: " .. qName .. " (ID: " .. qId .. ")")
+                print(CROSS .. " Item Objectives & Sources:")
+            end
+
+            local foundLootInfoForThisQuest = false
+            local foundRefLootForThisQuest = false
+
+            for _, itemId in ipairs(qData.obj.I) do
+                local itemLoc = pfDB["items"]["loc"] and pfDB["items"]["loc"][itemId]
+                local itemName = itemLoc or "Item " .. itemId
+                if questIdFilter then print("   - Need: " .. itemName .. " (ID: " .. itemId .. ")") end
+
+                local itemData = pfDB["items"]["data"][itemId]
+                if itemData then
+                    if itemData.U and TableCount(itemData.U) > 0 then
+                        foundLootInfoForThisQuest = true
+                        if questIdFilter then
+                            print("     " .. STAR .. " Drops from Units (NPCs):")
+                            for unitId, chanceOrData in pairs(itemData.U) do
+                                local unitName = (pfDB["units"]["loc"] and pfDB["units"]["loc"][unitId]) or "NPC " .. unitId
+                                local chanceStr = type(chanceOrData) == "number" and chanceOrData .. "%" or "complex data"
+                                print("       - " .. unitName .. " (ID: " .. unitId .. "), Chance: " .. chanceStr)
+                            end
+                        end
+                    end
+                    if itemData.O and TableCount(itemData.O) > 0 then
+                        foundLootInfoForThisQuest = true
+                        if questIdFilter then
+                            print("     " .. CIRCE .. " Drops from Objects:")
+                            for objId, chanceOrData in pairs(itemData.O) do
+                                local actualObjId = math.abs(objId)
+                                local objName = (pfDB["objects"]["loc"] and pfDB["objects"]["loc"][actualObjId]) or "Object " .. actualObjId
+                                local chanceStr = type(chanceOrData) == "number" and chanceOrData .. "%" or "complex data"
+                                print("       - " .. objName .. " (ID: " .. actualObjId .. "), Chance: " .. chanceStr)
+                            end
+                        end
+                    end
+                    if itemData.R and TableCount(itemData.R) > 0 then
+                        foundLootInfoForThisQuest = true
+                        foundRefLootForThisQuest = true
+                        if questIdFilter then
+                            print("     " .. DIAMOND .. " Via Reference Loot Tables (pfDB[items][data][itemID][R]):")
+                            for refLootId, chanceOrFlag in pairs(itemData.R) do
+                                 print("       - RefLoot Table ID: " .. refLootId .. " (Data: " .. tostring(chanceOrFlag) .. ")")
+                                 local refLootTableData = pfDB["refloot"] and pfDB["refloot"]["data"] and pfDB["refloot"]["data"][refLootId]
+                                 if refLootTableData then
+                                     print("         " .. TRIANGLE .. " Contents of RefLoot Table " .. refLootId .. ":")
+                                     for innerItemId, innerItemData in pairs(refLootTableData) do
+                                         local innerItemName = (pfDB["items"]["loc"] and pfDB["items"]["loc"][innerItemId]) or "Item " .. innerItemId
+                                         print("           - " .. innerItemName .. " (ID: " .. innerItemId .. "), Chance: " .. (innerItemData.chance or "N/A"))
+                                         if innerItemData.reference_to_other and innerItemData.reference_to_other > 0 then
+                                             print("             (References further to: " .. innerItemData.reference_to_other .. ")")
+                                         end
+                                     end
+                                 else
+                                     print("         " .. SKULL .. " RefLoot Table " .. refLootId .. " not found in pfDB['refloot']['data']")
+                                 end
+                            end
+                        end
+                    end
+                    if not itemData.U and not itemData.O and not itemData.R and questIdFilter then
+                        print("     " .. SKULL .. " No specific unit, object, or refloot sources found in pfDB['items']['data'] for this item.")
+                    end
+                elseif questIdFilter then
+                    print("     " .. SKULL .. " Item " .. itemId .. " not found in pfDB['items']['data'].")
+                end
+            end -- конец цикла по qData.obj.I
+
+            if foundLootInfoForThisQuest then
+                questsWithAnyLootInfo = questsWithAnyLootInfo + 1
+            end
+            if foundRefLootForThisQuest then
+                questsWithRefLootInfo = questsWithRefLootInfo + 1
+            end
+
+            if not questIdFilter then
+                local status_icons = ""
+                if foundLootInfoForThisQuest then status_icons = status_icons .. STAR else status_icons = status_icons .. SKULL end
+                if foundRefLootForThisQuest then status_icons = status_icons .. DIAMOND end
+                print("   " .. qId .. ": " .. qName .. " " .. status_icons)
+            elseif not foundLootInfoForThisQuest then
+                 print(SKULL .. " No loot information found for any item objectives of this quest.")
+            end
+        else -- else для if hasItemObjectives
+            if questIdFilter then
+                print(MOON .. " Quest: " .. qName .. " (ID: " .. qId .. ")")
+                print("   No item objectives found for this quest.")
+            end
+            -- Если нет item objectives, то для общего списка этот квест не будет выведен (он отфильтруется раньше)
+            -- Для детального анализа одного квеста мы просто сообщим, что нет item objectives.
+        end -- конец if hasItemObjectives
+        displayedCount = displayedCount + 1
+    end -- конец основного цикла по questsToAnalyze
+
+    if not questIdFilter then
+        print(CIRCE .. " Summary: ")
+        print("   Quests with any item loot info: " .. questsWithAnyLootInfo .. "/" .. #questsToAnalyze)
+        print("   Quests explicitly using RefLoot (via itemData.R): " .. questsWithRefLootInfo .. "/" .. #questsToAnalyze)
+    end
+    print(DIAMOND .. " === End pfQuest RefLoot Analysis === ")
+end
+
+SLASH_PFREFLOOT1 = "/pfrefloot"
+SlashCmdList["PFREFLOOT"] = function(msg)
+    local questId = nil
+    if msg and msg ~= "" then
+        questId = tonumber(msg)
+        if not questId then
+            print(SKULL .. " Invalid Quest ID. Usage: /pfrefloot [questID]")
+            return
+        end
+    end
+    AnalyzeRefLootQuests(questId)
+end
