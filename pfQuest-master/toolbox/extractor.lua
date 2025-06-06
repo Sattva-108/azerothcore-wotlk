@@ -13,14 +13,14 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_ID = 816 -- securing the lines
 local QUEST_784_NPCS = {3193, 3110, 3231}  -- NPCs из анализа квеста 784
 local QUEST_784_ITEMS = {4891}  -- Items для тестирования (quest items, rewards)
@@ -130,6 +130,9 @@ print("================================================================")
 
 -- path to the modules
 package.path = package.path .. ';./lua-sql-mysql/src/?.lua;./sha1/?.lua'
+
+-- Initialize execution times table
+local execution_times = {}
 
 ---@diagnostic disable-next-line: undefined-global
 local jit = jit
@@ -1357,6 +1360,7 @@ if config.expansions[expansion_to_process] then
     end
   end
 
+  local start_time_areatrigger = os.clock()
   do -- areatrigger
     print("- loading areatrigger...")
 
@@ -1428,8 +1432,13 @@ if config.expansions[expansion_to_process] then
         end
       end
     end
+    local end_time_areatrigger = os.clock()
+    if pfDB and pfDB["areatrigger"] then
+      table.insert(execution_times, {name = "areatrigger", time = end_time_areatrigger - start_time_areatrigger})
+    end
   end
 
+    local start_time_zones = os.clock()
     do -- zones
       print("- loading zones (new logic)...")
       pfDB["zones"] = pfDB["zones"] or {}
@@ -1529,10 +1538,15 @@ if config.expansions[expansion_to_process] then
           query_cursor:close()
           print("  SUCCESS: zones.lua data generated with new logic. Total zones processed from SQL: " .. processed_zones_count .. ", Populated in pfDB: " .. TableCount(pfDB["zones"][data]))
       end
+    local end_time_zones = os.clock()
+    if pfDB and pfDB["zones"] then
+      table.insert(execution_times, {name = "zones", time = end_time_zones - start_time_zones})
+    end
     end -- конец do -- zones
 
 
 
+  local start_time_units = os.clock()
   do -- units
     print("- loading units...")
 
@@ -1806,8 +1820,13 @@ if config.expansions[expansion_to_process] then
         end
       end
     end
+    local end_time_units = os.clock()
+    if pfDB and pfDB["units"] then
+      table.insert(execution_times, {name = "units", time = end_time_units - start_time_units})
+    end
   end
 
+  local start_time_objects = os.clock()
   do -- objects
     print("- loading objects...")
 
@@ -1861,8 +1880,13 @@ if config.expansions[expansion_to_process] then
         pfDB["objects"][data][entry]["coords"] = removedupes(pfDB["objects"][data][entry]["coords"])
       end
     end
+    local end_time_objects = os.clock()
+    if pfDB and pfDB["objects"] then
+      table.insert(execution_times, {name = "objects", time = end_time_objects - start_time_objects})
+    end
   end
 
+  local start_time_items = os.clock()
   do -- items
     print("- loading items...")
 
@@ -1992,8 +2016,13 @@ if config.expansions[expansion_to_process] then
         end
       end
     end
+    local end_time_items = os.clock()
+    if pfDB and pfDB["items"] then
+      table.insert(execution_times, {name = "items", time = end_time_items - start_time_items})
+    end
   end
 
+  local start_time_refloot = os.clock()
   do -- refloot
     print("- loading refloot...")
 
@@ -2072,6 +2101,10 @@ if config.expansions[expansion_to_process] then
         end
       end
     end
+    local end_time_refloot = os.clock()
+    if pfDB and pfDB["refloot"] then
+      table.insert(execution_times, {name = "refloot", time = end_time_refloot - start_time_refloot})
+    end
   end
 
   -- ================================================================
@@ -2123,6 +2156,7 @@ if config.expansions[expansion_to_process] then
     return copy
   end
 
+  local start_time_quests = os.clock()
   do -- quests
     print("- loading quests...")
 
@@ -2692,10 +2726,15 @@ if config.expansions[expansion_to_process] then
           end
       end
     end
+    local end_time_quests = os.clock()
+    if pfDB and pfDB["quests"] then
+      table.insert(execution_times, {name = "quests", time = end_time_quests - start_time_quests})
+    end
   end
 
 
 
+  local start_time_minimap = os.clock()
   do -- minimap
     print("- loading minimap...")
 
@@ -2759,8 +2798,13 @@ if config.expansions[expansion_to_process] then
         print("  DISABLED: pfquest database not available")
       end
     end
+    local end_time_minimap = os.clock()
+    if pfDB and pfDB["minimap"..exp] then
+      table.insert(execution_times, {name = "minimap", time = end_time_minimap - start_time_minimap})
+    end
   end
 
+  local start_time_meta = os.clock()
   do -- meta
     print("- loading meta...")
 
@@ -2919,8 +2963,13 @@ if config.expansions[expansion_to_process] then
         end
       end
     end
+    local end_time_meta = os.clock()
+    if pfDB and pfDB["meta"..exp] then
+      table.insert(execution_times, {name = "meta", time = end_time_meta - start_time_meta})
+    end
   end
 
+  local start_time_locales = os.clock()
   print("- loading locales...")
   do -- unit locales
     if core == "acore" then
@@ -3228,6 +3277,8 @@ if config.expansions[expansion_to_process] then
         print("  Warning: Failed to execute quests locales query")
       end
     end
+    local end_time_locales = os.clock()
+    table.insert(execution_times, {name = "locales", time = end_time_locales - start_time_locales})
   end
 
   do -- professions locales
@@ -3403,6 +3454,17 @@ end
 
   debug_statistics()
 
+print("\\n================================================================")
+print("BLOCK EXECUTION TIMES:")
+if execution_times and #execution_times > 0 then
+    for _, data in ipairs(execution_times) do
+        print(string.format("  BLOCK '%s' execution time: %.4f seconds", data.name, data.time))
+    end
+else
+    print("  No execution times recorded.")
+end
+print("================================================================")
+
 print("Extraction completed!")
 
 
@@ -3411,9 +3473,9 @@ local transfer_result = os.execute("copy_files.bat auto")
 
 if transfer_result == 0 then
   if QUEST_784_TEST then
-    print("🎯 QUEST 784 DEBUG: Ready for testing! Commands: /run print(\"Quest 784:\", pfDB[\"quests\"][\"data\"][784] and \"FOUND\" or \"NOT FOUND\"); print(\"NPC 3139:\", pfDB[\"units\"][\"data\"][3139] and \"FOUND\" or \"NOT FOUND\")")
+--     print("🎯 QUEST 784 DEBUG: Ready for testing! Commands: /run print(\"Quest 784:\", pfDB[\"quests\"][\"data\"][784] and \"FOUND\" or \"NOT FOUND\"); print(\"NPC 3139:\", pfDB[\"units\"][\"data\"][3139] and \"FOUND\" or \"NOT FOUND\")")
   else
-    print("✅ Extraction completed! Test: /run local count = 0; for _ in pairs(pfDB[\"quests\"][\"data\"]) do count = count + 1 end; print(\"Total quests:\", count)")
+--     print("✅ Extraction completed! Test: /run local count = 0; for _ in pairs(pfDB[\"quests\"][\"data\"]) do count = count + 1 end; print(\"Total quests:\", count)")
   end
 else
   print("⚠️  File transfer failed - run copy_files.bat manually")
