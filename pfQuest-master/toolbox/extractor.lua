@@ -13,9 +13,9 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
-local OTHER_LIMIT = 15             -- Лимит для всего остального
-local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
+local OTHER_LIMIT = 3000             -- Лимит для всего остального
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -844,6 +844,182 @@ if config.expansions[expansion_to_process] then
         end
         print("Database connection successful!")
     end
+
+-- ================================================================
+-- PRELOAD REFERENCE LOOT TEMPLATE CACHE
+-- ================================================================
+print("- Preloading reference_loot_template cache...")
+local lua_cached_ref_loot = {}
+local item_id_to_ref_group_ids = {} -- Новая таблица
+
+-- ================================================================
+-- PRELOAD ALL LOOT DATA FOR ITEMS OPTIMIZATION
+-- ================================================================
+print("- Preloading creature_loot_template cache...")
+local creature_loot_cache = {} -- item_id -> {creature_id -> chance}
+local creature_ref_cache = {} -- ref_id -> {creature_id -> chance}
+
+print("- Preloading gameobject_loot_template cache...")
+local gameobject_loot_cache = {} -- item_id -> {object_id -> chance}
+local gameobject_ref_cache = {} -- ref_id -> {object_id -> chance}
+
+print("- Preloading vendor caches...")
+local npc_vendor_cache = {} -- item_id -> {npc_id -> maxcount}
+local npc_vendor_template_cache = {} -- item_id -> {npc_id -> maxcount}
+local ref_loot_query_sql = [[
+    SELECT Entry, Item, Chance, QuestRequired, LootMode, GroupId, Reference, MinCount, MaxCount
+    FROM reference_loot_template;
+]]
+local query_ref_loot, err_ref_loot = mysql:execute(ref_loot_query_sql)
+
+if not query_ref_loot then
+    print(string.format("  ERROR preloading reference_loot_template: %s", err_ref_loot or "Unknown MySQL error"))
+else
+    local temp_ref_row = {}
+    local count_loaded_ref_entries = 0
+    while query_ref_loot:fetch(temp_ref_row, "a") do
+        local entry_group_id = tonumber(temp_ref_row.Entry)
+        local item_in_ref = tonumber(temp_ref_row.Item) -- Получаем ItemID из текущей строки ref_loot
+        if entry_group_id and item_in_ref and item_in_ref > 0 then -- Убедимся, что Entry и Item не nil
+            lua_cached_ref_loot[entry_group_id] = lua_cached_ref_loot[entry_group_id] or {}
+            table.insert(lua_cached_ref_loot[entry_group_id], {
+                item = item_in_ref,
+                chance = tonumber(temp_ref_row.Chance),
+                questRequired = tonumber(temp_ref_row.QuestRequired),
+                lootMode = tonumber(temp_ref_row.LootMode),
+                groupId = tonumber(temp_ref_row.GroupId),
+                reference = tonumber(temp_ref_row.Reference),
+                minCount = tonumber(temp_ref_row.MinCount),
+                maxCount = tonumber(temp_ref_row.MaxCount)
+            })
+
+            -- Заполняем инвертированную карту
+            item_id_to_ref_group_ids[item_in_ref] = item_id_to_ref_group_ids[item_in_ref] or {}
+            item_id_to_ref_group_ids[item_in_ref][entry_group_id] = true -- Просто флаг, что предмет есть в этой группе
+
+            count_loaded_ref_entries = count_loaded_ref_entries + 1
+        end
+    end
+    query_ref_loot:close()
+    print(string.format("  SUCCESS: Preloaded %d entries into reference_loot_template cache.", count_loaded_ref_entries))
+end
+
+-- ================================================================
+-- PRELOAD CREATURE LOOT CACHE
+-- ================================================================
+local creature_query = mysql:execute('SELECT Entry, Item, Chance, Reference FROM creature_loot_template')
+if creature_query then
+    local creature_row = {}
+    local creature_count = 0
+    while creature_query:fetch(creature_row, "a") do
+        local creature_id = tonumber(creature_row.Entry)
+        local item_id = tonumber(creature_row.Item)
+        local reference_id = tonumber(creature_row.Reference)
+        local chance = tonumber(creature_row.Chance) or 0
+
+        if creature_id then
+            if reference_id and reference_id > 0 then
+                -- Reference loot
+                creature_ref_cache[reference_id] = creature_ref_cache[reference_id] or {}
+                creature_ref_cache[reference_id][creature_id] = chance
+            elseif item_id and item_id > 0 then
+                -- Direct loot
+                creature_loot_cache[item_id] = creature_loot_cache[item_id] or {}
+                creature_loot_cache[item_id][creature_id] = chance
+            end
+            creature_count = creature_count + 1
+        end
+    end
+    creature_query:close()
+    print(string.format("  SUCCESS: Preloaded %d creature loot entries.", creature_count))
+else
+    print("  ERROR: Failed to preload creature_loot_template")
+end
+
+-- ================================================================
+-- PRELOAD GAMEOBJECT LOOT CACHE
+-- ================================================================
+local gameobject_query = mysql:execute([[
+    SELECT gameobject_template.entry, gameobject_loot_template.Item, gameobject_loot_template.ChanceOrQuestChance, gameobject_loot_template.Reference
+    FROM gameobject_loot_template
+    INNER JOIN gameobject_template ON gameobject_template.data1 = gameobject_loot_template.entry
+    WHERE ( gameobject_template.type = 3 OR gameobject_template.type = 25 )
+]])
+if gameobject_query then
+    local gameobject_row = {}
+    local gameobject_count = 0
+    while gameobject_query:fetch(gameobject_row, "a") do
+        local object_id = tonumber(gameobject_row.entry)
+        local item_id = tonumber(gameobject_row.Item)
+        local reference_id = tonumber(gameobject_row.Reference)
+        local chance = tonumber(gameobject_row.ChanceOrQuestChance) or 0
+
+        if object_id then
+            if reference_id and reference_id > 0 then
+                -- Reference loot
+                gameobject_ref_cache[reference_id] = gameobject_ref_cache[reference_id] or {}
+                gameobject_ref_cache[reference_id][object_id] = chance
+            elseif item_id and item_id > 0 then
+                -- Direct loot
+                gameobject_loot_cache[item_id] = gameobject_loot_cache[item_id] or {}
+                gameobject_loot_cache[item_id][object_id] = chance
+            end
+            gameobject_count = gameobject_count + 1
+        end
+    end
+    gameobject_query:close()
+    print(string.format("  SUCCESS: Preloaded %d gameobject loot entries.", gameobject_count))
+else
+    print("  ERROR: Failed to preload gameobject_loot_template")
+end
+
+-- ================================================================
+-- PRELOAD VENDOR CACHES
+-- ================================================================
+local vendor_query = mysql:execute('SELECT entry, item, maxcount FROM npc_vendor')
+if vendor_query then
+    local vendor_row = {}
+    local vendor_count = 0
+    while vendor_query:fetch(vendor_row, "a") do
+        local npc_id = tonumber(vendor_row.entry)
+        local item_id = tonumber(vendor_row.item)
+        local maxcount = tonumber(vendor_row.maxcount)
+
+        if npc_id and item_id then
+            npc_vendor_cache[item_id] = npc_vendor_cache[item_id] or {}
+            npc_vendor_cache[item_id][npc_id] = maxcount
+            vendor_count = vendor_count + 1
+        end
+    end
+    vendor_query:close()
+    print(string.format("  SUCCESS: Preloaded %d vendor entries.", vendor_count))
+else
+    print("  ERROR: Failed to preload npc_vendor")
+end
+
+local C = config.cores[core] or {}
+local vendor_field = C["VendorTemplateId"] or "VendorTemplateId"
+local vendor_template_query = mysql:execute('SELECT creature_template.Entry, npc_vendor_template.item, npc_vendor_template.maxcount FROM npc_vendor_template, creature_template WHERE creature_template.' .. vendor_field .. ' = npc_vendor_template.entry')
+if vendor_template_query then
+    local vendor_template_row = {}
+    local vendor_template_count = 0
+    while vendor_template_query:fetch(vendor_template_row, "a") do
+        local npc_id = tonumber(vendor_template_row.Entry)
+        local item_id = tonumber(vendor_template_row.item)
+        local maxcount = tonumber(vendor_template_row.maxcount)
+
+        if npc_id and item_id then
+            npc_vendor_template_cache[item_id] = npc_vendor_template_cache[item_id] or {}
+            npc_vendor_template_cache[item_id][npc_id] = maxcount
+            vendor_template_count = vendor_template_count + 1
+        end
+    end
+    vendor_template_query:close()
+    print(string.format("  SUCCESS: Preloaded %d vendor template entries.", vendor_template_count))
+else
+    print("  ERROR: Failed to preload npc_vendor_template")
+end
+-- ================================================================
 
   do -- database query functions
     -- ENHANCED: Adaptive GPS compensation function
@@ -1886,6 +2062,56 @@ if config.expansions[expansion_to_process] then
     end
   end
 
+-- ================================================================
+-- HELPER FUNCTION TO RESOLVE LOOT FROM CACHE
+-- ================================================================
+local function resolve_loot_from_cache(reference_id, target_item_id_optional, visited_references, current_chance_multiplier)
+    visited_references = visited_references or {}
+    current_chance_multiplier = current_chance_multiplier or 100 -- Начальный шанс 100%
+
+    if visited_references[reference_id] then
+        -- print(string.format("  WARNING: Circular reference detected or already processed for ref_id %s. Skipping.", tostring(reference_id)))
+        return {} -- Обнаружен цикл или уже обработано
+    end
+    visited_references[reference_id] = true
+
+    local final_loot_items = {}
+    local group_items = lua_cached_ref_loot[reference_id]
+
+    if group_items then
+        for _, ref_item_entry in ipairs(group_items) do
+            local item_chance = (tonumber(ref_item_entry.chance) or 0)
+            local effective_chance = (item_chance / 100) * current_chance_multiplier
+
+            if ref_item_entry.reference and ref_item_entry.reference > 0 then
+                -- Это вложенная ссылка, рекурсивно обрабатываем
+                local nested_items = resolve_loot_from_cache(ref_item_entry.reference, target_item_id_optional, visited_references, effective_chance)
+                for _, nested_item in ipairs(nested_items) do
+                    table.insert(final_loot_items, nested_item)
+                end
+            elseif ref_item_entry.item and ref_item_entry.item > 0 then
+                -- Это конкретный предмет
+                if not target_item_id_optional or ref_item_entry.item == target_item_id_optional then
+                    table.insert(final_loot_items, {
+                        item = ref_item_entry.item,
+                        chance = effective_chance, -- Уже пересчитанный шанс
+                        questRequired = ref_item_entry.questRequired,
+                        minCount = ref_item_entry.minCount,
+                        maxCount = ref_item_entry.maxCount
+                        -- Можно добавить другие нужные поля
+                    })
+                end
+            end
+        end
+    else
+        -- print(string.format("  WARNING: Reference ID %s not found in lua_cached_ref_loot.", tostring(reference_id)))
+    end
+
+    visited_references[reference_id] = false -- Разрешаем повторную обработку для других ветвей, если это необходимо
+    return final_loot_items
+end
+-- ================================================================
+
   local start_time_items = os.clock()
   do -- items
     print("- loading items...")
@@ -1940,79 +2166,132 @@ if config.expansions[expansion_to_process] then
         local chance = item[2] and item[2] / 100 or 1
         pfDB["items"][data][entry] = pfDB["items"][data][entry] or {}
 
-        -- fill unit table
-        local creature_loot_template = {}
-        local query = mysql:execute('SELECT Entry, Chance FROM creature_loot_template WHERE Item = ' .. entry .. ' AND Reference = 0 ORDER BY Entry')
-        if query then
-          while query:fetch(creature_loot_template, "a") do
-            if debug("items_unit") then break end
-            local chance = math.abs(creature_loot_template.Chance) * chance
-            chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
+        -- fill unit table (using preloaded caches - NO SQL!)
+        pfDB["items"][data][entry]["U"] = pfDB["items"][data][entry]["U"] or {}
 
-            if chance > 0 then
-              pfDB["items"][data][entry]["U"] = pfDB["items"][data][entry]["U"] or {}
-              pfDB["items"][data][entry]["U"][tonumber(creature_loot_template.Entry)] = chance
+        -- Direct creature loot
+        if creature_loot_cache[entry] then
+            for creature_id, loot_chance in pairs(creature_loot_cache[entry]) do
+                if debug("items_unit") then break end
+                local final_chance = math.abs(loot_chance) * chance
+                final_chance = final_chance < 0.01 and round(final_chance, 5) or round(final_chance, 2)
+                if final_chance > 0 then
+                    pfDB["items"][data][entry]["U"][creature_id] = final_chance
+                end
             end
-          end
         end
 
-        -- fill object table
-        local gameobject_loot_template = {}
-        local query = mysql:execute([[
-          SELECT gameobject_template.entry, gameobject_loot_template.ChanceOrQuestChance FROM gameobject_loot_template
-          INNER JOIN gameobject_template ON gameobject_template.data1 = gameobject_loot_template.entry
-          WHERE ( gameobject_template.type = 3 OR gameobject_template.type = 25 )
-          AND gameobject_loot_template.item = ]] .. entry .. [[ ORDER BY gameobject_template.entry ]])
-        if query then
-          while query:fetch(gameobject_loot_template, "a") do
-            if debug("items_object") then break end
-            local chance = math.abs(gameobject_loot_template.ChanceOrQuestChance) * chance
-            chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
+        -- Reference creature loot
+        if item_id_to_ref_group_ids[entry] then
+            for ref_group_id, _ in pairs(item_id_to_ref_group_ids[entry]) do
+                if debug("items_unit_ref") then break end
+                if creature_ref_cache[ref_group_id] then
+                    -- Get chance of this item in this reference group
+                    local item_chance_in_ref = 0
+                    if lua_cached_ref_loot[ref_group_id] then
+                        for _, item_detail in ipairs(lua_cached_ref_loot[ref_group_id]) do
+                            if item_detail.item == entry then
+                                item_chance_in_ref = item_detail.chance or 0
+                                break
+                            end
+                        end
+                    end
 
-            if chance > 0 then
-              pfDB["items"][data][entry]["O"] = pfDB["items"][data][entry]["O"] or {}
-              pfDB["items"][data][entry]["O"][tonumber(gameobject_loot_template.entry)] = chance
+                    -- Apply to all creatures that use this reference
+                    if item_chance_in_ref > 0 then
+                        for creature_id, ref_chance in pairs(creature_ref_cache[ref_group_id]) do
+                            local final_chance = (item_chance_in_ref / 100) * ref_chance * chance
+                            final_chance = final_chance < 0.01 and round(final_chance, 5) or round(final_chance, 2)
+                            if final_chance > 0 then
+                                pfDB["items"][data][entry]["U"][creature_id] = (pfDB["items"][data][entry]["U"][creature_id] or 0) + final_chance
+                            end
+                        end
+                    end
+                end
             end
-          end
         end
 
-        -- fill reference table
-        local reference_loot_template = {}
-        local query = mysql:execute([[
-          SELECT entry, ChanceOrQuestChance FROM reference_loot_template where reference_loot_template.item = ]] .. entry .. [[ ORDER BY entry
-        ]])
-        if query then
-          while query:fetch(reference_loot_template, "a") do
-            if debug("items_reference") then break end
-            local chance = math.abs(reference_loot_template.ChanceOrQuestChance)
-            chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
+        -- fill object table (using preloaded caches - NO SQL!)
+        pfDB["items"][data][entry]["O"] = pfDB["items"][data][entry]["O"] or {}
 
-            pfDB["items"][data][entry]["R"] = pfDB["items"][data][entry]["R"] or {}
-            pfDB["items"][data][entry]["R"][tonumber(reference_loot_template.entry)] = chance
-          end
+        -- Direct gameobject loot
+        if gameobject_loot_cache[entry] then
+            for object_id, loot_chance in pairs(gameobject_loot_cache[entry]) do
+                if debug("items_object") then break end
+                local final_chance = math.abs(loot_chance) * chance
+                final_chance = final_chance < 0.01 and round(final_chance, 5) or round(final_chance, 2)
+                if final_chance > 0 then
+                    pfDB["items"][data][entry]["O"][object_id] = final_chance
+                end
+            end
         end
 
-        -- fill vendor table
-        local npc_vendor = {}
-        local query = mysql:execute('SELECT entry, maxcount FROM npc_vendor WHERE item = ' .. entry .. ' ORDER BY entry')
-        if query then
-          while query:fetch(npc_vendor, "a") do
-            if debug("items_vendor") then break end
-            pfDB["items"][data][entry]["V"] = pfDB["items"][data][entry]["V"] or {}
-            pfDB["items"][data][entry]["V"][tonumber(npc_vendor.entry)] = tonumber(npc_vendor.maxcount)
-          end
+        -- Reference gameobject loot
+        if item_id_to_ref_group_ids[entry] then
+            for ref_group_id, _ in pairs(item_id_to_ref_group_ids[entry]) do
+                if debug("items_object_ref") then break end
+                if gameobject_ref_cache[ref_group_id] then
+                    -- Get chance of this item in this reference group
+                    local item_chance_in_ref = 0
+                    if lua_cached_ref_loot[ref_group_id] then
+                        for _, item_detail in ipairs(lua_cached_ref_loot[ref_group_id]) do
+                            if item_detail.item == entry then
+                                item_chance_in_ref = item_detail.chance or 0
+                                break
+                            end
+                        end
+                    end
+
+                    -- Apply to all gameobjects that use this reference
+                    if item_chance_in_ref > 0 then
+                        for object_id, ref_chance in pairs(gameobject_ref_cache[ref_group_id]) do
+                            local final_chance = (item_chance_in_ref / 100) * ref_chance * chance
+                            final_chance = final_chance < 0.01 and round(final_chance, 5) or round(final_chance, 2)
+                            if final_chance > 0 then
+                                pfDB["items"][data][entry]["O"][object_id] = (pfDB["items"][data][entry]["O"][object_id] or 0) + final_chance
+                            end
+                        end
+                    end
+                end
+            end
         end
 
-        -- handle vendor template tables
-        local npc_vendor = {}
-        local vendor_field = C["VendorTemplateId"] or "VendorTemplateId" -- Default fallback
-        local query = mysql:execute('SELECT creature_template.Entry, maxcount FROM npc_vendor_template, creature_template WHERE item = ' .. entry .. ' and creature_template.' .. vendor_field .. ' = npc_vendor_template.entry ORDER BY creature_template.Entry')
-        if query then
-          while query:fetch(npc_vendor, "a") do
-            if debug("items_vendortemplate") then break end
-            pfDB["items"][data][entry]["V"] = pfDB["items"][data][entry]["V"] or {}
-            pfDB["items"][data][entry]["V"][tonumber(npc_vendor.Entry)] = tonumber(npc_vendor.maxcount)
-          end
+        -- fill reference table (using optimized inverted map)
+        pfDB["items"][data][entry]["R"] = pfDB["items"][data][entry]["R"] or {}
+        if item_id_to_ref_group_ids[entry] then
+            for ref_group_id, _ in pairs(item_id_to_ref_group_ids[entry]) do
+                if debug("items_reference") then break end
+                -- Get chance directly from cache
+                local chance_in_this_ref_group = 0
+                if lua_cached_ref_loot[ref_group_id] then
+                    for _, item_detail_in_ref_group in ipairs(lua_cached_ref_loot[ref_group_id]) do
+                        if item_detail_in_ref_group.item == entry then
+                            chance_in_this_ref_group = item_detail_in_ref_group.chance or 0
+                            break
+                        end
+                    end
+                end
+                pfDB["items"][data][entry]["R"][ref_group_id] = round(chance_in_this_ref_group, 2)
+            end
+        end
+
+        -- fill vendor table (using preloaded cache - NO SQL!)
+        pfDB["items"][data][entry]["V"] = pfDB["items"][data][entry]["V"] or {}
+
+        -- Direct vendors
+        if npc_vendor_cache[entry] then
+            for npc_id, maxcount in pairs(npc_vendor_cache[entry]) do
+                if debug("items_vendor") then break end
+                pfDB["items"][data][entry]["V"][npc_id] = maxcount
+            end
+        end
+
+        -- Vendor templates
+        if npc_vendor_template_cache[entry] then
+            for npc_id, maxcount in pairs(npc_vendor_template_cache[entry]) do
+                if debug("items_vendortemplate") then break end
+                pfDB["items"][data][entry]["V"][npc_id] = maxcount
+            end
         end
       end
     end
@@ -2870,11 +3149,11 @@ if config.expansions[expansion_to_process] then
       local minlevel_field = C.MinLevel or "minlevel"
       local limit_clause = UNITS_LIMIT and (' LIMIT ' .. UNITS_LIMIT) or ''
 
-      print(string.format("  DEBUG: Using fields - entry:%s, minlevel:%s, rank:%s", entry_field, minlevel_field, rank_field))
+--       print(string.format("  DEBUG: Using fields - entry:%s, minlevel:%s, rank:%s", entry_field, minlevel_field, rank_field))
       local query_sql_rares = string.format([[
         SELECT `%s`, `%s` FROM `creature_template` WHERE `%s` = 4 OR `%s` = 2 ORDER BY `%s`%s
       ]], entry_field, minlevel_field, rank_field, rank_field, entry_field, limit_clause)
-      print(string.format("  DEBUG: SQL for rares = %s", query_sql_rares))
+--       print(string.format("  DEBUG: SQL for rares = %s", query_sql_rares))
 
       local query, err_rares = mysql:execute(query_sql_rares)
       if not query then
@@ -2909,7 +3188,7 @@ if config.expansions[expansion_to_process] then
             ORDER BY gt.entry ASC
             %s
         ]], limit_clause)
-        print(string.format("  DEBUG: SQL = %s", meta_farm_query_sql))
+--         print(string.format("  DEBUG: SQL = %s", meta_farm_query_sql))
 
         local farm_query, err_farm = mysql:execute(meta_farm_query_sql)
         if not farm_query then
@@ -3454,12 +3733,16 @@ end
 
   debug_statistics()
 
-print("\\n================================================================")
+print("================================================================")
 print("BLOCK EXECUTION TIMES:")
 if execution_times and #execution_times > 0 then
+    local total_time = 0
     for _, data in ipairs(execution_times) do
         print(string.format("  BLOCK '%s' execution time: %.4f seconds", data.name, data.time))
+        total_time = total_time + data.time
     end
+    print("  --------------------------------------------------------")
+    print(string.format("  TOTAL execution time: %.4f seconds", total_time))
 else
     print("  No execution times recorded.")
 end
