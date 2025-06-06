@@ -1019,6 +1019,45 @@ if vendor_template_query then
 else
     print("  ERROR: Failed to preload npc_vendor_template")
 end
+
+-- ================================================================
+-- PRELOAD OBJECT SPAWN CACHE
+-- ================================================================
+print("- Preloading gameobject spawn cache...")
+local all_object_spawns_cache = {}
+local object_spawn_query = mysql:execute('SELECT gameobject.guid, gameobject.id AS entry, gameobject.position_x, gameobject.position_y, gameobject.position_z, gameobject.map, gameobject.spawnMask, gameobject.phaseMask FROM gameobject')
+if object_spawn_query then
+    local object_spawn_row = {}
+    local object_spawn_count = 0
+    while object_spawn_query:fetch(object_spawn_row, "a") do
+        local entry = tonumber(object_spawn_row.entry)
+        local guid = tonumber(object_spawn_row.guid)
+        local position_x = tonumber(object_spawn_row.position_x)
+        local position_y = tonumber(object_spawn_row.position_y)
+        local position_z = tonumber(object_spawn_row.position_z)
+        local map = tonumber(object_spawn_row.map)
+        local spawnMask = tonumber(object_spawn_row.spawnMask)
+        local phaseMask = tonumber(object_spawn_row.phaseMask)
+
+        if entry and guid and position_x and position_y then
+            all_object_spawns_cache[entry] = all_object_spawns_cache[entry] or {}
+            table.insert(all_object_spawns_cache[entry], {
+                guid = guid,
+                position_x = position_x,
+                position_y = position_y,
+                position_z = position_z,
+                map = map,
+                spawnMask = spawnMask or 1,
+                phaseMask = phaseMask or 1
+            })
+            object_spawn_count = object_spawn_count + 1
+        end
+    end
+    object_spawn_query:close()
+    print(string.format("  SUCCESS: Preloaded %d object spawn entries.", object_spawn_count))
+else
+    print("  ERROR: Failed to preload gameobject spawn cache")
+end
 -- ================================================================
 
   do -- database query functions
@@ -1425,38 +1464,15 @@ end
     function GetGameObjectCoords(id1_template) -- id1_template это gameobject_template.entry
         local ret = {}
         if core == "acore" then
-            local gameobject_spawn_data_cache = {}
-            -- ВАЖНО: Проверьте, какое поле в таблице 'gameobject' соответствует 'gameobject_template.entry'.
-            -- Обычно это 'id', но может быть 'entry' или 'id1' в зависимости от вашей схемы.
-            -- Я использую 'id' согласно вашему предыдущему коду для GetGameObjectCoords.
-            local sql_get_gameobjects = string.format(
-                "SELECT guid, map, position_x, position_y, zoneId, areaId FROM gameobject WHERE id = %d",
-                id1_template
-            )
-            local cursor_gameobjects = mysql:execute(sql_get_gameobjects)
+            -- Use preloaded spawns cache instead of SQL queries
+            local gameobject_spawn_data_list = all_object_spawns_cache[id1_template]
 
-            if not cursor_gameobjects then
-                print("ERROR: Failed to query gameobject spawns for template ID: " .. id1_template)
+            if not gameobject_spawn_data_list then
+                -- print(string.format("WARNING: No spawns found in cache for object template ID: %d", id1_template))
                 return ret
             end
 
-            local temp_row = {}
-            while cursor_gameobjects:fetch(temp_row, "a") do
-                table.insert(gameobject_spawn_data_cache, {
-                    guid = temp_row.guid, map = tonumber(temp_row.map),
-                    position_x = tonumber(temp_row.position_x), position_y = tonumber(temp_row.position_y),
-                    zoneId = tonumber(temp_row.zoneId), areaId = tonumber(temp_row.areaId)
-                })
-                temp_row = {}
-            end
-            cursor_gameobjects:close()
-
-            -- Опционально: отладочный вывод, если для тестовых объектов не найдено спавнов
-            -- if #gameobject_spawn_data_cache == 0 and DEBUG_EXTRACTION and QUEST_784_TEST then
-            --     -- print(string.format("WARNING: No spawns found in 'gameobject' table for template ID: %d", id1_template))
-            -- end
-
-            for _, gobject_data in ipairs(gameobject_spawn_data_cache) do
+            for _, gobject_data in ipairs(gameobject_spawn_data_list) do
                 local gobj_world_x = gobject_data.position_x
                 local gobj_world_y = gobject_data.position_y
                 local map_id = gobject_data.map -- Это continent_id
@@ -2009,6 +2025,11 @@ end
     pfDB["objects"] = pfDB["objects"] or {}
     pfDB["objects"][data] = {}
 
+    -- ================================================================
+    -- OBJECT SPAWNS CACHE (preloaded globally)
+    -- ================================================================
+    local object_entries_to_process = {}
+
     -- iterate over all objects (LIMITED FOR TESTING)
     local gameobject_template = {}
     local limit_clause = ""
@@ -2045,10 +2066,67 @@ end
       do -- coordinates
         pfDB["objects"][data][entry]["coords"] = {}
 
-        for id,coords in pairs(GetGameObjectCoords(entry)) do
-          if debug("objects_coords") then break end
-          local x, y, zone, respawn = unpack(coords)
-          table.insert(pfDB["objects"][data][entry]["coords"], { x, y, zone, respawn })
+        -- Use preloaded spawns cache instead of SQL queries
+        local gameobject_spawn_data_list = all_object_spawns_cache[entry]
+
+        if gameobject_spawn_data_list then
+          for _, gobject_data in ipairs(gameobject_spawn_data_list) do
+            if debug("objects_coords") then break end
+
+            local gobj_world_x = gobject_data.position_x
+            local gobj_world_y = gobject_data.position_y
+            local map_id = gobject_data.map
+            local db_zoneId = gobject_data.zoneId
+            local db_areaId = gobject_data.areaId
+
+            -- Determine display zone
+            local display_map_areatable_id
+            if db_zoneId ~= 0 then
+                display_map_areatable_id = db_zoneId
+            elseif db_areaId ~= 0 then
+                local parent_of_area = GetParentAreaFromAreaTable and GetParentAreaFromAreaTable(db_areaId) or 0
+                display_map_areatable_id = (parent_of_area ~= 0) and parent_of_area or db_areaId
+            end
+
+            if not display_map_areatable_id or display_map_areatable_id == 0 then
+                if gobj_world_x and gobj_world_y and map_id then
+                    local coords_fallback_data = GetCustomCoords and GetCustomCoords(map_id, gobj_world_x, gobj_world_y) or nil
+                    if coords_fallback_data and coords_fallback_data[1] and coords_fallback_data[1][3] then
+                        display_map_areatable_id = coords_fallback_data[1][3]
+                        if display_map_areatable_id == 0 then display_map_areatable_id = map_id end
+                    else
+                        display_map_areatable_id = map_id
+                    end
+                else
+                    display_map_areatable_id = 1 -- Default fallback
+                end
+                if not display_map_areatable_id or display_map_areatable_id == 0 then display_map_areatable_id = 1 end
+            end
+
+            -- Calculate zone coordinates
+            local zone_x, zone_y = 50, 50 -- Default
+            local zone_bounds = GetWorldMapAreaBoundariesForZone and GetWorldMapAreaBoundariesForZone(display_map_areatable_id, map_id) or nil
+
+            if gobj_world_x and gobj_world_y and zone_bounds then
+                local Z_WorldX_L = zone_bounds.x_left
+                local Z_WorldX_R = zone_bounds.x_right
+                local Z_WorldY_T = zone_bounds.y_top
+                local Z_WorldY_B = zone_bounds.y_bottom
+                local zone_map_world_width = Z_WorldX_R - Z_WorldX_L
+                local zone_map_world_height = Z_WorldY_T - Z_WorldY_B
+                if zone_map_world_width > 0 and zone_map_world_height > 0 then
+                    local pfQuest_X_pct = ((Z_WorldY_T - gobj_world_y) / zone_map_world_height) * 100
+                    local pfQuest_Y_pct = 100 - (((gobj_world_x - Z_WorldX_L) / zone_map_world_width) * 100)
+                    zone_x = pfQuest_X_pct
+                    zone_y = pfQuest_Y_pct
+                end
+            end
+
+            zone_x = math.max(0, math.min(100, zone_x))
+            zone_y = math.max(0, math.min(100, zone_y))
+
+            table.insert(pfDB["objects"][data][entry]["coords"], { round(zone_x,2), round(zone_y,2), display_map_areatable_id, 0 })
+          end
         end
       end
 
@@ -2320,8 +2398,8 @@ end
         local item = tonumber(reference_loot_template.Item)
         local chance = tonumber(reference_loot_template.Chance)
 
-        if item and item > 0 then
-          local chance_value = (chance and chance < 0.01) and round(chance, 5) or round(chance, 2)
+        if item and item > 0 and chance and chance > 0 then
+          local chance_value = (chance < 0.01) and round(chance, 5) or round(chance, 2)
           pfDB["refloot"][data][entry] = pfDB["refloot"][data][entry] or {}
           pfDB["refloot"][data][entry][item] = chance_value
         end
@@ -2445,6 +2523,112 @@ end
     pfDB["quests-itemreq"] = pfDB["quests-itemreq"] or {}
     pfDB["quests-itemreq"][data] = {}
 
+    -- ================================================================
+    -- PRELOAD QUEST OPTIMIZATION DATA
+    -- ================================================================
+    print("  Preloading quest optimization data...")
+
+    -- Preload quest starters/enders
+    local quest_creature_starters = {} -- quest_id -> {npc_id -> type}
+    local quest_creature_enders = {} -- quest_id -> {npc_id -> type}
+    local quest_object_starters = {} -- quest_id -> {object_id -> type}
+    local quest_object_enders = {} -- quest_id -> {object_id -> type}
+
+    -- Preload event data
+    local quest_events = {} -- quest_id -> event_id
+    local event_creatures = {} -- event_id -> {creature_id -> true}
+    local event_objects = {} -- event_id -> {object_id -> true}
+
+    -- Load quest starters/enders
+    local quest_relations_query = mysql:execute([[
+        SELECT q.id as quest_id, cqr.id as creature_id, 'starter' as relation_type
+        FROM creature_queststarter cqr
+        JOIN quest_template q ON q.id = cqr.quest
+        UNION ALL
+        SELECT q.id as quest_id, cqe.id as creature_id, 'ender' as relation_type
+        FROM creature_questender cqe
+        JOIN quest_template q ON q.id = cqe.quest
+        UNION ALL
+        SELECT q.id as quest_id, gqs.id as object_id, 'object_starter' as relation_type
+        FROM gameobject_queststarter gqs
+        JOIN quest_template q ON q.id = gqs.quest
+        UNION ALL
+        SELECT q.id as quest_id, gqe.id as object_id, 'object_ender' as relation_type
+        FROM gameobject_questender gqe
+        JOIN quest_template q ON q.id = gqe.quest
+    ]])
+
+    if quest_relations_query then
+        local relations_row = {}
+        local relations_count = 0
+        while quest_relations_query:fetch(relations_row, "a") do
+            local quest_id = tonumber(relations_row.quest_id)
+            local entity_id = tonumber(relations_row.creature_id) or tonumber(relations_row.object_id)
+            local relation_type = relations_row.relation_type
+
+            if quest_id and entity_id then
+                if relation_type == 'starter' then
+                    quest_creature_starters[quest_id] = quest_creature_starters[quest_id] or {}
+                    quest_creature_starters[quest_id][entity_id] = true
+                elseif relation_type == 'ender' then
+                    quest_creature_enders[quest_id] = quest_creature_enders[quest_id] or {}
+                    quest_creature_enders[quest_id][entity_id] = true
+                elseif relation_type == 'object_starter' then
+                    quest_object_starters[quest_id] = quest_object_starters[quest_id] or {}
+                    quest_object_starters[quest_id][entity_id] = true
+                elseif relation_type == 'object_ender' then
+                    quest_object_enders[quest_id] = quest_object_enders[quest_id] or {}
+                    quest_object_enders[quest_id][entity_id] = true
+                end
+                relations_count = relations_count + 1
+            end
+        end
+        quest_relations_query:close()
+        print(string.format("    SUCCESS: Preloaded %d quest relations.", relations_count))
+    else
+        print("    ERROR: Failed to preload quest relations")
+    end
+
+    -- Load event data
+    local events_query = mysql:execute([[
+        SELECT geq.quest as quest_id, geq.eventEntry as event_id,
+               gec.guid as creature_guid, gec.eventEntry as creature_event,
+               geg.guid as object_guid, geg.eventEntry as object_event
+        FROM game_event_quest geq
+        LEFT JOIN game_event_creature gec ON geq.eventEntry = gec.eventEntry
+        LEFT JOIN game_event_gameobject geg ON geq.eventEntry = geg.eventEntry
+    ]])
+
+    if events_query then
+        local events_row = {}
+        local events_count = 0
+        while events_query:fetch(events_row, "a") do
+            local quest_id = tonumber(events_row.quest_id)
+            local event_id = tonumber(events_row.event_id)
+            local creature_guid = tonumber(events_row.creature_guid)
+            local object_guid = tonumber(events_row.object_guid)
+
+            if quest_id and event_id then
+                quest_events[quest_id] = event_id
+
+                if creature_guid then
+                    event_creatures[event_id] = event_creatures[event_id] or {}
+                    event_creatures[event_id][creature_guid] = true
+                end
+
+                if object_guid then
+                    event_objects[event_id] = event_objects[event_id] or {}
+                    event_objects[event_id][object_guid] = true
+                end
+                events_count = events_count + 1
+            end
+        end
+        events_query:close()
+        print(string.format("    SUCCESS: Preloaded %d event relations.", events_count))
+    else
+        print("    ERROR: Failed to preload event data")
+    end
+
     -- iterate over all quests (LIMITED FOR TESTING)
     local quest_template = {}
     local quest_pk_column = (core == "acore" and "ID" or "entry") -- Added for AzerothCore
@@ -2529,61 +2713,37 @@ end
         local repeatable = quest_template.SpecialFlags and (tonumber(quest_template.SpecialFlags) % 2) or 0
       local event = nil
 
-        -- try to detect event by quest event entry
-        local game_event_quest = {}
-        local query = mysql:execute('SELECT event FROM game_event_quest WHERE quest = ' .. entry)
-        if query then
-          while query:fetch(game_event_quest, "a") do
-            if debug("quests_events") then break end
-            event = tonumber(game_event_quest.event)
-            break
-          end
-        end
+        -- try to detect event by quest event entry (using preloaded cache)
+        event = quest_events[entry]
 
-        -- try to detect event by creature event
+        -- if no direct quest event found, try to detect event by creature/object event through cache
         if not event then
-        local game_event_creature = {}
+          -- Check if any quest starters/enders are tied to events
+          local quest_id = quest_template[quest_pk_column] or quest_template.entry
 
-        -- Use correct quest ID field for AzerothCore
-        local quest_id = quest_template[quest_pk_column] or quest_template.entry
-        if not quest_id then
-          print("Warning: Quest with nil ID, skipping event detection")
-        else
-          local sql = [[
-            SELECT game_event_creature.event as event FROM creature, game_event_creature, creature_questrelation
-            WHERE creature.guid = game_event_creature.guid
-            AND creature.id = creature_questrelation.id
-            AND creature_questrelation.quest = ]] .. quest_id
-          local query = mysql:execute(sql)
-          if query then
-            while query:fetch(game_event_creature, "a") do
-              if debug("quests_eventscreature") then break end
-              event = tonumber(game_event_creature.event)
-              break
+          if quest_creature_starters[quest_id] then
+            for creature_id, _ in pairs(quest_creature_starters[quest_id]) do
+              -- Check if this creature is in any event
+              for event_id, creatures in pairs(event_creatures) do
+                if creatures[creature_id] then
+                  event = event_id
+                  break
+                end
+              end
+              if event then break end
             end
           end
-        end
-      end
 
-        -- try to detect event by gameobject event
-        if not event then
-          local game_event_gameobject = {}
-
-          -- Use correct quest ID field for AzerothCore
-          local quest_id = quest_template[quest_pk_column] or quest_template.entry
-          if quest_id then
-            local sql = [[
-              SELECT game_event_gameobject.event as event FROM gameobject, game_event_gameobject, gameobject_questrelation
-              WHERE gameobject.guid = game_event_gameobject.guid
-              AND gameobject.id = gameobject_questrelation.id
-              AND gameobject_questrelation.quest = ]] .. quest_id
-            local query = mysql:execute(sql)
-            if query then
-              while query:fetch(game_event_gameobject, "a") do
-                if debug("quests_eventsobjects") then break end
-                event = tonumber(game_event_gameobject.event)
-                break
+          if not event and quest_object_starters[quest_id] then
+            for object_id, _ in pairs(quest_object_starters[quest_id]) do
+              -- Check if this object is in any event
+              for event_id, objects in pairs(event_objects) do
+                if objects[object_id] then
+                  event = event_id
+                  break
+                end
               end
+              if event then break end
             end
           end
         end
@@ -2919,32 +3079,22 @@ end
                   end
               end
 
-              -- quest starter
-              local creature_questrelation = {}
-              local starter_table = (core == "acore" and "creature_queststarter" or "creature_questrelation")
-              local sql = [[
-          SELECT * FROM ]] .. starter_table .. [[ WHERE ]] .. starter_table .. [[.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                  while query:fetch(creature_questrelation, "a") do
+              -- quest starter (using preloaded cache)
+              if quest_creature_starters[quest_id] then
+                  for creature_id, _ in pairs(quest_creature_starters[quest_id]) do
                       if debug("quests_starterunit") then break end
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["U"] = pfDB["quests"][data][entry]["start"]["U"] or {}
-                      table.insert(pfDB["quests"][data][entry]["start"]["U"], tonumber(creature_questrelation.id))
+                      table.insert(pfDB["quests"][data][entry]["start"]["U"], creature_id)
                   end
               end
 
-              local gameobject_questrelation = {}
-              local go_starter_table = (core == "acore" and "gameobject_queststarter" or "gameobject_questrelation")
-              local sql = [[
-          SELECT * FROM ]] .. go_starter_table .. [[ WHERE ]] .. go_starter_table .. [[.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                  while query:fetch(gameobject_questrelation, "a") do
+              if quest_object_starters[quest_id] then
+                  for object_id, _ in pairs(quest_object_starters[quest_id]) do
                       if debug("quests_starterobject") then break end
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["O"] = pfDB["quests"][data][entry]["start"]["O"] or {}
-                      table.insert(pfDB["quests"][data][entry]["start"]["O"], tonumber(gameobject_questrelation.id))
+                      table.insert(pfDB["quests"][data][entry]["start"]["O"], object_id)
                   end
               end
 
@@ -2972,33 +3122,22 @@ end
                   end
               end
 
-              -- quest ender
-              local creature_involvedrelation = {}
-              local ender_table = (core == "acore" and "creature_questender" or "creature_involvedrelation")
-              local sql = [[
-          SELECT * FROM ]] .. ender_table .. [[ WHERE ]] .. ender_table .. [[.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                  while query:fetch(creature_involvedrelation, "a") do
+              -- quest ender (using preloaded cache)
+              if quest_creature_enders[quest_id] then
+                  for creature_id, _ in pairs(quest_creature_enders[quest_id]) do
                       if debug("quests_enderunit") then break end
                       pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
                       pfDB["quests"][data][entry]["end"]["U"] = pfDB["quests"][data][entry]["end"]["U"] or {}
-                      table.insert(pfDB["quests"][data][entry]["end"]["U"], tonumber(creature_involvedrelation.id))
+                      table.insert(pfDB["quests"][data][entry]["end"]["U"], creature_id)
                   end
               end
 
-              local gameobject_involvedrelation = {}
-              local first = true
-              local go_ender_table = (core == "acore" and "gameobject_questender" or "gameobject_involvedrelation")
-              local sql = [[
-          SELECT * FROM ]] .. go_ender_table .. [[ WHERE ]] .. go_ender_table .. [[.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                  while query:fetch(gameobject_involvedrelation, "a") do
+              if quest_object_enders[quest_id] then
+                  for object_id, _ in pairs(quest_object_enders[quest_id]) do
                       if debug("quests_enderobject") then break end
                       pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
                       pfDB["quests"][data][entry]["end"]["O"] = pfDB["quests"][data][entry]["end"]["O"] or {}
-                      table.insert(pfDB["quests"][data][entry]["end"]["O"], tonumber(gameobject_involvedrelation.id))
+                      table.insert(pfDB["quests"][data][entry]["end"]["O"], object_id)
                   end
               end
 
