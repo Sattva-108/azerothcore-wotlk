@@ -13,7 +13,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -1836,7 +1836,15 @@ if config.expansions[expansion_to_process] then
     pfDB["objects"] = pfDB["objects"] or {}
     pfDB["objects"][data] = {}
 
+    -- Count total objects first
+    local count_query = mysql:execute('SELECT COUNT(*) as total FROM gameobject_template')
+    local count_result = {}
+    count_query:fetch(count_result, "a")
+    local total_objects = tonumber(count_result.total) or 0
+    print("  Processing " .. total_objects .. " objects...")
+
     -- iterate over all objects (LIMITED FOR TESTING)
+    local processed = 0
     local gameobject_template = {}
     local limit_clause = ""
     local where_clause = ""
@@ -1854,6 +1862,12 @@ if config.expansions[expansion_to_process] then
     if query then
       while query:fetch(gameobject_template, "a") do
       if debug("objects") then break end
+      processed = processed + 1
+
+      -- Show progress every 1000 objects
+      if processed % 1000 == 0 then
+        print("  Processed " .. processed .. "/" .. total_objects .. " objects (" .. math.floor(processed/total_objects*100) .. "%)")
+      end
 
       local entry  = tonumber(gameobject_template.entry)
       local name   = gameobject_template.name
@@ -2194,7 +2208,7 @@ if config.expansions[expansion_to_process] then
       limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
     end
 
-    local query_string = 'SELECT qt.*, qta.AllowableClasses, qta.PrevQuestID as AddonPrevQuestID, qta.NextQuestID as AddonNextQuestID, qta.ExclusiveGroup as AddonExclusiveGroup FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID' .. where_clause .. ' ORDER BY qt.' .. quest_pk_column .. limit_clause
+    local query_string = 'SELECT qt.*, qta.AllowableClasses, qta.PrevQuestID as AddonPrevQuestID, qta.NextQuestID as AddonNextQuestID, qta.ExclusiveGroup as AddonExclusiveGroup, qta.RequiredSkillID as AddonRequiredSkillID, qta.RequiredSkillPoints as AddonRequiredSkillPoints FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID' .. where_clause .. ' ORDER BY qt.' .. quest_pk_column .. limit_clause
 
     -- Count total quests first for progress
     local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID' .. where_clause .. limit_clause)
@@ -2409,7 +2423,13 @@ if config.expansions[expansion_to_process] then
 
         local class = current_quest_data[class_column] and tonumber(current_quest_data[class_column]) or 0
         local race = current_quest_data[race_column] and tonumber(current_quest_data[race_column]) or 0
-        local skill = current_quest_data[skill_column] and tonumber(current_quest_data[skill_column]) or 0
+        -- For AzerothCore, skill data comes from quest_template_addon
+        local skill = 0
+        if current_quest_data.AddonRequiredSkillID then
+          skill = tonumber(current_quest_data.AddonRequiredSkillID) or 0
+        elseif current_quest_data[skill_column] then
+          skill = tonumber(current_quest_data[skill_column]) or 0
+        end
         local chain = current_quest_data.NextQuestInChain and tonumber(current_quest_data.NextQuestInChain) or 0 -- This will be problematic for AC
         local srcitem = current_quest_data[srcitem_column] and tonumber(current_quest_data[srcitem_column]) or 0
         local repeatable = current_quest_data.SpecialFlags and (tonumber(current_quest_data.SpecialFlags) % 2) or 0
@@ -2476,7 +2496,19 @@ if config.expansions[expansion_to_process] then
 
       pfDB["quests"][data][entry] = {}
       pfDB["quests"][data][entry]["min"] = minlevel ~= 0 and minlevel
-      pfDB["quests"][data][entry]["skill"] = skill ~= 0 and skill
+      
+      -- Debug output for quest 862
+      if entry == 862 then
+        print("Quest 862 DEBUG:")
+        print("  AddonRequiredSkillID:", current_quest_data.AddonRequiredSkillID)
+        print("  skill_column:", skill_column)
+        print("  skill_column_value:", current_quest_data[skill_column])
+        print("  final skill:", skill)
+      end
+      
+      if skill ~= 0 then
+        pfDB["quests"][data][entry]["skill"] = skill
+      end
       pfDB["quests"][data][entry]["lvl"] = questlevel ~= 0 and questlevel
 
       -- Store AllowableClasses as number (pfQuest expects bit.band operations)
@@ -2515,7 +2547,6 @@ if config.expansions[expansion_to_process] then
       if final_race ~= 0 then
         pfDB["quests"][data][entry]["race"] = final_race
       end
-      pfDB["quests"][data][entry]["skill"] = skill ~= 0 and skill
       pfDB["quests"][data][entry]["event"] = event ~= 0 and event
 
       -- Build pre-quest relationships
