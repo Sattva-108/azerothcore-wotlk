@@ -13,8 +13,8 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
-local OTHER_LIMIT = 15             -- Лимит для всего остального
+local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
+local OTHER_LIMIT = 2000             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
@@ -3175,7 +3175,6 @@ if config.expansions[expansion_to_process] then
         -- For AzerothCore, use loaded DBC Lock table
         local gameobject_meta_info = {}
         local limit_clause = OBJECTS_LIMIT and not FULL_EXTRACTION and (' LIMIT ' .. OBJECTS_LIMIT) or ''
-        print(string.format("  DEBUG: Using hardcoded 'wotlk' for Lock table (AzerothCore)"))
         local meta_farm_query_sql = string.format([[
             SELECT gt.entry, l.data AS lock_data_type, l.skill AS required_skill
             FROM gameobject_template gt
@@ -3184,13 +3183,13 @@ if config.expansions[expansion_to_process] then
             ORDER BY gt.entry ASC
             %s
         ]], limit_clause)
---         print(string.format("  DEBUG: SQL = %s", meta_farm_query_sql))
 
         local farm_query, err_farm = mysql:execute(meta_farm_query_sql)
         if not farm_query then
           print(string.format("  ERROR executing farm query for meta: %s", err_farm or "Unknown MySQL error"))
         else
           local processed_farm_count = 0
+          local chests_count, herbs_count, mines_count = 0, 0, 0
           while farm_query:fetch(gameobject_meta_info, "a") do
             if debug("meta_farm") then break end
 
@@ -3202,16 +3201,19 @@ if config.expansions[expansion_to_process] then
               local negative_entry = -entry
               if lock_type == 1 then
                 pfDB["meta"..exp]["chests"][negative_entry] = required_skill
+                chests_count = chests_count + 1
               elseif lock_type == 2 then
                 pfDB["meta"..exp]["herbs"][negative_entry] = required_skill
+                herbs_count = herbs_count + 1
               elseif lock_type == 3 then
                 pfDB["meta"..exp]["mines"][negative_entry] = required_skill
+                mines_count = mines_count + 1
               end
               processed_farm_count = processed_farm_count + 1
             end
           end
           farm_query:close()
-          print(string.format("  Processed %d gameobjects for chests/herbs/mines FROM LUA.", processed_farm_count))
+          print(string.format("  Processed %d gameobjects: %d chests, %d herbs, %d mines", processed_farm_count, chests_count, herbs_count, mines_count))
         end
       else
         -- Original logic for other cores
