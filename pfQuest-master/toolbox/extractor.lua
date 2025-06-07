@@ -13,7 +13,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 7000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -693,6 +693,7 @@ local config = {
   },
 
   expansion = "vanilla", -- define the expansion to build (use vanilla to avoid -wotlk suffix) (must be a key of 'expansions' table)
+  dbc_expansion = "wotlk", -- define expansion for DBC table names (AzerothCore uses wotlk DBC data)
 
   -- ignore list for object types. These types will not be included into the database
   -- usually these are herbs, minerals, chests because they have a too wide spawn area
@@ -2496,16 +2497,8 @@ if config.expansions[expansion_to_process] then
 
       pfDB["quests"][data][entry] = {}
       pfDB["quests"][data][entry]["min"] = minlevel ~= 0 and minlevel
-      
-      -- Debug output for quest 862
-      if entry == 862 then
-        print("Quest 862 DEBUG:")
-        print("  AddonRequiredSkillID:", current_quest_data.AddonRequiredSkillID)
-        print("  skill_column:", skill_column)
-        print("  skill_column_value:", current_quest_data[skill_column])
-        print("  final skill:", skill)
-      end
-      
+
+
       if skill ~= 0 then
         pfDB["quests"][data][entry]["skill"] = skill
       end
@@ -3510,28 +3503,35 @@ if config.expansions[expansion_to_process] then
     pfDB["professions"] = {}
 
     if core == "acore" then
-      -- For AzerothCore, use loaded DBC SkillLine table
+      -- For AzerothCore, use loaded DBC skillline table (lowercase name)
       local locales_professions = {}
-      local query = mysql:execute('SELECT * FROM SkillLine_'..expansion..' ORDER BY id ASC')
+      local dbc_exp = config.dbc_expansion or "wotlk"
+      local query = mysql:execute('SELECT * FROM skillline_'..dbc_exp..' ORDER BY id ASC')
       if query then
+        local profession_count = 0
         while query:fetch(locales_professions, "a") do
           if debug("locales_profession") then break end
 
           local entry = tonumber(locales_professions.id)
+          profession_count = profession_count + 1
 
           if entry then
             for loc in pairs(locales) do
-              local name = locales_professions["name_loc0"] -- Only enUS from DBC
+              -- Use appropriate locale column or fallback to enUS
+              local locale_col = "name_loc" .. (locales[loc] or "0")
+              local name = locales_professions[locale_col] or locales_professions["name_loc0"]
               if name and name ~= "" then
                 local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
                 pfDB["professions"][locale] = pfDB["professions"][locale] or {}
                 pfDB["professions"][locale][entry] = sanitize(name)
+
               end
             end
           end
         end
+        query:close()
       else
-        print("  Warning: Failed to query professions locales from DBC tables - run load_dbc.lua first")
+        print("  Warning: Failed to query professions locales from skillline_" .. dbc_exp .. " table")
       end
     else
       -- Original logic for other cores
