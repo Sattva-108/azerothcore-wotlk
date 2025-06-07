@@ -13,18 +13,18 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 10000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_ID = 816 -- securing the lines
-local QUEST_784_NPCS = {3193, 3110, 3231}  -- NPCs из анализа квеста 784
-local QUEST_784_ITEMS = {4891}  -- Items для тестирования (quest items, rewards)
-local QUEST_784_OBJECTS = {68}  -- Objects для тестирования (примеры)
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_ID = 848 -- securing the lines
+local QUEST_784_NPCS = {3390}  -- NPCs из анализа квеста 784
+local QUEST_784_ITEMS = {5012}  -- Items для тестирования (quest items, rewards)
+local QUEST_784_OBJECTS = {3640}  -- Objects для тестирования (примеры)
 
 
 -- ================================================================
@@ -1958,15 +1958,26 @@ if config.expansions[expansion_to_process] then
 
         -- fill object table
         local gameobject_loot_template = {}
-        local query = mysql:execute([[
-          SELECT gameobject_template.entry, gameobject_loot_template.ChanceOrQuestChance FROM gameobject_loot_template
-          INNER JOIN gameobject_template ON gameobject_template.data1 = gameobject_loot_template.entry
+        local object_filter = ""
+        if QUEST_784_TEST then
+          local object_list = table.concat(QUEST_784_OBJECTS, ",")
+          object_filter = " AND gameobject_template.entry IN (" .. object_list .. ") "
+        end
+        -- Try AzerothCore field names
+        local chance_field = core == "acore" and "Chance" or "ChanceOrQuestChance"
+        local item_field = core == "acore" and "Item" or "item"
+        local loot_entry_field = core == "acore" and "Entry" or "entry"
+        
+        local sql_query = [[
+          SELECT gameobject_template.entry, gameobject_loot_template.]] .. chance_field .. [[ as chance_value FROM gameobject_loot_template
+          INNER JOIN gameobject_template ON gameobject_template.data1 = gameobject_loot_template.]] .. loot_entry_field .. [[
           WHERE ( gameobject_template.type = 3 OR gameobject_template.type = 25 )
-          AND gameobject_loot_template.item = ]] .. entry .. [[ ORDER BY gameobject_template.entry ]])
+          AND gameobject_loot_template.]] .. item_field .. [[ = ]] .. entry .. object_filter .. [[ ORDER BY gameobject_template.entry ]]
+        local query = mysql:execute(sql_query)
         if query then
           while query:fetch(gameobject_loot_template, "a") do
             if debug("items_object") then break end
-            local chance = math.abs(gameobject_loot_template.ChanceOrQuestChance) * chance
+            local chance = math.abs(gameobject_loot_template.chance_value) * chance
             chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
 
             if chance > 0 then
@@ -3056,9 +3067,16 @@ if config.expansions[expansion_to_process] then
         local locales_gameobject = {}
         local locale_code = GetLocaleCode(loc)
         local limit_clause = OBJECTS_LIMIT and (' LIMIT ' .. OBJECTS_LIMIT) or ''  -- Use OBJECTS_LIMIT
+        local where_clause = ""
+
+        -- QUEST 784 DEBUG MODE - фильтруем только нужные объекты
+        if QUEST_784_TEST then
+          local object_list = table.concat(QUEST_784_OBJECTS, ",")
+          where_clause = " WHERE entry IN (" .. object_list .. ") "
+        end
 
         -- Try simple query without locale table since it may not exist
-        local query = mysql:execute('SELECT entry, name FROM gameobject_template ORDER BY entry ASC' .. limit_clause)
+        local query = mysql:execute('SELECT entry, name FROM gameobject_template' .. where_clause .. ' ORDER BY entry ASC' .. limit_clause)
 
         if query then
           while query:fetch(locales_gameobject, "a") do
