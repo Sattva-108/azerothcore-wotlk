@@ -13,14 +13,14 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 100           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_ID = 848 -- securing the lines
 local QUEST_784_NPCS = {3390}  -- NPCs из анализа квеста 784
 local QUEST_784_ITEMS = {5012}  -- Items для тестирования (quest items, rewards)
@@ -138,7 +138,7 @@ local execution_times = {}
 local jit = jit
 
 local jit_version = jit and jit.version or "Not available"
-print("JIT version: " .. jit_version)
+-- print("JIT version: " .. jit_version)
 
 -- Определение версии Lua (исправлено)
 local lua_version_string = "Lua 5.1" -- Используем английское имя переменной
@@ -153,14 +153,14 @@ if major and minor and tonumber(major) >= 5 and tonumber(minor) >= 2 then
 end
 
 -- Вывод версии для отладки (можно потом убрать)
-print("Detected Lua version string: " .. lua_version_string)
+-- print("Detected Lua version string: " .. lua_version_string)
 if jit then
-    print("JIT version: " .. jit.version)
+--     print("JIT version: " .. jit.version)
 else
-    print("Standard Lua _VERSION: " .. _VERSION)
+--     print("Standard Lua _VERSION: " .. _VERSION)
 end
 if major and minor then
-    print("Parsed major.minor: " .. major .. "." .. minor)
+--     print("Parsed major.minor: " .. major .. "." .. minor)
 else
     print("Could not parse major.minor from Lua version string.")
 end
@@ -634,6 +634,8 @@ local config = {
     },
     ["acore"] = { -- Added for AzerothCore
       ["world_db_name"] = "acore_world", -- Default AC world DB name, can be overridden by expansion's 'db' setting
+      -- Table Mappings
+      ["spell_template"] = "spell_dbc", -- AzerothCore uses spell_dbc instead of spell_template
       -- General Mappings
       ["Entry"] = "entry", -- creature_template.entry in AzerothCore (quest_template uses ID)
       ["Id"] = "ID", -- For spell_template.ID, quest_template.ID etc. when C.Id is used.
@@ -755,7 +757,7 @@ end
 
 -- limit all sql loops using new control panel settings
 local limit = nil  -- Removed old ENTRY_LIMIT logic - use specific limits instead
-print("Applied limit: " .. (limit and tostring(limit) or "NONE"))
+-- print("Applied limit: " .. (limit and tostring(limit) or "NONE"))
 
 function debug(name)
   -- count sql debugs
@@ -827,23 +829,23 @@ if config.expansions[expansion_to_process] then
   local data = "data".. exp
 
     do -- database connection
-        print("Attempting to connect to database...")
+--         print("Attempting to connect to database...")
         local env = luasql.mysql()
         if not env then
             error("Failed to create MySQL environment")
         end
-        print("MySQL environment created successfully")
+--         print("MySQL environment created successfully")
 
         local db_name = settings.database or config.mysql.live.db or "acore_world"
-        print("Connecting to database: " .. db_name)
-        print("Host: " .. config.mysql.live.address .. ":" .. config.mysql.live.port)
-        print("User: " .. config.mysql.live.username)
+--         print("Connecting to database: " .. db_name)
+--         print("Host: " .. config.mysql.live.address .. ":" .. config.mysql.live.port)
+--         print("User: " .. config.mysql.live.username)
 
         mysql, err = env:connect(db_name, config.mysql.live.username, config.mysql.live.password, config.mysql.live.address, config.mysql.live.port)
         if not mysql then
             error("Database connection failed: " .. (err or "unknown error"))
         end
-        print("Database connection successful!")
+--         print("Database connection successful!")
     end
 
   do -- database query functions
@@ -1373,7 +1375,7 @@ if config.expansions[expansion_to_process] then
       -- Use basic areatrigger_teleport table from AzerothCore instead of DBC
       local test_query = mysql:execute('SHOW TABLES LIKE "areatrigger_teleport"')
       if test_query and test_query:fetch() then
-        print("  Found areatrigger_teleport table, extracting areatriggers...")
+--         print("  Found areatrigger_teleport table, extracting areatriggers...")
         local areatrigger = {}
         local query = mysql:execute('SELECT ID, target_map, target_position_x, target_position_y FROM areatrigger_teleport ORDER BY ID')
         if query then
@@ -1537,7 +1539,7 @@ if config.expansions[expansion_to_process] then
               }
           end
           query_cursor:close()
-          print("  SUCCESS: zones.lua data generated with new logic. Total zones processed from SQL: " .. processed_zones_count .. ", Populated in pfDB: " .. TableCount(pfDB["zones"][data]))
+--           print("  SUCCESS: zones.lua data generated with new logic. Total zones processed from SQL: " .. processed_zones_count .. ", Populated in pfDB: " .. TableCount(pfDB["zones"][data]))
       end
     local end_time_zones = os.clock()
     if pfDB and pfDB["zones"] then
@@ -1670,7 +1672,7 @@ if config.expansions[expansion_to_process] then
             -- guess map based on spell relation
             local spell_template = {}
             local query = mysql:execute([[
-              SELECT ]]..C.Id..[[ AS spell, ]]..C.RequiresSpellFocus..[[ AS focus FROM ]]..C.spell_template
+              SELECT ]]..C.Id..[[ AS spell, ]]..C.RequiresSpellFocus..[[ AS focus FROM ]]..C.spell_template..[[
               WHERE ( EffectMiscValue1 = ]]..event..[[ AND effect1 = 61 )
                  OR ( EffectMiscValue2 = ]]..event..[[ AND effect2 = 61 )
                  OR ( EffectMiscValue3 = ]]..event..[[ AND effect3 = 61 )
@@ -1968,7 +1970,7 @@ if config.expansions[expansion_to_process] then
         local chance_field = core == "acore" and "Chance" or "ChanceOrQuestChance"
         local item_field = core == "acore" and "Item" or "item"
         local loot_entry_field = core == "acore" and "Entry" or "entry"
-        
+
         local sql_query = [[
           SELECT gameobject_template.entry, gameobject_loot_template.]] .. chance_field .. [[ as chance_value FROM gameobject_loot_template
           INNER JOIN gameobject_template ON gameobject_template.data1 = gameobject_loot_template.]] .. loot_entry_field .. [[
@@ -2234,8 +2236,149 @@ if config.expansions[expansion_to_process] then
       end
     end
 
-    -- PASS 2: Process each quest and populate pre/chain fields
-    print("  Pass 2: Processing quests with chain data...")
+    -- PASS 2: Batch load quest relationships for optimization
+    print("  Pass 2a: Batch loading quest relationships...")
+    local quest_starters_creature = {}
+    local quest_starters_object = {}
+    local quest_starters_item = {}
+    local quest_enders_creature = {}
+    local quest_enders_object = {}
+
+    -- Get all quest IDs for batch loading
+    local all_quest_ids = {}
+    for _, quest_data in ipairs(all_fetched_quests) do
+      local quest_id = tonumber(quest_data[quest_pk_column])
+      table.insert(all_quest_ids, quest_id)
+    end
+
+    if #all_quest_ids > 0 then
+      local quest_ids_string = table.concat(all_quest_ids, ",")
+
+      -- Debug: Check if quest 833 is in the batch
+      local found_833 = false
+      for _, id in ipairs(all_quest_ids) do
+        if id == 833 then found_833 = true; break end
+      end
+--       print("DEBUG: Quest 833 found in all_quest_ids: " .. (found_833 and "YES" or "NO"))
+--       print("DEBUG: Total quest IDs for batch: " .. #all_quest_ids)
+
+      -- Batch load creature quest starters
+      local starter_table = (core == "acore" and "creature_queststarter" or "creature_questrelation")
+      local sql = "SELECT * FROM " .. starter_table .. " WHERE " .. starter_table .. ".quest IN (" .. quest_ids_string .. ")"
+--       print("DEBUG: Batch SQL for starters: " .. string.sub(sql, 1, 100) .. "...")
+      local query = mysql:execute(sql)
+      if query then
+        local row = {}
+        while query:fetch(row, "a") do
+          local quest_id = tonumber(row.quest)
+          if quest_id == 833 then
+--             print("DEBUG: Found quest 833 starter in batch: creature " .. row.id)
+          end
+          quest_starters_creature[quest_id] = quest_starters_creature[quest_id] or {}
+          table.insert(quest_starters_creature[quest_id], tonumber(row.id))
+        end
+      end
+
+      -- Batch load gameobject quest starters
+      local go_starter_table = (core == "acore" and "gameobject_queststarter" or "gameobject_questrelation")
+      sql = "SELECT * FROM " .. go_starter_table .. " WHERE " .. go_starter_table .. ".quest IN (" .. quest_ids_string .. ")"
+      query = mysql:execute(sql)
+      if query then
+        local row = {}
+        while query:fetch(row, "a") do
+          local quest_id = tonumber(row.quest)
+          quest_starters_object[quest_id] = quest_starters_object[quest_id] or {}
+          table.insert(quest_starters_object[quest_id], tonumber(row.id))
+        end
+      end
+
+      -- Batch load item quest starters
+      sql = "SELECT entry as id, " .. C.startquest .. " as quest FROM item_template WHERE " .. C.startquest .. " IN (" .. quest_ids_string .. ")"
+      query = mysql:execute(sql)
+      if query then
+        local row = {}
+        while query:fetch(row, "a") do
+          local quest_id = tonumber(row.quest)
+          quest_starters_item[quest_id] = quest_starters_item[quest_id] or {}
+          table.insert(quest_starters_item[quest_id], tonumber(row.id))
+        end
+      end
+
+      -- Batch load creature quest enders
+      local ender_table = (core == "acore" and "creature_questender" or "creature_involvedrelation")
+      sql = "SELECT * FROM " .. ender_table .. " WHERE " .. ender_table .. ".quest IN (" .. quest_ids_string .. ")"
+      query = mysql:execute(sql)
+      if query then
+        local row = {}
+        while query:fetch(row, "a") do
+          local quest_id = tonumber(row.quest)
+          quest_enders_creature[quest_id] = quest_enders_creature[quest_id] or {}
+          table.insert(quest_enders_creature[quest_id], tonumber(row.id))
+        end
+      end
+
+      -- Batch load gameobject quest enders
+      local go_ender_table = (core == "acore" and "gameobject_questender" or "gameobject_involvedrelation")
+      sql = "SELECT * FROM " .. go_ender_table .. " WHERE " .. go_ender_table .. ".quest IN (" .. quest_ids_string .. ")"
+      query = mysql:execute(sql)
+      if query then
+        local row = {}
+        while query:fetch(row, "a") do
+          local quest_id = tonumber(row.quest)
+          quest_enders_object[quest_id] = quest_enders_object[quest_id] or {}
+          table.insert(quest_enders_object[quest_id], tonumber(row.id))
+        end
+      end
+    end
+
+    -- Debug: Show batch loading results
+    local creature_starter_count = 0
+    local object_starter_count = 0
+    local item_starter_count = 0
+    local creature_ender_count = 0
+    local object_ender_count = 0
+
+    for quest_id, starters in pairs(quest_starters_creature) do
+      creature_starter_count = creature_starter_count + table.getn(starters)
+    end
+    for quest_id, starters in pairs(quest_starters_object) do
+      object_starter_count = object_starter_count + table.getn(starters)
+    end
+    for quest_id, starters in pairs(quest_starters_item) do
+      item_starter_count = item_starter_count + table.getn(starters)
+    end
+    for quest_id, enders in pairs(quest_enders_creature) do
+      creature_ender_count = creature_ender_count + table.getn(enders)
+    end
+    for quest_id, enders in pairs(quest_enders_object) do
+      object_ender_count = object_ender_count + table.getn(enders)
+    end
+
+    -- Debug quest 833 specifically
+    if quest_starters_creature[833] then
+--         print("DEBUG: Quest 833 creature starters: " .. table.getn(quest_starters_creature[833]))
+        for _, starter in ipairs(quest_starters_creature[833]) do
+--             print("  Starter: " .. starter)
+        end
+    else
+--         print("DEBUG: Quest 833 has NO creature starters in batch data!")
+    end
+
+    if quest_enders_creature[833] then
+--         print("DEBUG: Quest 833 creature enders: " .. table.getn(quest_enders_creature[833]))
+        for _, ender in ipairs(quest_enders_creature[833]) do
+--             print("  Ender: " .. ender)
+        end
+    else
+--         print("DEBUG: Quest 833 has NO creature enders in batch data!")
+    end
+
+--     print("  Batch loaded: " .. creature_starter_count .. " creature starters, " ..
+--           object_starter_count .. " object starters, " .. item_starter_count .. " item starters")
+--     print("  Batch loaded: " .. creature_ender_count .. " creature enders, " ..
+--           object_ender_count .. " object enders")
+
+    print("  Pass 2b: Processing quests with pre-loaded relationship data...")
     for i, current_quest_data in ipairs(all_fetched_quests) do
       if debug("quests") then break end
 
@@ -2246,20 +2389,30 @@ if config.expansions[expansion_to_process] then
 
       local entry = tonumber(current_quest_data[quest_pk_column])
       local quest_id = current_quest_data[quest_pk_column] or current_quest_data.entry
+
+      -- Debug quest 833 processing
+      if entry == 833 then
+--         print("DEBUG: Processing quest 833, entry=" .. entry .. ", quest_id=" .. quest_id)
+        local found_in_batch = false
+        for _, id in ipairs(all_quest_ids) do
+          if id == 833 then found_in_batch = true; break end
+        end
+--         print("DEBUG: Quest 833 in all_quest_ids: " .. (found_in_batch and "YES" or "NO"))
+      end
         local minlevel = tonumber(current_quest_data.MinLevel)
       local questlevel = tonumber(current_quest_data.QuestLevel)
-      local class_column = C.RequiredClasses or "RequiredClasses" -- Default if not in C
+      local class_column = C.RequiredClasses or "AllowableClasses" -- AzerothCore uses AllowableClasses
       local race_column = C.RequiredRaces or "AllowableRaces" -- Default to AC if not in C
       local skill_column = C.RequiredSkill or "RequiredSkillId" -- Default to AC if not in C
       local srcitem_column = C.SrcItemId or "StartItem" -- Default to AC if not in C
       local prevquest_column = C.PrevQuestId or "PrevQuestId" -- Default if not in C
 
-        local class = quest_template[class_column] and tonumber(quest_template[class_column]) or 0
-        local race = quest_template[race_column] and tonumber(quest_template[race_column]) or 0
-        local skill = quest_template[skill_column] and tonumber(quest_template[skill_column]) or 0
-        local chain = quest_template.NextQuestInChain and tonumber(quest_template.NextQuestInChain) or 0 -- This will be problematic for AC
-        local srcitem = quest_template[srcitem_column] and tonumber(quest_template[srcitem_column]) or 0
-        local repeatable = quest_template.SpecialFlags and (tonumber(quest_template.SpecialFlags) % 2) or 0
+        local class = current_quest_data[class_column] and tonumber(current_quest_data[class_column]) or 0
+        local race = current_quest_data[race_column] and tonumber(current_quest_data[race_column]) or 0
+        local skill = current_quest_data[skill_column] and tonumber(current_quest_data[skill_column]) or 0
+        local chain = current_quest_data.NextQuestInChain and tonumber(current_quest_data.NextQuestInChain) or 0 -- This will be problematic for AC
+        local srcitem = current_quest_data[srcitem_column] and tonumber(current_quest_data[srcitem_column]) or 0
+        local repeatable = current_quest_data.SpecialFlags and (tonumber(current_quest_data.SpecialFlags) % 2) or 0
       local event = nil
 
         -- try to detect event by quest event entry
@@ -2327,14 +2480,39 @@ if config.expansions[expansion_to_process] then
       pfDB["quests"][data][entry]["lvl"] = questlevel ~= 0 and questlevel
 
       -- Store AllowableClasses as number (pfQuest expects bit.band operations)
-      local allowable_classes_mask = tonumber(current_quest_data.AllowableClasses) or 0
-      local allowable_races_mask = tonumber(current_quest_data.AllowableRaces) or 0
+      local allowable_classes_mask = current_quest_data[class_column] and tonumber(current_quest_data[class_column]) or 0
+      local allowable_races_mask = tonumber(current_quest_data[race_column]) or 0
 
       if allowable_classes_mask ~= 0 then
         pfDB["quests"][data][entry]["class"] = allowable_classes_mask
       end
 
-      pfDB["quests"][data][entry]["race"] = allowable_races_mask ~= 0 and allowable_races_mask or race
+      -- Zone-based faction detection for AllowableRaces = 0
+      local final_race = allowable_races_mask ~= 0 and allowable_races_mask or race
+      if final_race == 0 and quest_starters_creature[tonumber(quest_id)] then
+        -- Get zone from first starter creature
+        local starter_id = quest_starters_creature[tonumber(quest_id)][1]
+        if starter_id and pfDB["units"][data][starter_id] and pfDB["units"][data][starter_id]["coords"] then
+          local coords = pfDB["units"][data][starter_id]["coords"][1]
+          if coords then
+            local zone = coords[3]
+            -- Zone-to-faction mapping for common zones
+            if zone == 215 or zone == 17 or zone == 14 then -- Mulgore, Northern Barrens, Durotar
+              final_race = 690 -- Horde
+            elseif zone == 12 or zone == 40 or zone == 130 then -- Elwynn Forest, Westfall, Teldrassil
+              final_race = 1101 -- Alliance
+            end
+          end
+        end
+      end
+
+      if entry == 833 then
+--         print("DEBUG: Quest 833 race assignment:")
+--         print("  allowable_races_mask = " .. allowable_races_mask)
+--         print("  race = " .. race)
+--         print("  final_race = " .. final_race)
+      end
+      pfDB["quests"][data][entry]["race"] = final_race
       pfDB["quests"][data][entry]["skill"] = skill ~= 0 and skill
       pfDB["quests"][data][entry]["event"] = event ~= 0 and event
 
@@ -2420,23 +2598,29 @@ if config.expansions[expansion_to_process] then
         local req_item_col = req_item_id_base .. i
         local req_source_col = req_source_id_base .. i -- Might be unused if AC has no direct map
 
-        if quest_template[req_npc_go_col] and tonumber(quest_template[req_npc_go_col]) > 0 then
-          units[tonumber(quest_template[req_npc_go_col])] = true
-        elseif quest_template[req_npc_go_col] and tonumber(quest_template[req_npc_go_col]) < 0 then
-          objects[math.abs(tonumber(quest_template[req_npc_go_col]))] = true
+        if current_quest_data[req_npc_go_col] and tonumber(current_quest_data[req_npc_go_col]) > 0 then
+          units[tonumber(current_quest_data[req_npc_go_col])] = true
+        elseif current_quest_data[req_npc_go_col] and tonumber(current_quest_data[req_npc_go_col]) < 0 then
+          objects[math.abs(tonumber(current_quest_data[req_npc_go_col]))] = true
         end
-        if quest_template[req_item_col] and tonumber(quest_template[req_item_col]) > 0 then
-          items[tonumber(quest_template[req_item_col])] = true
+        if current_quest_data[req_item_col] and tonumber(current_quest_data[req_item_col]) > 0 then
+          if entry == 833 then
+--             print("DEBUG: Quest 833 adding required item: " .. current_quest_data[req_item_col] .. " from " .. req_item_col)
+          end
+          items[tonumber(current_quest_data[req_item_col])] = true
         end
         -- Handling ReqSourceId needs to be verified for AC. It might involve looking at item loot that starts quests or specific quest flags.
         -- For now, we attempt to use it if the column exists in the query result.
-        if quest_template[req_source_col] and tonumber(quest_template[req_source_col]) > 0 then
-          items[tonumber(quest_template[req_source_col])] = true
+        if current_quest_data[req_source_col] and tonumber(current_quest_data[req_source_col]) > 0 then
+          if entry == 833 then
+--             print("DEBUG: Quest 833 adding source item: " .. current_quest_data[req_source_col] .. " from " .. req_source_col)
+          end
+          items[tonumber(current_quest_data[req_source_col])] = true
         end
 
-        if quest_template["ReqSpellCast" .. i] and tonumber(quest_template["ReqSpellCast" .. i]) > 0 then
+        if current_quest_data["ReqSpellCast" .. i] and tonumber(current_quest_data["ReqSpellCast" .. i]) > 0 then
           local spell_template = {}
-          local query = mysql:execute('SELECT * FROM ' .. C.spell_template .. ' WHERE ' .. C.spell_template .. '.' .. C.Id .. ' = ' .. quest_template["ReqSpellCast" .. i])
+          local query = mysql:execute('SELECT * FROM ' .. C.spell_template .. ' WHERE ' .. C.spell_template .. '.' .. C.Id .. ' = ' .. current_quest_data["ReqSpellCast" .. i])
           while query:fetch(spell_template, "a") do
             if debug("quests_questspellobject") then break end
             if spell_template[C.RequiresSpellFocus] ~= "0" then
@@ -2632,6 +2816,9 @@ if config.expansions[expansion_to_process] then
                   end
 
                   for id in opairs(items) do
+                      if entry == 833 then
+--                         print("DEBUG: Quest 833 adding item objective: " .. id)
+                      end
                       pfDB["quests"][data][entry]["obj"]["I"] = pfDB["quests"][data][entry]["obj"]["I"] or {}
                       table.insert(pfDB["quests"][data][entry]["obj"]["I"], tonumber(id))
                   end
@@ -2652,47 +2839,41 @@ if config.expansions[expansion_to_process] then
                   end
               end
 
-              -- quest starter
-              local creature_questrelation = {}
-              local starter_table = (core == "acore" and "creature_queststarter" or "creature_questrelation")
-              local sql = [[
-          SELECT * FROM ]] .. starter_table .. [[ WHERE ]] .. starter_table .. [[.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                  while query:fetch(creature_questrelation, "a") do
-                      if debug("quests_starterunit") then break end
-                      pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
-                      pfDB["quests"][data][entry]["start"]["U"] = pfDB["quests"][data][entry]["start"]["U"] or {}
-                      table.insert(pfDB["quests"][data][entry]["start"]["U"], tonumber(creature_questrelation.id))
+              -- quest starter (using pre-loaded data)
+              if entry == 833 then
+--                 print("DEBUG: Quest 833 processing starters, quest_id=" .. quest_id)
+--                 print("DEBUG: quest_starters_creature[833] exists: " .. (quest_starters_creature[833] and "YES" or "NO"))
+--                 print("DEBUG: quest_starters_creature[tonumber(quest_id)] exists: " .. (quest_starters_creature[tonumber(quest_id)] and "YES" or "NO"))
+              end
+
+              if quest_starters_creature[tonumber(quest_id)] then
+                  if not debug("quests_starterunit") then
+                  pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
+                  pfDB["quests"][data][entry]["start"]["U"] = pfDB["quests"][data][entry]["start"]["U"] or {}
+                  for _, creature_id in ipairs(quest_starters_creature[tonumber(quest_id)]) do
+                      table.insert(pfDB["quests"][data][entry]["start"]["U"], creature_id)
+                  end
                   end
               end
 
-              local gameobject_questrelation = {}
-              local go_starter_table = (core == "acore" and "gameobject_queststarter" or "gameobject_questrelation")
-              local sql = [[
-          SELECT * FROM ]] .. go_starter_table .. [[ WHERE ]] .. go_starter_table .. [[.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                  while query:fetch(gameobject_questrelation, "a") do
-                      if debug("quests_starterobject") then break end
-                      pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
-                      pfDB["quests"][data][entry]["start"]["O"] = pfDB["quests"][data][entry]["start"]["O"] or {}
-                      table.insert(pfDB["quests"][data][entry]["start"]["O"], tonumber(gameobject_questrelation.id))
+              if quest_starters_object[tonumber(quest_id)] then
+                  if not debug("quests_starterobject") then
+                  pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
+                  pfDB["quests"][data][entry]["start"]["O"] = pfDB["quests"][data][entry]["start"]["O"] or {}
+                  for _, object_id in ipairs(quest_starters_object[tonumber(quest_id)]) do
+                      table.insert(pfDB["quests"][data][entry]["start"]["O"], object_id)
+                  end
                   end
               end
 
-              local item_template = {}
-              local sql = [[
-          SELECT entry as id FROM item_template WHERE ]] .. C.startquest .. [[ = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                  while query:fetch(item_template, "a") do
-                      if debug("quests_starteritem") then break end
+              if quest_starters_item[tonumber(quest_id)] then
+                  if not debug("quests_starteritem") then
 
+                  for _, item_id in ipairs(quest_starters_item[tonumber(quest_id)]) do
                       -- remove quest start items from objectives
                       if pfDB["quests"][data][entry]["obj"] and pfDB["quests"][data][entry]["obj"]["I"] then
                           for id, objective in pairs(pfDB["quests"][data][entry]["obj"]["I"]) do
-                              if objective == tonumber(item_template.id) then
+                              if objective == item_id then
                                   pfDB["quests"][data][entry]["obj"]["I"][id] = nil
                               end
                           end
@@ -2701,37 +2882,29 @@ if config.expansions[expansion_to_process] then
                       -- add item to quest starters
                       pfDB["quests"][data][entry]["start"] = pfDB["quests"][data][entry]["start"] or {}
                       pfDB["quests"][data][entry]["start"]["I"] = pfDB["quests"][data][entry]["start"]["I"] or {}
-                      table.insert(pfDB["quests"][data][entry]["start"]["I"], tonumber(item_template.id))
+                      table.insert(pfDB["quests"][data][entry]["start"]["I"], item_id)
+                  end
                   end
               end
 
-              -- quest ender
-              local creature_involvedrelation = {}
-              local ender_table = (core == "acore" and "creature_questender" or "creature_involvedrelation")
-              local sql = [[
-          SELECT * FROM ]] .. ender_table .. [[ WHERE ]] .. ender_table .. [[.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                  while query:fetch(creature_involvedrelation, "a") do
-                      if debug("quests_enderunit") then break end
-                      pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
-                      pfDB["quests"][data][entry]["end"]["U"] = pfDB["quests"][data][entry]["end"]["U"] or {}
-                      table.insert(pfDB["quests"][data][entry]["end"]["U"], tonumber(creature_involvedrelation.id))
+              -- quest ender (using pre-loaded data)
+              if quest_enders_creature[tonumber(quest_id)] then
+                  if not debug("quests_enderunit") then
+                  pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
+                  pfDB["quests"][data][entry]["end"]["U"] = pfDB["quests"][data][entry]["end"]["U"] or {}
+                  for _, creature_id in ipairs(quest_enders_creature[tonumber(quest_id)]) do
+                      table.insert(pfDB["quests"][data][entry]["end"]["U"], creature_id)
+                  end
                   end
               end
 
-              local gameobject_involvedrelation = {}
-              local first = true
-              local go_ender_table = (core == "acore" and "gameobject_questender" or "gameobject_involvedrelation")
-              local sql = [[
-          SELECT * FROM ]] .. go_ender_table .. [[ WHERE ]] .. go_ender_table .. [[.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                  while query:fetch(gameobject_involvedrelation, "a") do
-                      if debug("quests_enderobject") then break end
-                      pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
-                      pfDB["quests"][data][entry]["end"]["O"] = pfDB["quests"][data][entry]["end"]["O"] or {}
-                      table.insert(pfDB["quests"][data][entry]["end"]["O"], tonumber(gameobject_involvedrelation.id))
+              if quest_enders_object[tonumber(quest_id)] then
+                  if not debug("quests_enderobject") then
+                  pfDB["quests"][data][entry]["end"] = pfDB["quests"][data][entry]["end"] or {}
+                  pfDB["quests"][data][entry]["end"]["O"] = pfDB["quests"][data][entry]["end"]["O"] or {}
+                  for _, object_id in ipairs(quest_enders_object[tonumber(quest_id)]) do
+                      table.insert(pfDB["quests"][data][entry]["end"]["O"], object_id)
+                  end
                   end
               end
 
@@ -3425,7 +3598,7 @@ if config.expansions[expansion_to_process] then
 }
 ]])
       init_file:close()
-      print("Created empty init.lua")
+--       print("Created empty init.lua")
     end
   end
 
@@ -3483,12 +3656,12 @@ if execution_times and #execution_times > 0 then
     end
     print("  --------------------------------------------------------")
     print(string.format("  TOTAL execution time: %.4f seconds", total_time))
+    print("Extraction completed!")
 else
     print("  No execution times recorded.")
 end
 print("================================================================")
 
-print("Extraction completed!")
 
 
 -- Автоматически запускаем скрипт копирования файлов
