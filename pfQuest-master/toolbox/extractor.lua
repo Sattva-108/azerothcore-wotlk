@@ -13,9 +13,9 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 7000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
-local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -2437,59 +2437,97 @@ if config.expansions[expansion_to_process] then
       local event = nil
 
         -- try to detect event by quest event entry
-        local game_event_quest = {}
-        local query = mysql:execute('SELECT event FROM game_event_quest WHERE quest = ' .. entry)
-        if query then
-          while query:fetch(game_event_quest, "a") do
-            if debug("quests_events") then break end
-            event = tonumber(game_event_quest.event)
-            break
+        if core == "acore" then
+          -- AzerothCore uses game_event_seasonal_questrelation
+          local game_event_quest = {}
+          local query = mysql:execute('SELECT eventEntry as event FROM game_event_seasonal_questrelation WHERE questId = ' .. entry)
+          if query then
+            while query:fetch(game_event_quest, "a") do
+              if debug("quests_events") then break end
+              event = tonumber(game_event_quest.event)
+              break
+            end
+          end
+        else
+          -- MaNGOS/CMaNGOS uses game_event_quest
+          local game_event_quest = {}
+          local query = mysql:execute('SELECT event FROM game_event_quest WHERE quest = ' .. entry)
+          if query then
+            while query:fetch(game_event_quest, "a") do
+              if debug("quests_events") then break end
+              event = tonumber(game_event_quest.event)
+              break
+            end
           end
         end
 
         -- try to detect event by creature event
         if not event then
-        local game_event_creature = {}
-
-        -- Use correct quest ID field for AzerothCore
-        local quest_id = quest_template[quest_pk_column] or quest_template.entry
-        if not quest_id then
-          print("Warning: Quest with nil ID, skipping event detection")
-        else
-          local sql = [[
-            SELECT game_event_creature.event as event FROM creature, game_event_creature, creature_questrelation
-            WHERE creature.guid = game_event_creature.guid
-            AND creature.id = creature_questrelation.id
-            AND creature_questrelation.quest = ]] .. quest_id
-          local query = mysql:execute(sql)
-          if query then
-            while query:fetch(game_event_creature, "a") do
-              if debug("quests_eventscreature") then break end
-              event = tonumber(game_event_creature.event)
-              break
+          if core == "acore" then
+            -- AzerothCore uses game_event_creature_quest
+            local game_event_creature = {}
+            local query = mysql:execute('SELECT eventEntry as event FROM game_event_creature_quest WHERE quest = ' .. entry)
+            if query then
+              while query:fetch(game_event_creature, "a") do
+                if debug("quests_eventscreature") then break end
+                event = tonumber(game_event_creature.event)
+                break
+              end
+            end
+          else
+            -- MaNGOS/CMaNGOS logic
+            local game_event_creature = {}
+            local quest_id = quest_template[quest_pk_column] or quest_template.entry
+            if not quest_id then
+              print("Warning: Quest with nil ID, skipping event detection")
+            else
+              local sql = [[
+                SELECT game_event_creature.event as event FROM creature, game_event_creature, creature_questrelation
+                WHERE creature.guid = game_event_creature.guid
+                AND creature.id = creature_questrelation.id
+                AND creature_questrelation.quest = ]] .. quest_id
+              local query = mysql:execute(sql)
+              if query then
+                while query:fetch(game_event_creature, "a") do
+                  if debug("quests_eventscreature") then break end
+                  event = tonumber(game_event_creature.event)
+                  break
+                end
+              end
             end
           end
         end
-      end
 
         -- try to detect event by gameobject event
         if not event then
-          local game_event_gameobject = {}
-
-          -- Use correct quest ID field for AzerothCore
-          local quest_id = quest_template[quest_pk_column] or quest_template.entry
-          if quest_id then
-            local sql = [[
-              SELECT game_event_gameobject.event as event FROM gameobject, game_event_gameobject, gameobject_questrelation
-              WHERE gameobject.guid = game_event_gameobject.guid
-              AND gameobject.id = gameobject_questrelation.id
-              AND gameobject_questrelation.quest = ]] .. quest_id
-            local query = mysql:execute(sql)
+          if core == "acore" then
+            -- AzerothCore uses game_event_gameobject_quest
+            local game_event_gameobject = {}
+            local query = mysql:execute('SELECT eventEntry as event FROM game_event_gameobject_quest WHERE quest = ' .. entry)
             if query then
               while query:fetch(game_event_gameobject, "a") do
                 if debug("quests_eventsobjects") then break end
                 event = tonumber(game_event_gameobject.event)
                 break
+              end
+            end
+          else
+            -- MaNGOS/CMaNGOS logic
+            local game_event_gameobject = {}
+            local quest_id = quest_template[quest_pk_column] or quest_template.entry
+            if quest_id then
+              local sql = [[
+                SELECT game_event_gameobject.event as event FROM gameobject, game_event_gameobject, gameobject_questrelation
+                WHERE gameobject.guid = game_event_gameobject.guid
+                AND gameobject.id = gameobject_questrelation.id
+                AND gameobject_questrelation.quest = ]] .. quest_id
+              local query = mysql:execute(sql)
+              if query then
+                while query:fetch(game_event_gameobject, "a") do
+                  if debug("quests_eventsobjects") then break end
+                  event = tonumber(game_event_gameobject.event)
+                  break
+                end
               end
             end
           end
@@ -2540,7 +2578,9 @@ if config.expansions[expansion_to_process] then
       if final_race ~= 0 then
         pfDB["quests"][data][entry]["race"] = final_race
       end
-      pfDB["quests"][data][entry]["event"] = event ~= 0 and event
+      if event and event ~= 0 then
+        pfDB["quests"][data][entry]["event"] = event
+      end
 
       -- Build pre-quest relationships
       local pre_quests_list = {}
