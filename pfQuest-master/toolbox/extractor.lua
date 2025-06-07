@@ -13,9 +13,9 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 3000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
-local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -1139,7 +1139,7 @@ if config.expansions[expansion_to_process] then
         if core == "acore" then
             local creature_spawn_data_cache = {}
             local sql_get_creatures = string.format(
-                "SELECT guid, map, position_x, position_y, zoneId, areaId FROM creature WHERE id1 = %d",
+                "SELECT guid, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM creature WHERE id1 = %d",
                 id1_template
             )
             local cursor_creatures = mysql:execute(sql_get_creatures) -- Переименовал, чтобы не конфликтовать с cursor для границ
@@ -1154,7 +1154,8 @@ if config.expansions[expansion_to_process] then
                 table.insert(creature_spawn_data_cache, {
                     guid = temp_row.guid, map = tonumber(temp_row.map),
                     position_x = tonumber(temp_row.position_x), position_y = tonumber(temp_row.position_y),
-                    zoneId = tonumber(temp_row.zoneId), areaId = tonumber(temp_row.areaId)
+                    zoneId = tonumber(temp_row.zoneId), areaId = tonumber(temp_row.areaId),
+                    spawntimesecs = tonumber(temp_row.spawntimesecs)
                 })
                 temp_row = {}
             end
@@ -1244,7 +1245,8 @@ if config.expansions[expansion_to_process] then
 
                 -- ВАЖНО: Третий элемент здесь - это ID карты, на которой NPC будет отображаться.
                 -- Это display_zone_for_units_lua.
-                table.insert(ret, { round(zone_x,2), round(zone_y,2), display_zone_for_units_lua, 0 })
+                local creature_respawn_time = creature_data.spawntimesecs or 0
+                table.insert(ret, { round(zone_x,2), round(zone_y,2), display_zone_for_units_lua, creature_respawn_time })
             end
         end
         return ret
@@ -1258,7 +1260,7 @@ if config.expansions[expansion_to_process] then
             -- Обычно это 'id', но может быть 'entry' или 'id1' в зависимости от вашей схемы.
             -- Я использую 'id' согласно вашему предыдущему коду для GetGameObjectCoords.
             local sql_get_gameobjects = string.format(
-                "SELECT guid, map, position_x, position_y, zoneId, areaId FROM gameobject WHERE id = %d",
+                "SELECT guid, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM gameobject WHERE id = %d",
                 id1_template
             )
             local cursor_gameobjects = mysql:execute(sql_get_gameobjects)
@@ -1273,7 +1275,8 @@ if config.expansions[expansion_to_process] then
                 table.insert(gameobject_spawn_data_cache, {
                     guid = temp_row.guid, map = tonumber(temp_row.map),
                     position_x = tonumber(temp_row.position_x), position_y = tonumber(temp_row.position_y),
-                    zoneId = tonumber(temp_row.zoneId), areaId = tonumber(temp_row.areaId)
+                    zoneId = tonumber(temp_row.zoneId), areaId = tonumber(temp_row.areaId),
+                    spawntimesecs = tonumber(temp_row.spawntimesecs)
                 })
                 temp_row = {}
             end
@@ -1357,7 +1360,8 @@ if config.expansions[expansion_to_process] then
                 zone_y = math.max(0, math.min(100, zone_y))
 
                 -- display_map_areatable_id здесь используется как ID карты, на которой объект будет показан
-                table.insert(ret, { round(zone_x,2), round(zone_y,2), display_map_areatable_id, 0 }) -- 0 это spawntimesecs
+                local object_respawn_time = gobject_data.spawntimesecs or 0
+                table.insert(ret, { round(zone_x,2), round(zone_y,2), display_map_areatable_id, object_respawn_time })
             end
         end
         return ret
