@@ -3648,6 +3648,57 @@ if config.expansions[expansion_to_process] then
     end
   end
 
+  -- ================================================================
+  -- ZONES LOCALES EXTRACTION
+  -- ================================================================
+  print("- loading zones locales...")
+
+  local dbc_area_table_name = "AreaTable_wotlk" -- Имя таблицы DBC с зонами
+
+  -- Убедитесь, что эти переменные определены и доступны:
+  -- all_locales: Таблица {["enUS"]=0, ["deDE"]=3, ...} - маппинг ключа локали на номер колонки _locX.
+  -- locales: Таблица активных локалей для текущей экспансии (из config).
+  -- exp: Строковый суффикс экспансии ("" или "-wotlk" и т.п.).
+  -- sanitize: Функция для очистки строк.
+
+  if not all_locales or not locales or exp == nil or not sanitize then
+      print("  ERROR: Prerequisite variables (all_locales, locales, exp, sanitize) not available for zones locales. Skipping.")
+  else
+      for loc_key, _ in pairs(locales) do
+          local loc_number = all_locales[loc_key]
+
+          if loc_number == nil then
+              print(string.format("  WARNING: Locale number for '%s' not in all_locales. Skipping zones locale.", loc_key))
+          else
+              local current_pfdb_key = loc_key .. exp
+              pfDB["zones"] = pfDB["zones"] or {}
+              pfDB["zones"][current_pfdb_key] = pfDB["zones"][current_pfdb_key] or {}
+
+              local locale_field = "name_loc" .. loc_number
+              local sql = string.format(
+                  "SELECT ID, %s AS LocalizedName FROM %s WHERE ID != 0 AND %s IS NOT NULL AND %s != '' ORDER BY ID ASC",
+                  locale_field, dbc_area_table_name, locale_field, locale_field
+              )
+
+              local query = mysql:execute(sql)
+              if query then
+                  local row, count = {}, 0
+                  while query:fetch(row, "a") do
+                      local zone_id = tonumber(row.ID)
+                      if zone_id and row.LocalizedName then
+                          pfDB["zones"][current_pfdb_key][zone_id] = sanitize(row.LocalizedName)
+                          count = count + 1
+                      end
+                  end
+                  query:close()
+                  print(string.format("  Loaded %d zone names for locale '%s' (pfDB key: '%s').", count, loc_key, current_pfdb_key))
+              else
+                  print(string.format("  ERROR: SQL query failed for zones locale '%s'.", loc_key))
+              end
+          end
+      end
+  end
+
   -- write down tables
   print("- writing database...")
   output = settings.custom and "output/custom/" or "output/"
