@@ -606,7 +606,7 @@ local config = {
       ["item_template_reagent"] = "item_template_reagents",
       ["spell_bonus_data"] = "spell_bonus_data",
       ["spell_required"] = "spell_required",
-      ["spell_template"] = "spell_template",
+      ["spell_template"] = "spell_dbc",
       ["spell_chain"] = "spell_chain",
       ["spell_area"] = "spell_area",
       ["spell_script_target"] = "spell_script_target",
@@ -645,10 +645,11 @@ local config = {
       ["Faction"] = "faction", -- creature_template.faction, gameobject_template.faction
       ["NpcFlags"] = "npcflag", -- creature_template.npcflag
       -- VendorTemplateId: cmangos default is npc_vendor.entry, if AC is different, map here. pfQuest doesn't seem to use C.VendorTemplateId.
-      ["RequiresSpellFocus"] = "RequiresSpellFocus", -- spell_template.RequiresSpellFocus (likely same name)
-      ["EffectTriggerSpell1"] = "EffectTriggerSpell1", -- spell_template.EffectTriggerSpell, etc. (AC uses 1-3)
-      ["EffectTriggerSpell2"] = "EffectTriggerSpell2",
-      ["EffectTriggerSpell3"] = "EffectTriggerSpell3",
+      ["RequiresSpellFocus"] = "RequiresSpellFocus", -- spell_dbc.RequiresSpellFocus (likely same name)
+      ["EffectTriggerSpell1"] = "EffectTriggerSpell_1", -- spell_dbc.EffectTriggerSpell_1, etc. (AC uses 1-3 with underscores)
+      ["EffectTriggerSpell2"] = "EffectTriggerSpell_2",
+      ["EffectTriggerSpell3"] = "EffectTriggerSpell_3",
+      ["AreaId_spell"] = "RequiredAreasID", -- spell_dbc.RequiredAreasID contains zone/area group ID
       ["Map"] = "map", -- item_template.map (for map-bound items)
       ["startquest"] = "startquest", -- item_template.startquest (AC uses this name)
 
@@ -1669,7 +1670,7 @@ if config.expansions[expansion_to_process] then
             -- guess map based on spell relation
             local spell_template = {}
             local query = mysql:execute([[
-              SELECT ]]..C.Id..[[ AS spell, ]]..C.RequiresSpellFocus..[[ AS focus FROM spell_template
+              SELECT ]]..C.Id..[[ AS spell, ]]..C.RequiresSpellFocus..[[ AS focus FROM ]]..C.spell_template
               WHERE ( EffectMiscValue1 = ]]..event..[[ AND effect1 = 61 )
                  OR ( EffectMiscValue2 = ]]..event..[[ AND effect2 = 61 )
                  OR ( EffectMiscValue3 = ]]..event..[[ AND effect3 = 61 )
@@ -1770,9 +1771,9 @@ if config.expansions[expansion_to_process] then
               AND creature_ai_scripts.datalong = ]]..entry..[[
               AND x = 0 AND y = 0
           ]] or [[
-            SELECT creature_id AS summoner FROM spell_template
-            LEFT JOIN creature_ai_scripts ON action1_type = 11 AND action1_param1 = spell_template.Id
-            WHERE spell_template.Effect1 = 28 AND creature_id > 0 AND spell_template.EffectMiscValue1 = ]]..entry..[[
+            SELECT creature_id AS summoner FROM ]]..C.spell_template..[[
+            LEFT JOIN creature_ai_scripts ON action1_type = 11 AND action1_param1 = ]]..C.spell_template..[[.]]..C.Id..[[
+            WHERE ]]..C.spell_template..[[.Effect1 = 28 AND creature_id > 0 AND ]]..C.spell_template..[[.EffectMiscValue1 = ]]..entry..[[
           ]])
           if query then
             while query:fetch(creature_ai_scripts, "a") do
@@ -2435,7 +2436,7 @@ if config.expansions[expansion_to_process] then
 
         if quest_template["ReqSpellCast" .. i] and tonumber(quest_template["ReqSpellCast" .. i]) > 0 then
           local spell_template = {}
-          local query = mysql:execute('SELECT * FROM spell_template WHERE spell_template.' .. C.Id .. ' = ' .. quest_template["ReqSpellCast" .. i])
+          local query = mysql:execute('SELECT * FROM ' .. C.spell_template .. ' WHERE ' .. C.spell_template .. '.' .. C.Id .. ' = ' .. quest_template["ReqSpellCast" .. i])
           while query:fetch(spell_template, "a") do
             if debug("quests_questspellobject") then break end
             if spell_template[C.RequiresSpellFocus] ~= "0" then
@@ -2476,11 +2477,11 @@ if config.expansions[expansion_to_process] then
 
                   -- scan through all spells that are associated with the item
                   local spell_template = {}
-                  local spell_query = mysql:execute('SELECT * FROM spell_template WHERE ' .. C.Id .. ' = ' .. spellid)
+                  local spell_query = mysql:execute('SELECT * FROM ' .. C.spell_template .. ' WHERE ' .. C.Id .. ' = ' .. spellid)
                   if spell_query then
                     while spell_query:fetch(spell_template, "a") do
                       if debug("quests_itemspell") then break end
-                local area = spell_template["AreaId"]
+                local area = spell_template[C.AreaId_spell or "AreaId"]
                 local focus = spell_template[C.RequiresSpellFocus]
                 local match = nil
 
