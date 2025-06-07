@@ -13,7 +13,7 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
+local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 15             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
@@ -2512,7 +2512,9 @@ if config.expansions[expansion_to_process] then
 --         print("  race = " .. race)
 --         print("  final_race = " .. final_race)
       end
-      pfDB["quests"][data][entry]["race"] = final_race
+      if final_race ~= 0 then
+        pfDB["quests"][data][entry]["race"] = final_race
+      end
       pfDB["quests"][data][entry]["skill"] = skill ~= 0 and skill
       pfDB["quests"][data][entry]["event"] = event ~= 0 and event
 
