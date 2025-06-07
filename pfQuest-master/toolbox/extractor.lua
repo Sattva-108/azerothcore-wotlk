@@ -1911,6 +1911,21 @@ if config.expansions[expansion_to_process] then
     pfDB["items"] = pfDB["items"] or {}
     pfDB["items"][data] = {}
 
+    -- Get total count for progress tracking
+    local total_items = 0
+    local count_where_clause = ""
+    if QUEST_784_TEST then
+      local item_list = table.concat(QUEST_784_ITEMS, ",")
+      count_where_clause = " WHERE entry IN (" .. item_list .. ") "
+    end
+    local count_query = mysql:execute('SELECT COUNT(*) as total FROM item_template' .. count_where_clause)
+    if count_query then
+      local count_result = {}
+      count_query:fetch(count_result, "a")
+      total_items = tonumber(count_result.total) or 0
+    end
+    print("Processing " .. total_items .. " items...")
+
     -- iterate over all items
     local item_template = {}
     local limit_clause = ITEMS_LIMIT and (' LIMIT ' .. ITEMS_LIMIT) or ''
@@ -1925,7 +1940,12 @@ if config.expansions[expansion_to_process] then
 
     local query = mysql:execute('SELECT entry, name FROM item_template' .. where_clause .. ' ORDER BY entry ASC' .. limit_clause)
     if query then
+      local processed = 0
       while query:fetch(item_template, "a") do
+        processed = processed + 1
+        if processed % 1000 == 0 then
+          print("  Processed " .. processed .. "/" .. total_items .. " items (" .. math.floor(processed/total_items*100) .. "%)")
+        end
       if debug("items") then break end
 
       local entry = tonumber(item_template.entry)
