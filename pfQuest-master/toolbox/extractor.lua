@@ -1848,8 +1848,7 @@ if config.expansions[expansion_to_process] then
     local total_objects = tonumber(count_result.total) or 0
     print("  Processing " .. total_objects .. " objects...")
 
-    -- iterate over all objects (LIMITED FOR TESTING)
-    local processed = 0
+    -- STEP 1/3: Pass 1 - Collect all object entry IDs first
     local gameobject_template = {}
     local limit_clause = ""
     local where_clause = ""
@@ -1863,6 +1862,111 @@ if config.expansions[expansion_to_process] then
       limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. OBJECTS_LIMIT) or ''
     end
 
+    print("  Pass 1: Collecting all object entry IDs...")
+    local all_object_ids = {}
+    local pass1_query = mysql:execute('SELECT entry FROM gameobject_template' .. where_clause .. ' ORDER BY entry ASC' .. limit_clause)
+    if pass1_query then
+      local temp_object = {}
+      while pass1_query:fetch(temp_object, "a") do
+        if debug("objects_pass1") then break end
+        table.insert(all_object_ids, tonumber(temp_object.entry))
+      end
+    end
+    print("  Pass 1 complete: Collected " .. #all_object_ids .. " object IDs for batch processing")
+
+    -- STEP 2/3: Pass 2a - Batch load all gameobject coordinates with proper conversion
+    print("  Pass 2a: Batch loading gameobject coordinates...")
+    local gameobject_coords_cache = {}
+    
+    if #all_object_ids > 0 then
+      local object_ids_string = table.concat(all_object_ids, ",")
+      -- Get all necessary fields for coordinate conversion (same as GetGameObjectCoords)
+      local batch_coords_query = mysql:execute("SELECT id, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM gameobject WHERE id IN (" .. object_ids_string .. ")")
+      
+      if batch_coords_query then
+        local coord_data = {}
+        local coords_loaded = 0
+        while batch_coords_query:fetch(coord_data, "a") do
+          if debug("objects_batch_coords") then break end
+          
+          local object_id = tonumber(coord_data.id)
+          local map_id = tonumber(coord_data.map)
+          local world_x = tonumber(coord_data.position_x)
+          local world_y = tonumber(coord_data.position_y)
+          local db_zoneId = tonumber(coord_data.zoneId)
+          local db_areaId = tonumber(coord_data.areaId)
+          local respawn = tonumber(coord_data.spawntimesecs)
+          
+          -- Apply same coordinate conversion logic as GetGameObjectCoords
+          local display_map_areatable_id = 0
+          local zone_x = 0
+          local zone_y = 0
+          
+          -- Determine zone ID (same logic as GetGameObjectCoords)
+          if db_zoneId ~= 0 then
+            display_map_areatable_id = db_zoneId
+          elseif db_areaId ~= 0 then
+            local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
+            if parent_of_area ~= 0 then
+              display_map_areatable_id = parent_of_area
+            else
+              display_map_areatable_id = db_areaId
+            end
+          end
+          
+          -- Fallback if no valid zone found
+          if display_map_areatable_id == 0 then
+            local custom_coords = GetCustomCoords(map_id, world_x, world_y)
+            if custom_coords ~= 0 then
+              display_map_areatable_id = custom_coords
+            else
+              display_map_areatable_id = map_id
+            end
+          end
+          
+          -- Convert world coordinates to zone coordinates (same as GetGameObjectCoords)
+          local zone_bounds = GetWorldMapAreaBoundariesForZone(display_map_areatable_id, map_id)
+          if world_x and world_y and zone_bounds then
+            local Z_WorldX_L = zone_bounds.x_left
+            local Z_WorldX_R = zone_bounds.x_right
+            local Z_WorldY_T = zone_bounds.y_top
+            local Z_WorldY_B = zone_bounds.y_bottom
+            
+            local zone_map_world_width = Z_WorldX_R - Z_WorldX_L
+            local zone_map_world_height = Z_WorldY_T - Z_WorldY_B
+            
+            if zone_map_world_width > 0 and zone_map_world_height > 0 then
+              local pfQuest_X_pct = ((Z_WorldY_T - world_y) / zone_map_world_height) * 100
+              local pfQuest_Y_pct = 100 - (((world_x - Z_WorldX_L) / zone_map_world_width) * 100)
+              
+              zone_x = pfQuest_X_pct
+              zone_y = pfQuest_Y_pct
+              
+              -- Clamp coordinates to 0-100 range
+              zone_x = math.max(0, math.min(100, zone_x))
+              zone_y = math.max(0, math.min(100, zone_y))
+              
+              -- Round to 2 decimal places for consistency with original output
+              zone_x = math.floor(zone_x * 100 + 0.5) / 100
+              zone_y = math.floor(zone_y * 100 + 0.5) / 100
+            end
+          end
+          
+          if not gameobject_coords_cache[object_id] then
+            gameobject_coords_cache[object_id] = {}
+          end
+          
+          table.insert(gameobject_coords_cache[object_id], {zone_x, zone_y, display_map_areatable_id, respawn})
+          coords_loaded = coords_loaded + 1
+        end
+        print("  Pass 2a complete: Loaded " .. coords_loaded .. " coordinate records with proper conversion")
+      else
+        print("  Pass 2a: No coordinate data loaded from batch query")
+      end
+    end
+
+    -- Pass 2b: Original processing (now optimized with pre-loaded coordinate data)
+    local processed = 0
     local query = mysql:execute('SELECT * FROM gameobject_template' .. where_clause .. ' ORDER BY gameobject_template.entry ASC' .. limit_clause)
     if query then
       while query:fetch(gameobject_template, "a") do
@@ -1888,13 +1992,15 @@ if config.expansions[expansion_to_process] then
         end
       end
 
-      do -- coordinates
+      do -- coordinates - STEP 3/3: Use pre-loaded coordinate data
         pfDB["objects"][data][entry]["coords"] = {}
 
-        for id,coords in pairs(GetGameObjectCoords(entry)) do
-          if debug("objects_coords") then break end
-          local x, y, zone, respawn = unpack(coords)
-          table.insert(pfDB["objects"][data][entry]["coords"], { x, y, zone, respawn })
+        -- Use cached coordinates instead of SQL queries
+        if gameobject_coords_cache[entry] then
+          for _, coords in ipairs(gameobject_coords_cache[entry]) do
+            if debug("objects_coords") then break end
+            table.insert(pfDB["objects"][data][entry]["coords"], coords)
+          end
         end
       end
 
