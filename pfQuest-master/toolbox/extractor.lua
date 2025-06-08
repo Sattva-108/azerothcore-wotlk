@@ -13,8 +13,8 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
-local OTHER_LIMIT = 6000             -- Лимит для всего остального
+local FOCUS_LIMIT = 1000           -- Лимит для того что тестируем
+local OTHER_LIMIT = 1000             -- Лимит для всего остального
 local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
@@ -1693,6 +1693,10 @@ if config.expansions[expansion_to_process] then
     end
     print("  Pass 2a complete: Cached coordinates for " .. #all_creature_ids .. " creatures")
 
+    -- MEMORY OPTIMIZATION: Force garbage collection after batch loading
+    collectgarbage("collect")
+--     print("  Memory after batch loading: " .. math.floor(collectgarbage("count")) .. " KB")
+
     -- STEP 3/3: Pass 2b - Original processing (now using cached coordinate data)
     print("  Pass 2b: Processing creature templates with cached coordinates...")
     local processed = 0
@@ -1706,6 +1710,9 @@ if config.expansions[expansion_to_process] then
       -- Show progress every 1000 creatures
       if processed % 1000 == 0 then
         print("  Processed " .. processed .. "/" .. #all_creature_ids .. " creatures (" .. math.floor(processed/#all_creature_ids*100) .. "%)")
+        -- MEMORY OPTIMIZATION: Force garbage collection every 1000 creatures
+        collectgarbage("collect")
+--         print("    Memory after GC: " .. math.floor(collectgarbage("count")) .. " KB")
       end
 
       local entry   = tonumber(creature_template[C.Entry])
@@ -1754,6 +1761,8 @@ if config.expansions[expansion_to_process] then
                 if debug("units_coords") then break end
                 table.insert(pfDB["units"][data][entry]["coords"], coords)
             end
+            -- MEMORY OPTIMIZATION: Clear processed data immediately to free memory
+            creature_coords_cache[entry] = nil
         end
 
         if core ~= "vmangos" then
@@ -1949,7 +1958,9 @@ if config.expansions[expansion_to_process] then
     if pfDB and pfDB["units"] then
       table.insert(execution_times, {name = "units", time = end_time_units - start_time_units})
     end
-    -- ДОБАВЬТЕ:
+    -- FINAL MEMORY CLEANUP: Clear all creature cache data
+    creature_coords_cache = nil
+    all_creature_ids = nil
     collectgarbage("collect")
     print("  Memory cleanup after units: " .. math.floor(collectgarbage("count")) .. " KB")
   end
@@ -3187,13 +3198,29 @@ if config.expansions[expansion_to_process] then
         end
       end
 
-      -- USE BATCH KILL CREDIT DATA - MAJOR OPTIMIZATION! (eliminates 30k+ individual kill credit queries!)
+      -- USE BATCH KILL CREDIT DATA - ITERATIVE APPROACH (100% accurate, eliminates 30k+ individual queries!)
       if core ~= "vmangos" then
+        -- Build queue of units to process (mimics original growing loop behavior)
+        local units_to_process = {}
         for id in pairs(units) do
-          if kill_credit_relationships[id] then
-            for _, credit_entry in ipairs(kill_credit_relationships[id]) do
-              if debug("quests_credit") then break end
-              units[credit_entry] = true
+          table.insert(units_to_process, id)
+        end
+
+        local processed_units = {}
+        while #units_to_process > 0 do
+          local current_id = table.remove(units_to_process)
+          if not processed_units[current_id] then
+            processed_units[current_id] = true
+
+            if kill_credit_relationships[current_id] then
+              for _, credit_entry in ipairs(kill_credit_relationships[current_id]) do
+                if debug("quests_credit") then break end
+                if not units[credit_entry] then
+                  units[credit_entry] = true
+                  -- CRITICAL: Add newly found units to processing queue (reproduces original behavior)
+                  table.insert(units_to_process, credit_entry)
+                end
+              end
             end
           end
         end
