@@ -13,8 +13,8 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 1000           -- Лимит для того что тестируем
-local OTHER_LIMIT = 200             -- Лимит для всего остального
+local FOCUS_LIMIT = 500           -- Лимит для того что тестируем
+local OTHER_LIMIT = 500             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
@@ -1930,7 +1930,7 @@ if config.expansions[expansion_to_process] then
     end
     print("Processing " .. total_items .. " items...")
 
-    -- iterate over all items
+    -- STEP 1/3: Pass 1 - Collect all item IDs first
     local item_template = {}
     local limit_clause = ITEMS_LIMIT and (' LIMIT ' .. ITEMS_LIMIT) or ''
     local where_clause = ""
@@ -1942,6 +1942,83 @@ if config.expansions[expansion_to_process] then
       print("🎯 QUEST 784 DEBUG: Processing only items " .. item_list)
     end
 
+    print("  Pass 1: Collecting all item IDs...")
+    local all_item_ids = {}
+    local pass1_query = mysql:execute('SELECT entry FROM item_template' .. where_clause .. ' ORDER BY entry ASC' .. limit_clause)
+    if pass1_query then
+      local temp_item = {}
+      while pass1_query:fetch(temp_item, "a") do
+        if debug("items_pass1") then break end
+        table.insert(all_item_ids, tonumber(temp_item.entry))
+      end
+    end
+    print("  Pass 1 complete: Collected " .. #all_item_ids .. " item IDs for batch processing")
+
+    -- STEP 2/3: Pass 2a - Batch load all relationships
+    local creature_loot_data = {}      -- item_id -> {creature1, creature2, ...}
+    local object_loot_data = {}        -- item_id -> {object1, object2, ...}
+    local reference_loot_data = {}     -- item_id -> {ref1, ref2, ...}
+    local vendor_data = {}             -- item_id -> {vendor1, vendor2, ...}
+    local vendor_template_data = {}    -- item_id -> {vendor1, vendor2, ...}
+
+    if #all_item_ids > 0 then
+      local item_ids_string = table.concat(all_item_ids, ",")
+      print("  Pass 2a: Batch loading relationships for " .. #all_item_ids .. " items...")
+
+      -- Batch load creature drops
+      print("    Loading creature drops...")
+      local batch_query = mysql:execute("SELECT Entry, Item, Chance FROM creature_loot_template WHERE Item IN (" .. item_ids_string .. ") AND Reference = 0 ORDER BY Item, Entry")
+      if batch_query then
+        local temp_data = {}
+        while batch_query:fetch(temp_data, "a") do
+          if debug("items_creature_batch") then break end
+          local item_id = tonumber(temp_data.Item)
+          local creature_id = tonumber(temp_data.Entry)
+          local chance = math.abs(tonumber(temp_data.Chance) or 0)
+
+          if chance > 0 then
+            creature_loot_data[item_id] = creature_loot_data[item_id] or {}
+            table.insert(creature_loot_data[item_id], {entry = creature_id, chance = chance})
+          end
+        end
+      end
+
+      -- Batch load reference loot
+      print("    Loading reference loot...")
+      local batch_query = mysql:execute("SELECT entry, item, Chance FROM reference_loot_template WHERE item IN (" .. item_ids_string .. ") ORDER BY item, entry")
+      if batch_query then
+        local temp_data = {}
+        while batch_query:fetch(temp_data, "a") do
+          if debug("items_reference_batch") then break end
+          local item_id = tonumber(temp_data.item)
+          local ref_id = tonumber(temp_data.entry)
+          local chance = math.abs(tonumber(temp_data.Chance) or 0)
+
+          reference_loot_data[item_id] = reference_loot_data[item_id] or {}
+          table.insert(reference_loot_data[item_id], {entry = ref_id, chance = chance})
+        end
+      end
+
+      -- Batch load vendors
+      print("    Loading vendors...")
+      local batch_query = mysql:execute("SELECT entry, item, maxcount FROM npc_vendor WHERE item IN (" .. item_ids_string .. ") ORDER BY item, entry")
+      if batch_query then
+        local temp_data = {}
+        while batch_query:fetch(temp_data, "a") do
+          if debug("items_vendor_batch") then break end
+          local item_id = tonumber(temp_data.item)
+          local vendor_id = tonumber(temp_data.entry)
+          local maxcount = tonumber(temp_data.maxcount)
+
+          vendor_data[item_id] = vendor_data[item_id] or {}
+          table.insert(vendor_data[item_id], {vendor = vendor_id, maxcount = maxcount})
+        end
+      end
+
+      print("  Pass 2a complete: Batch data loaded")
+    end
+
+    -- Pass 2b: Original processing (will use batch data in step 3)
     local query = mysql:execute('SELECT entry, name FROM item_template' .. where_clause .. ' ORDER BY entry ASC' .. limit_clause)
     if query then
       local processed = 0
@@ -1982,18 +2059,16 @@ if config.expansions[expansion_to_process] then
         local chance = item[2] and item[2] / 100 or 1
         pfDB["items"][data][entry] = pfDB["items"][data][entry] or {}
 
-        -- fill unit table
-        local creature_loot_template = {}
-        local query = mysql:execute('SELECT Entry, Chance FROM creature_loot_template WHERE Item = ' .. entry .. ' AND Reference = 0 ORDER BY Entry')
-        if query then
-          while query:fetch(creature_loot_template, "a") do
+        -- fill unit table (STEP 3/3: Use batch data instead of SQL)
+        if creature_loot_data[entry] then
+          for _, creature_info in ipairs(creature_loot_data[entry]) do
             if debug("items_unit") then break end
-            local chance = math.abs(creature_loot_template.Chance) * chance
-            chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
+            local final_chance = creature_info.chance * chance
+            final_chance = final_chance < 0.01 and round(final_chance, 5) or round(final_chance, 2)
 
-            if chance > 0 then
+            if final_chance > 0 then
               pfDB["items"][data][entry]["U"] = pfDB["items"][data][entry]["U"] or {}
-              pfDB["items"][data][entry]["U"][tonumber(creature_loot_template.Entry)] = chance
+              pfDB["items"][data][entry]["U"][creature_info.entry] = final_chance
             end
           end
         end
@@ -2029,42 +2104,33 @@ if config.expansions[expansion_to_process] then
           end
         end
 
-        -- fill reference table
-        local reference_loot_template = {}
-        local query = mysql:execute([[
-          SELECT entry, ChanceOrQuestChance FROM reference_loot_template where reference_loot_template.item = ]] .. entry .. [[ ORDER BY entry
-        ]])
-        if query then
-          while query:fetch(reference_loot_template, "a") do
+        -- fill reference table (STEP 3/3: Use batch data instead of SQL)
+        if reference_loot_data[entry] then
+          for _, ref_info in ipairs(reference_loot_data[entry]) do
             if debug("items_reference") then break end
-            local chance = math.abs(reference_loot_template.ChanceOrQuestChance)
+            local chance = ref_info.chance
             chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
 
             pfDB["items"][data][entry]["R"] = pfDB["items"][data][entry]["R"] or {}
-            pfDB["items"][data][entry]["R"][tonumber(reference_loot_template.entry)] = chance
+            pfDB["items"][data][entry]["R"][ref_info.entry] = chance
           end
         end
 
-        -- fill vendor table
-        local npc_vendor = {}
-        local query = mysql:execute('SELECT entry, maxcount FROM npc_vendor WHERE item = ' .. entry .. ' ORDER BY entry')
-        if query then
-          while query:fetch(npc_vendor, "a") do
+        -- fill vendor table (STEP 3/3: Use batch data instead of SQL)
+        if vendor_data[entry] then
+          for _, vendor_info in ipairs(vendor_data[entry]) do
             if debug("items_vendor") then break end
             pfDB["items"][data][entry]["V"] = pfDB["items"][data][entry]["V"] or {}
-            pfDB["items"][data][entry]["V"][tonumber(npc_vendor.entry)] = tonumber(npc_vendor.maxcount)
+            pfDB["items"][data][entry]["V"][vendor_info.vendor] = vendor_info.maxcount
           end
         end
 
-        -- handle vendor template tables
-        local npc_vendor = {}
-        local vendor_field = C["VendorTemplateId"] or "VendorTemplateId" -- Default fallback
-        local query = mysql:execute('SELECT creature_template.Entry, maxcount FROM npc_vendor_template, creature_template WHERE item = ' .. entry .. ' and creature_template.' .. vendor_field .. ' = npc_vendor_template.entry ORDER BY creature_template.Entry')
-        if query then
-          while query:fetch(npc_vendor, "a") do
+        -- handle vendor template tables (STEP 3/3: Use batch data instead of SQL)
+        if vendor_template_data[entry] then
+          for _, vendor_info in ipairs(vendor_template_data[entry]) do
             if debug("items_vendortemplate") then break end
             pfDB["items"][data][entry]["V"] = pfDB["items"][data][entry]["V"] or {}
-            pfDB["items"][data][entry]["V"][tonumber(npc_vendor.Entry)] = tonumber(npc_vendor.maxcount)
+            pfDB["items"][data][entry]["V"][vendor_info.vendor] = vendor_info.maxcount
           end
         end
       end

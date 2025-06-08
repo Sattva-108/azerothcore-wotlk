@@ -94,6 +94,114 @@ local function findWorkingQuests()
     return workingQuests
 end
 
+local function findWorkingQuestsWithItemDrops()
+    if not pfDB then
+        print(STAR .. " pfDB not loaded")
+        return {}
+    end
+
+    if not pfDB["quests"] or not pfDB["quests"]["data"] or not pfDB["items"] or not pfDB["items"]["data"] then
+        print(STAR .. " No quest or items data found")
+        return {}
+    end
+
+    local workingQuestsWithDrops = {}
+
+    for questId, quest in pairs(pfDB["quests"]["data"]) do
+        -- First check if quest is working (has starter and finisher with coords)
+        local hasStarterWithCoords = false
+        local hasFinisherWithCoords = false
+
+        -- Check for quest starters WITH coordinates
+        if quest.start then
+            -- Check starter NPCs
+            if quest.start.U then
+                for _, unitId in ipairs(quest.start.U) do
+                    local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
+                    if unit and unit.coords and #unit.coords > 0 then
+                        hasStarterWithCoords = true
+                        break
+                    end
+                end
+            end
+            -- Check starter objects (if no NPC with coords found)
+            if not hasStarterWithCoords and quest.start.O then
+                for _, objectId in ipairs(quest.start.O) do
+                    local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId]
+                    if obj and obj.coords and #obj.coords > 0 then
+                        hasStarterWithCoords = true
+                        break
+                    end
+                end
+            end
+            -- Items always count as valid starters
+            if not hasStarterWithCoords and quest.start.I and #quest.start.I > 0 then
+                hasStarterWithCoords = true
+            end
+        end
+
+        -- Check for quest finishers WITH coordinates
+        if quest["end"] then
+            -- Check finisher NPCs
+            if quest["end"].U then
+                for _, unitId in ipairs(quest["end"].U) do
+                    local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
+                    if unit and unit.coords and #unit.coords > 0 then
+                        hasFinisherWithCoords = true
+                        break
+                    end
+                end
+            end
+            -- Check finisher objects (if no NPC with coords found)
+            if not hasFinisherWithCoords and quest["end"].O then
+                for _, objectId in ipairs(quest["end"].O) do
+                    local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId]
+                    if obj and obj.coords and #obj.coords > 0 then
+                        hasFinisherWithCoords = true
+                        break
+                    end
+                end
+            end
+        end
+
+        -- Only continue if quest is working (both starter and finisher have coordinates)
+        if hasStarterWithCoords and hasFinisherWithCoords then
+            -- Check if quest has item objectives that drop from mobs
+            if quest.obj and quest.obj.I then
+                local hasItemDrops = false
+                local itemDropInfo = {}
+
+                for _, itemId in ipairs(quest.obj.I) do
+                    local itemData = pfDB["items"]["data"][itemId]
+                    if itemData and itemData.U and TableCount(itemData.U) > 0 then
+                        hasItemDrops = true
+                        -- Store info about this item and its drop sources
+                        local itemName = (pfDB["items"]["loc"] and pfDB["items"]["loc"][itemId]) or ("Item " .. itemId)
+                        local dropSources = {}
+                        
+                        for unitId, chanceOrData in pairs(itemData.U) do
+                            local unitName = (pfDB["units"]["loc"] and pfDB["units"]["loc"][unitId]) or ("NPC " .. unitId)
+                            local chanceStr = type(chanceOrData) == "number" and chanceOrData .. "%" or "complex"
+                            table.insert(dropSources, {unitId = unitId, unitName = unitName, chance = chanceStr})
+                        end
+                        
+                        table.insert(itemDropInfo, {itemId = itemId, itemName = itemName, sources = dropSources})
+                    end
+                end
+
+                if hasItemDrops then
+                    table.insert(workingQuestsWithDrops, {questId = questId, quest = quest, itemDropInfo = itemDropInfo})
+                end
+            end
+        end
+    end
+
+    -- Sort quest IDs
+    table.sort(workingQuestsWithDrops, function(a, b) return a.questId < b.questId end)
+
+    return workingQuestsWithDrops
+end
+
 SLASH_PFTEST1 = "/pftest"
 SlashCmdList["PFTEST"] = function()
     print("=== pfQuest Enhanced Debug ===")
@@ -128,49 +236,173 @@ SlashCmdList["PFTEST"] = function()
     print(DIAMOND .. " Finding working quests...")
     local workingQuests = findWorkingQuests()
 
+    -- Find working quests with item drops for chance testing
+    print(DIAMOND .. " Finding working quests with item drops for chance testing...")
+    local workingQuestsWithDrops = findWorkingQuestsWithItemDrops()
+
     -- Get player faction for sorting
     local playerFaction = UnitFactionGroup("player") -- "Alliance" or "Horde"
     local hordeQuests = {}
     local allianceQuests = {}
     local bothFactionsQuests = {}
 
+    -- Separate regular working quests by faction and prerequisite status
+    local hordeQuestsNoPre = {}
+    local hordeQuestsWithPre = {}
+    local allianceQuestsNoPre = {}
+    local allianceQuestsWithPre = {}
+    local bothFactionsQuestsNoPre = {}
+    local bothFactionsQuestsWithPre = {}
+
     for _, questId in ipairs(workingQuests) do
         local quest = pfDB["quests"]["data"][questId]
+        local hasPrerequisite = quest.pre ~= nil
 
         if quest.race then
             if quest.race == 690 then
-                table.insert(hordeQuests, questId)
+                if hasPrerequisite then
+                    table.insert(hordeQuestsWithPre, questId)
+                else
+                    table.insert(hordeQuestsNoPre, questId)
+                end
             elseif quest.race == 1101 then
-                table.insert(allianceQuests, questId)
+                if hasPrerequisite then
+                    table.insert(allianceQuestsWithPre, questId)
+                else
+                    table.insert(allianceQuestsNoPre, questId)
+                end
             end
         else
             -- No race restriction = both factions
-            table.insert(bothFactionsQuests, questId)
+            if hasPrerequisite then
+                table.insert(bothFactionsQuestsWithPre, questId)
+            else
+                table.insert(bothFactionsQuestsNoPre, questId)
+            end
         end
     end
+
+    -- Combine for counting
+    local hordeQuests = {}
+    for _, qid in ipairs(hordeQuestsNoPre) do table.insert(hordeQuests, qid) end
+    for _, qid in ipairs(hordeQuestsWithPre) do table.insert(hordeQuests, qid) end
+    
+    local allianceQuests = {}
+    for _, qid in ipairs(allianceQuestsNoPre) do table.insert(allianceQuests, qid) end
+    for _, qid in ipairs(allianceQuestsWithPre) do table.insert(allianceQuests, qid) end
+    
+    local bothFactionsQuests = {}
+    for _, qid in ipairs(bothFactionsQuestsNoPre) do table.insert(bothFactionsQuests, qid) end
+    for _, qid in ipairs(bothFactionsQuestsWithPre) do table.insert(bothFactionsQuests, qid) end
+
+    -- Separate item drop quests by faction and prerequisite status
+    local hordeDropQuestsNoPre = {}
+    local hordeDropQuestsWithPre = {}
+    local allianceDropQuestsNoPre = {}
+    local allianceDropQuestsWithPre = {}
+    local bothFactionsDropQuestsNoPre = {}
+    local bothFactionsDropQuestsWithPre = {}
+
+    for _, questInfo in ipairs(workingQuestsWithDrops) do
+        local quest = questInfo.quest
+        local hasPrerequisite = quest.pre ~= nil
+
+        if quest.race then
+            if quest.race == 690 then
+                if hasPrerequisite then
+                    table.insert(hordeDropQuestsWithPre, questInfo)
+                else
+                    table.insert(hordeDropQuestsNoPre, questInfo)
+                end
+            elseif quest.race == 1101 then
+                if hasPrerequisite then
+                    table.insert(allianceDropQuestsWithPre, questInfo)
+                else
+                    table.insert(allianceDropQuestsNoPre, questInfo)
+                end
+            end
+        else
+            -- No race restriction = both factions
+            if hasPrerequisite then
+                table.insert(bothFactionsDropQuestsWithPre, questInfo)
+            else
+                table.insert(bothFactionsDropQuestsNoPre, questInfo)
+            end
+        end
+    end
+
+    -- Combine for counting
+    local hordeDropQuests = {}
+    for _, questInfo in ipairs(hordeDropQuestsNoPre) do table.insert(hordeDropQuests, questInfo) end
+    for _, questInfo in ipairs(hordeDropQuestsWithPre) do table.insert(hordeDropQuests, questInfo) end
+    
+    local allianceDropQuests = {}
+    for _, questInfo in ipairs(allianceDropQuestsNoPre) do table.insert(allianceDropQuests, questInfo) end
+    for _, questInfo in ipairs(allianceDropQuestsWithPre) do table.insert(allianceDropQuests, questInfo) end
+    
+    local bothFactionsDropQuests = {}
+    for _, questInfo in ipairs(bothFactionsDropQuestsNoPre) do table.insert(bothFactionsDropQuests, questInfo) end
+    for _, questInfo in ipairs(bothFactionsDropQuestsWithPre) do table.insert(bothFactionsDropQuests, questInfo) end
 
     if #workingQuests > 0 then
         print(STAR .. " Found " .. #workingQuests .. " working quests total!")
         print("   Horde only: " .. #hordeQuests)
         print("   Alliance only: " .. #allianceQuests)
         print("   Both factions: " .. #bothFactionsQuests)
+        print(CIRCE .. " Found " .. #workingQuestsWithDrops .. " working quests with item drops for chance testing!")
+        print("   Horde only (with drops): " .. #hordeDropQuests)
+        print("   Alliance only (with drops): " .. #allianceDropQuests)
+        print("   Both factions (with drops): " .. #bothFactionsDropQuests)
 
-
-        -- Create display list prioritizing player faction
+        -- Create display list prioritizing player faction for regular quests
+        -- Priority: 1) Player faction without prerequisites, 2) Both factions without prerequisites, 3) Player faction with prerequisites, 4) Both factions with prerequisites
         local displayQuests = {}
         if playerFaction == "Horde" then
-            -- Add Horde-only first, then both factions
-            for _, qid in ipairs(hordeQuests) do table.insert(displayQuests, qid) end
-            for _, qid in ipairs(bothFactionsQuests) do table.insert(displayQuests, qid) end
+            -- First: Horde quests without prerequisites
+            for _, qid in ipairs(hordeQuestsNoPre) do table.insert(displayQuests, qid) end
+            -- Second: Both factions quests without prerequisites
+            for _, qid in ipairs(bothFactionsQuestsNoPre) do table.insert(displayQuests, qid) end
+            -- Third: Horde quests with prerequisites
+            for _, qid in ipairs(hordeQuestsWithPre) do table.insert(displayQuests, qid) end
+            -- Fourth: Both factions quests with prerequisites
+            for _, qid in ipairs(bothFactionsQuestsWithPre) do table.insert(displayQuests, qid) end
         else
-            -- Add Alliance-only first, then both factions
-            for _, qid in ipairs(allianceQuests) do table.insert(displayQuests, qid) end
-            for _, qid in ipairs(bothFactionsQuests) do table.insert(displayQuests, qid) end
+            -- First: Alliance quests without prerequisites
+            for _, qid in ipairs(allianceQuestsNoPre) do table.insert(displayQuests, qid) end
+            -- Second: Both factions quests without prerequisites
+            for _, qid in ipairs(bothFactionsQuestsNoPre) do table.insert(displayQuests, qid) end
+            -- Third: Alliance quests with prerequisites
+            for _, qid in ipairs(allianceQuestsWithPre) do table.insert(displayQuests, qid) end
+            -- Fourth: Both factions quests with prerequisites
+            for _, qid in ipairs(bothFactionsQuestsWithPre) do table.insert(displayQuests, qid) end
         end
 
-        -- Show first 15 examples
+        -- Create display list prioritizing player faction for drop quests
+        -- Same priority logic for item drop quests
+        local displayDropQuests = {}
+        if playerFaction == "Horde" then
+            -- First: Horde drop quests without prerequisites
+            for _, questInfo in ipairs(hordeDropQuestsNoPre) do table.insert(displayDropQuests, questInfo) end
+            -- Second: Both factions drop quests without prerequisites
+            for _, questInfo in ipairs(bothFactionsDropQuestsNoPre) do table.insert(displayDropQuests, questInfo) end
+            -- Third: Horde drop quests with prerequisites
+            for _, questInfo in ipairs(hordeDropQuestsWithPre) do table.insert(displayDropQuests, questInfo) end
+            -- Fourth: Both factions drop quests with prerequisites
+            for _, questInfo in ipairs(bothFactionsDropQuestsWithPre) do table.insert(displayDropQuests, questInfo) end
+        else
+            -- First: Alliance drop quests without prerequisites
+            for _, questInfo in ipairs(allianceDropQuestsNoPre) do table.insert(displayDropQuests, questInfo) end
+            -- Second: Both factions drop quests without prerequisites
+            for _, questInfo in ipairs(bothFactionsDropQuestsNoPre) do table.insert(displayDropQuests, questInfo) end
+            -- Third: Alliance drop quests with prerequisites
+            for _, questInfo in ipairs(allianceDropQuestsWithPre) do table.insert(displayDropQuests, questInfo) end
+            -- Fourth: Both factions drop quests with prerequisites
+            for _, questInfo in ipairs(bothFactionsDropQuestsWithPre) do table.insert(displayDropQuests, questInfo) end
+        end
+
+        -- Show first 15 examples of regular working quests
         local maxToShow = math.min(15, #displayQuests)
-        print(TRIANGLE .. " Showing first " .. maxToShow .. " " .. playerFaction .. " examples:")
+        print(TRIANGLE .. " Showing first " .. maxToShow .. " " .. playerFaction .. " working quest examples:")
 
         for i = 1, maxToShow do
             local questId = displayQuests[i]
@@ -236,10 +468,98 @@ SlashCmdList["PFTEST"] = function()
             print("   " .. questId .. ": " .. questName .. raceInfo .. zoneInfo)
         end
 
+        -- Show first 10 examples of working quests with item drops for chance testing
+        if #displayDropQuests > 0 then
+            local maxDropToShow = math.min(10, #displayDropQuests)
+            print("")
+            print(DIAMOND .. " Showing first " .. maxDropToShow .. " " .. playerFaction .. " working quests with ITEM DROPS for chance testing:")
+
+            for i = 1, maxDropToShow do
+                local questInfo = displayDropQuests[i]
+                local questId = questInfo.questId
+                local quest = questInfo.quest
+                local itemDropInfo = questInfo.itemDropInfo
+
+                -- Get quest name, handle if it's a table
+                local questName = "Quest " .. questId
+                if pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][questId] then
+                    local questData = pfDB["quests"]["loc"][questId]
+                    if type(questData) == "table" and questData.T then
+                        questName = questData.T  -- Title from table
+                    elseif type(questData) == "string" then
+                        questName = questData
+                    end
+                end
+
+                -- Get quest info for race and zones
+                local raceInfo = ""
+                local zoneInfo = ""
+
+                if quest then
+                    -- Race info (fixed codes)
+                    if quest.race then
+                        if quest.race == 1101 then raceInfo = " [Alliance]"
+                        elseif quest.race == 690 then raceInfo = " [Horde]"
+                        elseif quest.race == 77 then raceInfo = " [Alliance-old]"
+                        elseif quest.race == 178 then raceInfo = " [Horde-old]"
+                        else raceInfo = " [Race:" .. quest.race .. "]" end
+                    else
+                        raceInfo = " [Both factions]"
+                    end
+
+                    -- Zone info from starter NPCs with names
+                    if quest.start and quest.start.U then
+                        for _, unitId in ipairs(quest.start.U) do
+                            if pfDB["units"]["data"][unitId] and pfDB["units"]["data"][unitId].coords then
+                                for _, coord in ipairs(pfDB["units"]["data"][unitId].coords) do
+                                    local zoneId = coord[3]
+                                    if zoneId == 1519 then zoneInfo = " (Stormwind City)"
+                                    elseif zoneId == 1637 then zoneInfo = " (Orgrimmar)"
+                                    elseif zoneId == 14 then zoneInfo = " (Durotar)"
+                                    elseif zoneId == 3520 then zoneInfo = " (Hellfire Peninsula)"
+                                    elseif zoneId == 65 then zoneInfo = " (Dragonblight)"
+                                    else
+                                        -- Try to get zone name from pfDB
+                                        if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                                            zoneInfo = " (" .. pfDB["zones"]["loc"][zoneId] .. ")"
+                                        else
+                                            zoneInfo = " (Zone:" .. zoneId .. ")"
+                                        end
+                                    end
+                                    break
+                                end
+                                break
+                            else
+                                zoneInfo = " (Unit " .. unitId .. " no coords)"
+                            end
+                        end
+                    else
+                        zoneInfo = " (No start NPC)"
+                    end
+                end
+
+                -- Show quest with item drop indicator
+                local itemsInfo = ""
+                if #itemDropInfo > 0 then
+                    itemsInfo = " [Items: " .. #itemDropInfo .. "]"
+                end
+                print("   " .. questId .. ": " .. questName .. raceInfo .. zoneInfo .. itemsInfo)
+            end
+        else
+            print("")
+            print(SKULL .. " No working quests found with item drops for chance testing!")
+        end
+
         print("")
         print(MOON .. " TEST COMMANDS:")
         for i = 1, math.min(3, #displayQuests) do
             print("   /pfq " .. displayQuests[i])
+        end
+        if #displayDropQuests > 0 then
+            print(DIAMOND .. " CHANCE TEST COMMANDS:")
+            for i = 1, math.min(3, #displayDropQuests) do
+                print("   /pfq " .. displayDropQuests[i].questId .. " (has item drops)")
+            end
         end
     else
         print(SKULL .. " No working quests found!")
