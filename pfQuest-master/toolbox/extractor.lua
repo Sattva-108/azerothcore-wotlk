@@ -13,8 +13,8 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
-local OTHER_LIMIT = 500             -- Лимит для всего остального
+local FOCUS_LIMIT = 1000           -- Лимит для того что тестируем
+local OTHER_LIMIT = 200             -- Лимит для всего остального
 local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
@@ -2739,6 +2739,12 @@ if config.expansions[expansion_to_process] then
       end
 
       -- scan all involved questitems for spells that require or are required by gameobjects, units or zones
+      -- ITEMREQ SECTION FIXES FOR AZEROTHCORE:
+      -- 1. Uses spell_scripts instead of spell_script_target
+      -- 2. Handles missing spells in spell_dbc gracefully
+      -- 3. Skips item_required_target table (doesn't exist in AC)
+      -- 4. Added compatibility layer for non-AC cores
+      -- Process itemreq (debug info will be shown only if relationships found)
         for id in pairs(items) do
           if id > 0 then
             local item_template = {}
@@ -2750,29 +2756,77 @@ if config.expansions[expansion_to_process] then
                   local spellid = item_template[spellcolumn]
 
                   -- scan through all spells that are associated with the item
-                  local spell_template = {}
-                  local spell_query = mysql:execute('SELECT * FROM ' .. C.spell_template .. ' WHERE ' .. C.Id .. ' = ' .. spellid)
-                  if spell_query then
-                    while spell_query:fetch(spell_template, "a") do
-                      if debug("quests_itemspell") then break end
+                  if spellid and tonumber(spellid) > 0 then
+                    local spell_template = {}
+                    local spell_query = mysql:execute('SELECT * FROM ' .. C.spell_template .. ' WHERE ' .. C.Id .. ' = ' .. spellid)
+                    if spell_query then
+                      local spell_found = false
+                      while spell_query:fetch(spell_template, "a") do
+                        spell_found = true
+                        if debug("quests_itemspell") then break end
                 local area = spell_template[C.AreaId_spell or "AreaId"]
                 local focus = spell_template[C.RequiresSpellFocus]
                 local match = nil
 
-                -- spell requires focusing a creature
+                -- spell requires focusing a creature (using spell_scripts for AC)
                 local spell_script_target = {}
                 for itemid in pairs(items) do
-                  local query = mysql:execute([[
-                    SELECT spell_script_target.targetEntry AS creature
-                    FROM spell_script_target, item_template
-                    WHERE ]] .. spellid .. [[ > 0 AND ]] .. spellid .. [[ = spell_script_target.entry
-                  ]])
-                  while query:fetch(spell_script_target, "a") do
-                    if debug("quests_itemspellcreature") then break end
-                    pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
-                    pfDB["quests-itemreq"][data][id][tonumber(spell_script_target.creature)] = spellid
-                    itemreq[id] = true
-                    match = true
+                  if spellid and tonumber(spellid) > 0 then
+                    -- Use spell_scripts table for AzerothCore compatibility
+                    local script_table = C["spell_script_target"] or "spell_scripts"
+                    if script_table == "spell_scripts" then
+                      -- AzerothCore: Use spell_scripts table (correct structure)
+                      local query = mysql:execute([[
+                        SELECT command, datalong, datalong2, dataint, x, y, z
+                        FROM spell_scripts
+                        WHERE id = ]] .. spellid .. [[
+                      ]])
+                      if query then
+                        while query:fetch(spell_script_target, "a") do
+                          if debug("quests_itemspellcreature") then break end
+
+                          local cmd = tonumber(spell_script_target.command)
+                          local datalong = tonumber(spell_script_target.datalong)
+                          local datalong2 = tonumber(spell_script_target.datalong2)
+                          local dataint = tonumber(spell_script_target.dataint)
+
+                          -- Check for commands that indicate targeting specific creatures/objects
+                          -- Command 15 = SCRIPT_COMMAND_CAST_SPELL
+                          if cmd == 15 and datalong2 then
+                            -- datalong2 determines cast type:
+                            -- 0 = Source->Target, 4 = Source->Closest entry of dataint
+                            if datalong2 == 4 and dataint and dataint > 0 then
+                              -- Target closest creature with entry = dataint
+                              pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
+                              pfDB["quests-itemreq"][data][id][dataint] = spellid
+                              itemreq[id] = true
+                              match = true
+                            elseif datalong2 == 0 and datalong and datalong > 0 then
+                              -- Cast spell (datalong) on target - need to check if target is specific
+                              -- This might need additional logic based on spell effects
+                            end
+                          end
+                          -- Command 14 = SCRIPT_COMMAND_MODIFY_FLAGS might also be relevant
+                          -- Add other commands as needed
+                        end
+                      end
+                    else
+                      -- Legacy: Use spell_script_target table (for non-AC cores)
+                      local query = mysql:execute([[
+                        SELECT targetEntry AS creature
+                        FROM ]] .. script_table .. [[
+                        WHERE entry = ]] .. spellid .. [[ AND type = 1
+                      ]])
+                      if query then
+                        while query:fetch(spell_script_target, "a") do
+                          if debug("quests_itemspellcreature") then break end
+                          pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
+                          pfDB["quests-itemreq"][data][id][tonumber(spell_script_target.creature)] = spellid
+                          itemreq[id] = true
+                          match = true
+                        end
+                      end
+                    end
                   end
                 end
 
@@ -2793,24 +2847,61 @@ if config.expansions[expansion_to_process] then
                 for _, trigger in pairs({ spell_template[C["EffectTriggerSpell"]..1], spell_template[C["EffectTriggerSpell"]..2], spell_template[C["EffectTriggerSpell"]..3] }) do
                   if trigger and tonumber(trigger) > 0 then
                     local spell_script_target = {}
-                    local query = mysql:execute('SELECT * FROM spell_script_target WHERE entry = ' .. trigger)
-                    while query:fetch(spell_script_target, "a") do
-                      if debug("quests_itemspellscript") then break end
-                      local targetobj = spell_script_target["type"]
-                      local targetentry = spell_script_target["targetEntry"]
 
-                      if tonumber(targetobj) == 0 then
-                        -- object
-                        pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
-                        pfDB["quests-itemreq"][data][id][-tonumber(targetentry)] = spellid
-                        itemreq[id] = true
-                        match = true
-                      elseif tonumber(targetobj) == 1 then
-                        -- unit
-                        pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
-                        pfDB["quests-itemreq"][data][id][tonumber(targetentry)] = spellid
-                        itemreq[id] = true
-                        match = true
+                    -- Use appropriate table based on core type
+                    local script_table = C["spell_script_target"] or "spell_scripts"
+                    if script_table == "spell_scripts" then
+                      -- AzerothCore: Use spell_scripts table (correct structure)
+                      local query = mysql:execute([[
+                        SELECT command, datalong, datalong2, dataint, x, y, z
+                        FROM spell_scripts
+                        WHERE id = ]] .. trigger .. [[
+                      ]])
+                      if query then
+                        while query:fetch(spell_script_target, "a") do
+                          if debug("quests_itemspellscript") then break end
+
+                          local cmd = tonumber(spell_script_target.command)
+                          local datalong = tonumber(spell_script_target.datalong)
+                          local datalong2 = tonumber(spell_script_target.datalong2)
+                          local dataint = tonumber(spell_script_target.dataint)
+
+                          -- Check for commands that indicate targeting specific creatures/objects
+                          -- Command 15 = SCRIPT_COMMAND_CAST_SPELL
+                          if cmd == 15 and datalong2 then
+                            if datalong2 == 4 and dataint and dataint > 0 then
+                              -- Target closest creature with entry = dataint
+                              pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
+                              pfDB["quests-itemreq"][data][id][dataint] = spellid
+                              itemreq[id] = true
+                              match = true
+                            end
+                          end
+                        end
+                      end
+                    else
+                      -- Legacy: Use spell_script_target table (for non-AC cores)
+                      local query = mysql:execute('SELECT * FROM ' .. script_table .. ' WHERE entry = ' .. trigger)
+                      if query then
+                        while query:fetch(spell_script_target, "a") do
+                          if debug("quests_itemspellscript") then break end
+                          local targetobj = spell_script_target["type"]
+                          local targetentry = spell_script_target["targetEntry"]
+
+                          if tonumber(targetobj) == 0 then
+                            -- object
+                            pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
+                            pfDB["quests-itemreq"][data][id][-tonumber(targetentry)] = spellid
+                            itemreq[id] = true
+                            match = true
+                          elseif tonumber(targetobj) == 1 then
+                            -- unit
+                            pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
+                            pfDB["quests-itemreq"][data][id][tonumber(targetentry)] = spellid
+                            itemreq[id] = true
+                            match = true
+                          end
+                        end
                       end
                     end
                   end
@@ -2820,32 +2911,64 @@ if config.expansions[expansion_to_process] then
                 if not match and area and tonumber(area) > 0 then
                   zones[tonumber(area)] = true
                 end
-                    end -- spell_query:fetch
-                  end -- if spell_query
+                      end -- spell_query:fetch
+
+                      if not spell_found and debug("quests_itemspell") then
+                        print("  DEBUG: Spell " .. spellid .. " not found in " .. C.spell_template .. " - skipping itemreq analysis")
+                      end
+                    end -- if spell_query
+                  end -- if spellid and tonumber(spellid) > 0
                 end -- query:fetch
               end -- if query
             end -- for spellcolumn
           end -- if id > 0
         end -- for id in pairs(items)
 
-        -- item is used to open a creature
-        for id in pairs(items) do
-          if id > 0 then
-            local creature_items = {}
-            local target_entry_field = C.targetEntry or "targetEntry" -- Default fallback
-            local query = mysql:execute([[
-              SELECT ]] .. target_entry_field .. [[ AS creature FROM item_required_target
-              WHERE entry = ]] .. id .. [[
-            ]])
-            if query then
-              while query:fetch(creature_items, "a") do
-                if debug("quests_itemcreature") then break end
-                pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
-                pfDB["quests-itemreq"][data][id][tonumber(creature_items.creature)] = 0
-                itemreq[id] = true
+        -- item is used to open a creature (skip for AzerothCore - table doesn't exist)
+        -- Note: item_required_target table doesn't exist in AzerothCore
+        -- This functionality might be handled differently or through smart_scripts
+        local has_item_required_target = false
+
+        -- Check if item_required_target table exists (for non-AC cores)
+        local check_table_query = mysql:execute("SHOW TABLES LIKE 'item_required_target'")
+        if check_table_query and check_table_query:fetch() then
+          has_item_required_target = true
+        end
+
+        if has_item_required_target then
+          for id in pairs(items) do
+            if id > 0 then
+              local creature_items = {}
+              local target_entry_field = C.targetEntry or "targetEntry" -- Default fallback
+              local query = mysql:execute([[
+                SELECT ]] .. target_entry_field .. [[ AS creature FROM item_required_target
+                WHERE entry = ]] .. id .. [[
+              ]])
+              if query then
+                while query:fetch(creature_items, "a") do
+                  if debug("quests_itemcreature") then break end
+                  pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
+                  pfDB["quests-itemreq"][data][id][tonumber(creature_items.creature)] = 0
+                  itemreq[id] = true
+                end
               end
             end
           end
+        else
+          if debug("quests_itemcreature") then
+            print("  DEBUG: item_required_target table not found - skipping (normal for AzerothCore)")
+          end
+        end
+
+        -- Count and report itemreq results (only once per quest block)
+        local itemreq_count = 0
+        for itemid, targets in pairs(pfDB["quests-itemreq"][data] or {}) do
+          for targetid, spellid in pairs(targets) do
+            itemreq_count = itemreq_count + 1
+          end
+        end
+        if itemreq_count > 0 then
+          print("  DEBUG: Found " .. itemreq_count .. " item-target relationships for this quest batch.")
         end
 
         -- item is used to open an object (DISABLED - requires pfquest)
@@ -3004,6 +3127,19 @@ if config.expansions[expansion_to_process] then
     local end_time_quests = os.clock()
     if pfDB and pfDB["quests"] then
       table.insert(execution_times, {name = "quests", time = end_time_quests - start_time_quests})
+    end
+
+    -- Final itemreq summary
+    local total_itemreq_count = 0
+    for itemid, targets in pairs(pfDB["quests-itemreq"]["data"] or {}) do
+      for targetid, spellid in pairs(targets) do
+        total_itemreq_count = total_itemreq_count + 1
+      end
+    end
+    if total_itemreq_count > 0 then
+      print("  ItemReq Summary: Found " .. total_itemreq_count .. " total item-target relationships.")
+    else
+      print("  ItemReq Summary: No item-target relationships found (may be normal for AzerothCore).")
     end
   end
 
