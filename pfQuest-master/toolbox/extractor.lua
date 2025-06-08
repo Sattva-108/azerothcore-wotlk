@@ -15,7 +15,7 @@
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
 local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 6000             -- Лимит для всего остального
-local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -2874,6 +2874,120 @@ if config.expansions[expansion_to_process] then
 --     print("  Batch loaded: " .. creature_ender_count .. " creature enders, " ..
 --           object_ender_count .. " object enders")
 
+    -- BATCH LOAD EVENT DATA (eliminates 9k+ individual event queries!)
+    print("  Pass 2a.2: Batch loading quest event data...")
+    local quest_events_seasonal = {}
+    local quest_events_creature = {}
+    local quest_events_gameobject = {}
+
+    if #all_quest_ids > 0 then
+      local quest_ids_string = table.concat(all_quest_ids, ",")
+
+      -- Batch load seasonal quest events
+      if core == "acore" then
+        local query = mysql:execute("SELECT questId as quest, eventEntry as event FROM game_event_seasonal_questrelation WHERE questId IN (" .. quest_ids_string .. ")")
+        if query then
+          local row = {}
+          while query:fetch(row, "a") do
+            quest_events_seasonal[tonumber(row.quest)] = tonumber(row.event)
+          end
+        end
+      else
+        local query = mysql:execute("SELECT quest, event FROM game_event_quest WHERE quest IN (" .. quest_ids_string .. ")")
+        if query then
+          local row = {}
+          while query:fetch(row, "a") do
+            quest_events_seasonal[tonumber(row.quest)] = tonumber(row.event)
+          end
+        end
+      end
+
+      -- Batch load creature quest events
+      if core == "acore" then
+        local query = mysql:execute("SELECT quest, eventEntry as event FROM game_event_creature_quest WHERE quest IN (" .. quest_ids_string .. ")")
+        if query then
+          local row = {}
+          while query:fetch(row, "a") do
+            quest_events_creature[tonumber(row.quest)] = tonumber(row.event)
+          end
+        end
+      end
+
+      -- Batch load gameobject quest events
+      if core == "acore" then
+        local query = mysql:execute("SELECT quest, eventEntry as event FROM game_event_gameobject_quest WHERE quest IN (" .. quest_ids_string .. ")")
+        if query then
+          local row = {}
+          while query:fetch(row, "a") do
+            quest_events_gameobject[tonumber(row.quest)] = tonumber(row.event)
+          end
+        end
+      end
+    end
+
+    -- BATCH LOAD PRE-QUEST DATA (eliminates 9k+ individual pre-quest queries!)
+    print("  Pass 2a.3: Batch loading pre-quest relationships...")
+    local quest_pre_relationships = {}
+    local quest_pre_chain_relationships = {}
+
+    if #all_quest_ids > 0 then
+      local quest_ids_string = table.concat(all_quest_ids, ",")
+      local next_quest_id_column = core == "acore" and "PrevQuestId" or "NextQuestId"
+      local exclusive_group_column = core == "acore" and "ExclusiveGroup" or "ExclusiveGroup"
+
+      -- Batch load pre-quest relationships
+      local query = mysql:execute('SELECT ' .. quest_pk_column .. ' AS entry, ' .. next_quest_id_column .. ' AS next_quest FROM quest_template WHERE ' .. next_quest_id_column .. ' IN (' .. quest_ids_string .. ') AND ' .. exclusive_group_column .. ' < 0')
+      if query then
+        local row = {}
+        while query:fetch(row, "a") do
+          local entry = tonumber(row.entry)
+          local next_quest = tonumber(row.next_quest)
+          quest_pre_relationships[next_quest] = quest_pre_relationships[next_quest] or {}
+          table.insert(quest_pre_relationships[next_quest], entry)
+        end
+      end
+
+      -- Batch load pre-chain relationships (only if NextQuestInChain column exists)
+      if core ~= "acore" then -- AzerothCore doesn't have NextQuestInChain
+        local query = mysql:execute('SELECT ' .. quest_pk_column .. ' AS entry, NextQuestInChain FROM quest_template WHERE NextQuestInChain IN (' .. quest_ids_string .. ')')
+        if query then
+          local row = {}
+          while query:fetch(row, "a") do
+            local entry = tonumber(row.entry)
+            local next_quest = tonumber(row.NextQuestInChain)
+            quest_pre_chain_relationships[next_quest] = quest_pre_chain_relationships[next_quest] or {}
+            table.insert(quest_pre_chain_relationships[next_quest], entry)
+          end
+        end
+      end
+    end
+
+    -- BATCH LOAD KILL CREDIT DATA (eliminates 30k+ individual kill credit queries!)
+    print("  Pass 2a.4: Batch loading kill credit relationships...")
+    local kill_credit_relationships = {}
+
+    if core ~= "vmangos" then
+      -- Batch load ALL kill credit relationships at once
+      local query = mysql:execute("SELECT Entry, KillCredit1, KillCredit2 FROM creature_template WHERE KillCredit1 > 0 OR KillCredit2 > 0")
+      if query then
+        local row = {}
+        while query:fetch(row, "a") do
+          local entry = tonumber(row.Entry)
+          local credit1 = tonumber(row.KillCredit1)
+          local credit2 = tonumber(row.KillCredit2)
+
+          if credit1 and credit1 > 0 then
+            kill_credit_relationships[credit1] = kill_credit_relationships[credit1] or {}
+            table.insert(kill_credit_relationships[credit1], entry)
+          end
+          if credit2 and credit2 > 0 then
+            kill_credit_relationships[credit2] = kill_credit_relationships[credit2] or {}
+            table.insert(kill_credit_relationships[credit2], entry)
+          end
+        end
+      end
+    end
+
     print("  Pass 2b: Processing quests with pre-loaded relationship data...")
     for i, current_quest_data in ipairs(all_fetched_quests) do
       if debug("quests") then break end
@@ -2917,102 +3031,8 @@ if config.expansions[expansion_to_process] then
         local repeatable = current_quest_data.SpecialFlags and (tonumber(current_quest_data.SpecialFlags) % 2) or 0
       local event = nil
 
-        -- try to detect event by quest event entry
-        if core == "acore" then
-          -- AzerothCore uses game_event_seasonal_questrelation
-          local game_event_quest = {}
-          local query = mysql:execute('SELECT eventEntry as event FROM game_event_seasonal_questrelation WHERE questId = ' .. entry)
-          if query then
-            while query:fetch(game_event_quest, "a") do
-              if debug("quests_events") then break end
-              event = tonumber(game_event_quest.event)
-              break
-            end
-          end
-        else
-          -- MaNGOS/CMaNGOS uses game_event_quest
-          local game_event_quest = {}
-          local query = mysql:execute('SELECT event FROM game_event_quest WHERE quest = ' .. entry)
-          if query then
-            while query:fetch(game_event_quest, "a") do
-              if debug("quests_events") then break end
-              event = tonumber(game_event_quest.event)
-              break
-            end
-          end
-        end
-
-        -- try to detect event by creature event
-        if not event then
-          if core == "acore" then
-            -- AzerothCore uses game_event_creature_quest
-            local game_event_creature = {}
-            local query = mysql:execute('SELECT eventEntry as event FROM game_event_creature_quest WHERE quest = ' .. entry)
-            if query then
-              while query:fetch(game_event_creature, "a") do
-                if debug("quests_eventscreature") then break end
-                event = tonumber(game_event_creature.event)
-                break
-              end
-            end
-          else
-            -- MaNGOS/CMaNGOS logic
-            local game_event_creature = {}
-            local quest_id = quest_template[quest_pk_column] or quest_template.entry
-            if not quest_id then
-              print("Warning: Quest with nil ID, skipping event detection")
-            else
-              local sql = [[
-                SELECT game_event_creature.event as event FROM creature, game_event_creature, creature_questrelation
-                WHERE creature.guid = game_event_creature.guid
-                AND creature.id = creature_questrelation.id
-                AND creature_questrelation.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                while query:fetch(game_event_creature, "a") do
-                  if debug("quests_eventscreature") then break end
-                  event = tonumber(game_event_creature.event)
-                  break
-                end
-              end
-            end
-          end
-        end
-
-        -- try to detect event by gameobject event
-        if not event then
-          if core == "acore" then
-            -- AzerothCore uses game_event_gameobject_quest
-            local game_event_gameobject = {}
-            local query = mysql:execute('SELECT eventEntry as event FROM game_event_gameobject_quest WHERE quest = ' .. entry)
-            if query then
-              while query:fetch(game_event_gameobject, "a") do
-                if debug("quests_eventsobjects") then break end
-                event = tonumber(game_event_gameobject.event)
-                break
-              end
-            end
-          else
-            -- MaNGOS/CMaNGOS logic
-            local game_event_gameobject = {}
-            local quest_id = quest_template[quest_pk_column] or quest_template.entry
-            if quest_id then
-              local sql = [[
-                SELECT game_event_gameobject.event as event FROM gameobject, game_event_gameobject, gameobject_questrelation
-                WHERE gameobject.guid = game_event_gameobject.guid
-                AND gameobject.id = gameobject_questrelation.id
-                AND gameobject_questrelation.quest = ]] .. quest_id
-              local query = mysql:execute(sql)
-              if query then
-                while query:fetch(game_event_gameobject, "a") do
-                  if debug("quests_eventsobjects") then break end
-                  event = tonumber(game_event_gameobject.event)
-                  break
-                end
-              end
-            end
-          end
-        end
+        -- USE BATCH EVENT DATA - MAJOR OPTIMIZATION! (eliminates 9k+ individual event queries!)
+        event = quest_events_seasonal[entry] or quest_events_creature[entry] or quest_events_gameobject[entry]
 
       pfDB["quests"][data][entry] = {}
       pfDB["quests"][data][entry]["min"] = minlevel ~= 0 and minlevel
@@ -3106,29 +3126,15 @@ if config.expansions[expansion_to_process] then
           pre[math.abs(tonumber(prevquest_value))] = true
         end
 
-      -- add required pre-quests
-      local prequests = {}
-      -- AC doesn't have NextQuestId for this logic, this part of pre-quest finding might be problematic for AC
-      local next_quest_id_column = core == "acore" and "PrevQuestId" or "NextQuestId" -- HACK: AC uses PrevQuestId on the *next* quest. This query is for *current* quest.
-      local exclusive_group_column = core == "acore" and "ExclusiveGroup" or "ExclusiveGroup" -- Assuming same name
-        local pre_query_string = 'SELECT quest_template.' .. quest_pk_column .. ' AS entry FROM quest_template WHERE ' .. next_quest_id_column .. ' = ' .. entry .. ' AND ' .. exclusive_group_column .. ' < 0'
-        local query = mysql:execute(pre_query_string)
-        if query then
-          while query:fetch(prequests, "a") do
-            if debug("quests_prequests") then break end
-            pre[tonumber(prequests["entry"])] = true
-          end
+      -- USE BATCH PRE-QUEST DATA - MAJOR OPTIMIZATION! (eliminates 9k+ individual pre-quest queries!)
+      if quest_pre_relationships[entry] then
+        for _, pre_quest in ipairs(quest_pre_relationships[entry]) do
+          pre[pre_quest] = true
         end
-
-      -- add pre quests from quest chains
-      -- This NextQuestInChain will be an issue for AzerothCore as it does not exist.
-      -- This part of pre-quest detection might not work correctly for AC.
-      if quest_template.NextQuestInChain then -- Check if column exists
-        local pre_chain_query_string = 'SELECT quest_template.' .. quest_pk_column .. ' AS entry FROM quest_template WHERE NextQuestInChain = ' .. entry
-        query = mysql:execute(pre_chain_query_string)
-        while query:fetch(prequests, "a") do
-          if debug("quests_prequestchain") then break end
-          pre[tonumber(prequests["entry"])] = true
+      end
+      if quest_pre_chain_relationships[entry] then
+        for _, pre_quest in ipairs(quest_pre_chain_relationships[entry]) do
+          pre[pre_quest] = true
         end
       end
 
@@ -3181,15 +3187,13 @@ if config.expansions[expansion_to_process] then
         end
       end
 
-      -- add all units that give kill credit for one of the known units
+      -- USE BATCH KILL CREDIT DATA - MAJOR OPTIMIZATION! (eliminates 30k+ individual kill credit queries!)
       if core ~= "vmangos" then
         for id in pairs(units) do
-          local creature_template = {}
-          local query = mysql:execute('SELECT * FROM creature_template WHERE KillCredit1 = ' .. id .. ' or KillCredit2 = ' .. id)
-          while query:fetch(creature_template, "a") do
-            if debug("quests_credit") then break end
-            if creature_template["Entry"] and tonumber(creature_template["Entry"]) then
-              units[tonumber(creature_template["Entry"])] = true
+          if kill_credit_relationships[id] then
+            for _, credit_entry in ipairs(kill_credit_relationships[id]) do
+              if debug("quests_credit") then break end
+              units[credit_entry] = true
             end
           end
         end
