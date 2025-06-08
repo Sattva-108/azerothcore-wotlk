@@ -204,7 +204,7 @@ function round(num, decimals)
   return math.floor(num * mult + 0.5) / mult
 end
 
--- Serialize function to write Lua data to files
+-- Serialize function to write Lua data to files with memory optimization
 function serialize(filename, varname, data, indent, raw)
   indent = indent or 0
   if not data then return end
@@ -213,6 +213,12 @@ function serialize(filename, varname, data, indent, raw)
   if not file then
     print("Error: Cannot open file " .. filename .. " for writing")
     return
+  end
+
+  -- Try to set larger buffer for better I/O performance (Lua 5.1+ only)
+  if file.setvbuf then
+    file:setvbuf("full", 8192)
+    print("setvbuf: 8192")
   end
 
   if raw then
@@ -227,6 +233,9 @@ function serialize(filename, varname, data, indent, raw)
   end
 
   file:close()
+
+  -- Force immediate garbage collection after file write
+  collectgarbage("collect")
 end
 
 -- Helper function for serialize
@@ -4057,44 +4066,147 @@ if config.expansions[expansion_to_process] then
   output = settings.custom and "output/custom/" or "output/"
 
   mkdir(output)
-  serialize(output .. string.format("areatrigger%s.lua", exp), "pfDB[\"areatrigger\"][\""..data.."\"]", pfDB["areatrigger"][data])
-  collectgarbage("collect")
-  serialize(output .. string.format("units%s.lua", exp), "pfDB[\"units\"][\""..data.."\"]", pfDB["units"][data])
-  collectgarbage("collect")
-  serialize(output .. string.format("objects%s.lua", exp), "pfDB[\"objects\"][\""..data.."\"]", pfDB["objects"][data])
-  collectgarbage("collect")
-  serialize(output .. string.format("items%s.lua", exp), "pfDB[\"items\"][\""..data.."\"]", pfDB["items"][data])
-  collectgarbage("collect")
-  serialize(output .. string.format("refloot%s.lua", exp), "pfDB[\"refloot\"][\""..data.."\"]", pfDB["refloot"][data])
-  collectgarbage("collect")
-  serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
-  collectgarbage("collect")
-  serialize(output .. string.format("quests-itemreq%s.lua", exp), "pfDB[\"quests-itemreq\"][\""..data.."\"]", pfDB["quests-itemreq"][data])
-  collectgarbage("collect")
-  serialize(output .. string.format("zones%s.lua", exp), "pfDB[\"zones\"][\""..data.."\"]", pfDB["zones"][data])
-  collectgarbage("collect")
-  serialize(output .. string.format("minimap%s.lua", exp), "pfDB[\"minimap"..exp.."\"]", pfDB["minimap"..exp])
-  collectgarbage("collect")
-  serialize(output .. string.format("meta%s.lua", exp), "pfDB[\"meta"..exp.."\"]", pfDB["meta"..exp])
-  collectgarbage("collect")
 
+  -- Memory-optimized serialization with aggressive cleanup
+  print("  Writing areatrigger...")
+  serialize(output .. string.format("areatrigger%s.lua", exp), "pfDB[\"areatrigger\"][\""..data.."\"]", pfDB["areatrigger"][data])
+  pfDB["areatrigger"][data] = nil  -- Free memory immediately
+  collectgarbage("collect")
+  collectgarbage("collect")  -- Double collect for better cleanup
+  -- print("    Memory after areatrigger: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing units...")
+  serialize(output .. string.format("units%s.lua", exp), "pfDB[\"units\"][\""..data.."\"]", pfDB["units"][data])
+  pfDB["units"][data] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Memory after units: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing objects...")
+  serialize(output .. string.format("objects%s.lua", exp), "pfDB[\"objects\"][\""..data.."\"]", pfDB["objects"][data])
+  pfDB["objects"][data] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Memory after objects: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing items...")
+  serialize(output .. string.format("items%s.lua", exp), "pfDB[\"items\"][\""..data.."\"]", pfDB["items"][data])
+  pfDB["items"][data] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Memory after items: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing refloot...")
+  serialize(output .. string.format("refloot%s.lua", exp), "pfDB[\"refloot\"][\""..data.."\"]", pfDB["refloot"][data])
+  pfDB["refloot"][data] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Memory after refloot: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing quests...")
+  serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
+  pfDB["quests"][data] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Memory after quests: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing quests-itemreq...")
+  serialize(output .. string.format("quests-itemreq%s.lua", exp), "pfDB[\"quests-itemreq\"][\""..data.."\"]", pfDB["quests-itemreq"][data])
+  pfDB["quests-itemreq"][data] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Memory after quests-itemreq: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing zones...")
+  serialize(output .. string.format("zones%s.lua", exp), "pfDB[\"zones\"][\""..data.."\"]", pfDB["zones"][data])
+  pfDB["zones"][data] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Memory after zones: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing minimap...")
+  serialize(output .. string.format("minimap%s.lua", exp), "pfDB[\"minimap"..exp.."\"]", pfDB["minimap"..exp])
+  pfDB["minimap"..exp] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Memory after minimap: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing meta...")
+  serialize(output .. string.format("meta%s.lua", exp), "pfDB[\"meta"..exp.."\"]", pfDB["meta"..exp])
+  pfDB["meta"..exp] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Memory after meta: " .. math.floor(collectgarbage("count")) .. " KB")
+
+  print("  Writing locale data...")
   for loc in pairs(locales) do
     local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
+    print("    Processing locale: " .. loc)
 
     mkdir(output .. loc)
-    serialize(output .. string.format("%s/units%s.lua", loc, exp), "pfDB[\"units\"][\""..locale.."\"]", pfDB["units"][locale])
+
+    if pfDB["units"][locale] then
+      serialize(output .. string.format("%s/units%s.lua", loc, exp), "pfDB[\"units\"][\""..locale.."\"]", pfDB["units"][locale])
+      pfDB["units"][locale] = nil
+    end
     collectgarbage("collect")
-    serialize(output .. string.format("%s/objects%s.lua", loc, exp), "pfDB[\"objects\"][\""..locale.."\"]", pfDB["objects"][locale])
     collectgarbage("collect")
-    serialize(output .. string.format("%s/items%s.lua", loc, exp), "pfDB[\"items\"][\""..locale.."\"]", pfDB["items"][locale])
+
+    if pfDB["objects"][locale] then
+      serialize(output .. string.format("%s/objects%s.lua", loc, exp), "pfDB[\"objects\"][\""..locale.."\"]", pfDB["objects"][locale])
+      pfDB["objects"][locale] = nil
+    end
     collectgarbage("collect")
-    serialize(output .. string.format("%s/quests%s.lua", loc, exp), "pfDB[\"quests\"][\""..locale.."\"]", pfDB["quests"][locale])
     collectgarbage("collect")
-    serialize(output .. string.format("%s/professions%s.lua", loc, exp), "pfDB[\"professions\"][\""..locale.."\"]", pfDB["professions"][locale])
+
+    if pfDB["items"][locale] then
+      serialize(output .. string.format("%s/items%s.lua", loc, exp), "pfDB[\"items\"][\""..locale.."\"]", pfDB["items"][locale])
+      pfDB["items"][locale] = nil
+    end
     collectgarbage("collect")
-    serialize(output .. string.format("%s/zones%s.lua", loc, exp), "pfDB[\"zones\"][\""..locale.."\"]", pfDB["zones"][locale])
     collectgarbage("collect")
+
+    if pfDB["quests"][locale] then
+      serialize(output .. string.format("%s/quests%s.lua", loc, exp), "pfDB[\"quests\"][\""..locale.."\"]", pfDB["quests"][locale])
+      pfDB["quests"][locale] = nil
+    end
+    collectgarbage("collect")
+    collectgarbage("collect")
+
+    if pfDB["professions"][locale] then
+      serialize(output .. string.format("%s/professions%s.lua", loc, exp), "pfDB[\"professions\"][\""..locale.."\"]", pfDB["professions"][locale])
+      pfDB["professions"][locale] = nil
+    end
+    collectgarbage("collect")
+    collectgarbage("collect")
+
+    if pfDB["zones"][locale] then
+      serialize(output .. string.format("%s/zones%s.lua", loc, exp), "pfDB[\"zones\"][\""..locale.."\"]", pfDB["zones"][locale])
+      pfDB["zones"][locale] = nil
+    end
+    collectgarbage("collect")
+    collectgarbage("collect")
+
+    -- print("      Memory after locale " .. loc .. ": " .. math.floor(collectgarbage("count")) .. " KB")
   end
+
+  -- Final aggressive memory cleanup after all main data written
+  print("  Performing final memory cleanup...")
+
+  -- Clear any remaining data structures
+  for key in pairs(pfDB) do
+    if type(pfDB[key]) == "table" then
+      for subkey in pairs(pfDB[key]) do
+        pfDB[key][subkey] = nil
+      end
+    end
+  end
+
+  -- Multiple garbage collection passes for maximum cleanup
+  collectgarbage("collect")
+  collectgarbage("collect")
+  collectgarbage("collect")
+  -- print("    Final memory before init.lua: " .. math.floor(collectgarbage("count")) .. " KB")
 
   -- Create minimal empty init.lua to avoid 'block too big' error
   if not settings.custom then
