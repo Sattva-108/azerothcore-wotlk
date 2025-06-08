@@ -500,7 +500,7 @@ function TableCount(t)
     return count
 end
 
- print(STAR .. " Enhanced pfQuest debug loaded! Use /pftest, /pfq <questID>, and /pfr [rareID]")
+ print(STAR .. " Enhanced pfQuest debug loaded! Use /pfa, /pftest, /pfq <questID>, and /pfr [rareID]")
 
 -- Register slash command for rares testing
 SLASH_PFRARETEST1 = "/pfr"
@@ -962,4 +962,439 @@ SlashCmdList["PFREFLOOT"] = function(msg)
         end
     end
     AnalyzeRefLootQuests(questId)
+end
+
+-- Universal All Validator Command
+SLASH_PFALLVALIDATE1 = "/pfa"
+SlashCmdList["PFALLVALIDATE"] = function()
+    print("=== pfQuest Full Validation - /pfa ===")
+    
+    -- Check if pfDB is loaded
+    if not pfDB then
+        print(SKULL .. " FATAL: pfDB not loaded! pfQuest addon not running.")
+        return
+    end
+    
+    local validationResults = {
+        critical_errors = 0,
+        warnings = 0,
+        info_items = 0
+    }
+    
+    -- Helper function to safely count table entries
+    local function SafeTableCount(tbl)
+        if not tbl or type(tbl) ~= "table" then return 0 end
+        local count = 0
+        for _ in pairs(tbl) do count = count + 1 end
+        return count
+    end
+    
+    -- Helper function to check coordinate presence
+    local function CountWithCoords(dataTable)
+        if not dataTable then return 0 end
+        local count = 0
+        for id, entry in pairs(dataTable) do
+            if entry and entry.coords and type(entry.coords) == "table" and #entry.coords > 0 then
+                count = count + 1
+            end
+        end
+        return count
+    end
+    
+    print(DIAMOND .. " === Core Database Structure Validation ===")
+    
+    -- 1. Check main database categories
+    local dbCategories = {
+        "quests", "units", "objects", "items", "zones", 
+        "refloot", "quests-itemreq", "areatrigger", "professions"
+    }
+    
+    local dbStats = {}
+    for _, category in ipairs(dbCategories) do
+        local hasData = pfDB[category] and pfDB[category]["data"]
+        local hasLoc = pfDB[category] and pfDB[category]["loc"]
+        local dataCount = SafeTableCount(hasData and pfDB[category]["data"])
+        local locCount = SafeTableCount(hasLoc and pfDB[category]["loc"])
+        
+        dbStats[category] = {
+            hasData = hasData ~= nil,
+            hasLoc = hasLoc ~= nil,
+            dataCount = dataCount,
+            locCount = locCount
+        }
+        
+        if not hasData then
+            print(SKULL .. " CRITICAL: " .. category .. ".data missing!")
+            validationResults.critical_errors = validationResults.critical_errors + 1
+        elseif dataCount == 0 then
+            print(CROSS .. " WARNING: " .. category .. ".data is empty!")
+            validationResults.warnings = validationResults.warnings + 1
+        else
+            print(STAR .. " " .. category .. ".data: " .. dataCount .. " entries")
+            validationResults.info_items = validationResults.info_items + 1
+        end
+        
+        if category ~= "refloot" and category ~= "quests-itemreq" and category ~= "areatrigger" then
+            if not hasLoc then
+                print(SKULL .. " CRITICAL: " .. category .. ".loc missing!")
+                validationResults.critical_errors = validationResults.critical_errors + 1
+            elseif locCount == 0 then
+                print(CROSS .. " WARNING: " .. category .. ".loc is empty!")
+                validationResults.warnings = validationResults.warnings + 1
+            else
+                print(CIRCE .. " " .. category .. ".loc: " .. locCount .. " entries")
+            end
+        end
+    end
+    
+    print(DIAMOND .. " === Coordinate Validation ===")
+    
+    -- 2. Check coordinate data for spatial entities
+    local unitsWithCoords = CountWithCoords(pfDB["units"] and pfDB["units"]["data"])
+    local objectsWithCoords = CountWithCoords(pfDB["objects"] and pfDB["objects"]["data"])
+    local areatriggerWithCoords = CountWithCoords(pfDB["areatrigger"] and pfDB["areatrigger"]["data"])
+    
+    print(STAR .. " Units with coordinates: " .. unitsWithCoords .. "/" .. dbStats.units.dataCount)
+    print(STAR .. " Objects with coordinates: " .. objectsWithCoords .. "/" .. dbStats.objects.dataCount)
+    print(STAR .. " Areatriggers with coordinates: " .. areatriggerWithCoords .. "/" .. dbStats.areatrigger.dataCount)
+    
+    if unitsWithCoords == 0 and dbStats.units.dataCount > 0 then
+        print(SKULL .. " CRITICAL: No units have coordinates!")
+        validationResults.critical_errors = validationResults.critical_errors + 1
+    elseif unitsWithCoords < dbStats.units.dataCount * 0.3 then
+        print(CROSS .. " WARNING: Less than 30% of units have coordinates")
+        validationResults.warnings = validationResults.warnings + 1
+    end
+    
+    print(DIAMOND .. " === Quest Structure Validation ===")
+    
+    -- 3. Quest structure validation
+    local questsWithStarters = 0
+    local questsWithFinishers = 0
+    local questsWithObjectives = 0
+    local questsWithValidStarters = 0
+    local questsWithValidFinishers = 0
+    local questsWorking = 0
+    
+    if pfDB["quests"] and pfDB["quests"]["data"] then
+        for qid, quest in pairs(pfDB["quests"]["data"]) do
+            -- Check starters (exact same logic as findWorkingQuests)
+            local hasStarterWithCoords = false
+            if quest.start then
+                questsWithStarters = questsWithStarters + 1
+                
+                -- Check starter NPCs
+                if quest.start.U then
+                    for _, unitId in ipairs(quest.start.U) do
+                        local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
+                        if unit and unit.coords and #unit.coords > 0 then
+                            hasStarterWithCoords = true
+                            break
+                        end
+                    end
+                end
+                -- Check starter objects (if no NPC with coords found)
+                if not hasStarterWithCoords and quest.start.O then
+                    for _, objectId in ipairs(quest.start.O) do
+                        local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId]
+                        if obj and obj.coords and #obj.coords > 0 then
+                            hasStarterWithCoords = true
+                            break
+                        end
+                    end
+                end
+                -- Items always count as valid starters
+                if not hasStarterWithCoords and quest.start.I and #quest.start.I > 0 then
+                    hasStarterWithCoords = true
+                end
+                
+                if hasStarterWithCoords then
+                    questsWithValidStarters = questsWithValidStarters + 1
+                end
+            end
+            
+            -- Check finishers (exact same logic as findWorkingQuests)
+            local hasFinisherWithCoords = false
+            if quest["end"] then
+                questsWithFinishers = questsWithFinishers + 1
+                
+                -- Check finisher NPCs
+                if quest["end"].U then
+                    for _, unitId in ipairs(quest["end"].U) do
+                        local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
+                        if unit and unit.coords and #unit.coords > 0 then
+                            hasFinisherWithCoords = true
+                            break
+                        end
+                    end
+                end
+                -- Check finisher objects (if no NPC with coords found)
+                if not hasFinisherWithCoords and quest["end"].O then
+                    for _, objectId in ipairs(quest["end"].O) do
+                        local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId]
+                        if obj and obj.coords and #obj.coords > 0 then
+                            hasFinisherWithCoords = true
+                            break
+                        end
+                    end
+                end
+                
+                if hasFinisherWithCoords then
+                    questsWithValidFinishers = questsWithValidFinishers + 1
+                end
+            end
+            
+            -- Check objectives
+            if quest.obj and (quest.obj.U or quest.obj.O or quest.obj.I or quest.obj.A or quest.obj.Z) then
+                questsWithObjectives = questsWithObjectives + 1
+            end
+            
+            -- Working quest = BOTH starter and finisher have coordinates (exact same logic as findWorkingQuests)
+            if hasStarterWithCoords and hasFinisherWithCoords then
+                questsWorking = questsWorking + 1
+            end
+        end
+    end
+    
+    print(STAR .. " Quests with starters: " .. questsWithStarters .. "/" .. dbStats.quests.dataCount)
+    print(STAR .. " Quests with valid starters: " .. questsWithValidStarters .. "/" .. questsWithStarters)
+    print(STAR .. " Quests with finishers: " .. questsWithFinishers .. "/" .. dbStats.quests.dataCount)
+    print(STAR .. " Quests with valid finishers: " .. questsWithValidFinishers .. "/" .. questsWithFinishers)
+    print(STAR .. " Quests with objectives: " .. questsWithObjectives .. "/" .. dbStats.quests.dataCount)
+    print(MOON .. " WORKING QUESTS (starter+finisher coords): " .. questsWorking .. "/" .. dbStats.quests.dataCount)
+    
+    if questsWorking == 0 and dbStats.quests.dataCount > 0 then
+        print(SKULL .. " CRITICAL: No working quests found!")
+        validationResults.critical_errors = validationResults.critical_errors + 1
+    end
+    
+    print(DIAMOND .. " === Item/Loot System Validation ===")
+    
+    -- 4. Item and loot validation
+    local itemsWithSources = 0
+    local itemsWithVendors = 0
+    local itemsWithDrops = 0
+    local itemsWithRefLoot = 0
+    
+    if pfDB["items"] and pfDB["items"]["data"] then
+        for itemId, item in pairs(pfDB["items"]["data"]) do
+            local hasSources = false
+            
+            if item.U and SafeTableCount(item.U) > 0 then
+                itemsWithDrops = itemsWithDrops + 1
+                hasSources = true
+            end
+            
+            if item.V and SafeTableCount(item.V) > 0 then
+                itemsWithVendors = itemsWithVendors + 1
+                hasSources = true
+            end
+            
+            if item.O and SafeTableCount(item.O) > 0 then
+                hasSources = true
+            end
+            
+            if item.R and SafeTableCount(item.R) > 0 then
+                itemsWithRefLoot = itemsWithRefLoot + 1
+                hasSources = true
+            end
+            
+            if hasSources then
+                itemsWithSources = itemsWithSources + 1
+            end
+        end
+    end
+    
+    print(STAR .. " Items with any sources: " .. itemsWithSources .. "/" .. dbStats.items.dataCount)
+    print(CIRCE .. " Items with NPC drops: " .. itemsWithDrops)
+    print(CIRCE .. " Items with vendors: " .. itemsWithVendors)
+    print(CIRCE .. " Items with reference loot: " .. itemsWithRefLoot)
+    
+    print(DIAMOND .. " === Zone/Map System Validation ===")
+    
+    -- 5. Zone system validation
+    local zonesWithData = 0
+    if pfDB["zones"] and pfDB["zones"]["data"] then
+        for zoneId, zoneData in pairs(pfDB["zones"]["data"]) do
+            if type(zoneData) == "table" and #zoneData >= 6 then
+                zonesWithData = zonesWithData + 1
+            end
+        end
+    end
+    
+    print(STAR .. " Zones with complete data: " .. zonesWithData .. "/" .. dbStats.zones.dataCount)
+    
+    -- Check if common zones exist
+    local commonZones = {
+        [14] = "Durotar",
+        [1519] = "Stormwind City", 
+        [1637] = "Orgrimmar",
+        [17] = "The Barrens",
+        [141] = "Teldrassil"
+    }
+    
+    local commonZonesFound = 0
+    for zoneId, name in pairs(commonZones) do
+        if pfDB["zones"] and pfDB["zones"]["data"] and pfDB["zones"]["data"][zoneId] then
+            commonZonesFound = commonZonesFound + 1
+        end
+    end
+    
+    print(CIRCE .. " Common starter zones found: " .. commonZonesFound .. "/5")
+    
+    print(DIAMOND .. " === Localization Validation ===")
+    
+    -- 6. Localization check
+    local currentLocale = GetLocale()
+    local localeStatus = {}
+    
+    for _, category in ipairs({"quests", "units", "objects", "items", "zones"}) do
+        if pfDB[category] and pfDB[category][currentLocale] then
+            localeStatus[category] = "native"
+        elseif pfDB[category] and pfDB[category]["enUS"] then
+            localeStatus[category] = "fallback"
+        else
+            localeStatus[category] = "missing"
+        end
+    end
+    
+    print(STAR .. " Current locale: " .. currentLocale)
+    for category, status in pairs(localeStatus) do
+        if status == "native" then
+            print(STAR .. " " .. category .. ": native locale")
+        elseif status == "fallback" then
+            print(CIRCE .. " " .. category .. ": using enUS fallback")
+        else
+            print(SKULL .. " " .. category .. ": no localization!")
+            validationResults.critical_errors = validationResults.critical_errors + 1
+        end
+    end
+    
+    print(DIAMOND .. " === Advanced Features Validation ===")
+    
+    -- 7. Advanced features
+    local hasMetaData = pfDB["meta"] ~= nil
+    local hasRares = hasMetaData and pfDB["meta"]["rares"] and SafeTableCount(pfDB["meta"]["rares"]) > 0
+    local hasHerbs = hasMetaData and pfDB["meta"]["herbs"] and SafeTableCount(pfDB["meta"]["herbs"]) > 0
+    local hasMines = hasMetaData and pfDB["meta"]["mines"] and SafeTableCount(pfDB["meta"]["mines"]) > 0
+    
+    print(STAR .. " Meta data: " .. (hasMetaData and "present" or "missing"))
+    if hasMetaData then
+        print(CIRCE .. " Rare mobs: " .. (hasRares and SafeTableCount(pfDB["meta"]["rares"]) or "0"))
+        print(CIRCE .. " Herb nodes: " .. (hasHerbs and SafeTableCount(pfDB["meta"]["herbs"]) or "0"))
+        print(CIRCE .. " Mining nodes: " .. (hasMines and SafeTableCount(pfDB["meta"]["mines"]) or "0"))
+    end
+    
+    -- 8. Item requirements validation
+    local hasItemReq = pfDB["quests-itemreq"] and pfDB["quests-itemreq"]["data"]
+    local itemReqCount = SafeTableCount(hasItemReq and pfDB["quests-itemreq"]["data"])
+    print(STAR .. " Item requirements: " .. itemReqCount .. " entries")
+    
+    -- 9. Reference loot validation
+    local hasRefLoot = pfDB["refloot"] and pfDB["refloot"]["data"]
+    local refLootCount = SafeTableCount(hasRefLoot and pfDB["refloot"]["data"])
+    print(STAR .. " Reference loot tables: " .. refLootCount .. " entries")
+    
+    print(DIAMOND .. " === Final Summary ===")
+    
+    -- Collect critical issues for detailed reporting
+    local criticalIssues = {}
+    local warningIssues = {}
+    
+    -- Check specific issues and categorize them
+    if questsWorking == 0 and dbStats.quests.dataCount > 0 then
+        table.insert(criticalIssues, "No working quests found (0/" .. dbStats.quests.dataCount .. ")")
+    end
+    
+    if unitsWithCoords == 0 and dbStats.units.dataCount > 0 then
+        table.insert(criticalIssues, "No units have coordinates (0/" .. dbStats.units.dataCount .. ")")
+    elseif unitsWithCoords < dbStats.units.dataCount * 0.3 then
+        table.insert(warningIssues, "Low unit coordinate coverage (" .. unitsWithCoords .. "/" .. dbStats.units.dataCount .. " = " .. math.floor(unitsWithCoords/dbStats.units.dataCount*100) .. "%)")
+    end
+    
+    -- Check missing core components
+    for _, category in ipairs({"quests", "units", "objects", "items", "zones"}) do
+        if not dbStats[category].hasData then
+            table.insert(criticalIssues, category .. ".data completely missing")
+        elseif dbStats[category].dataCount == 0 then
+            table.insert(warningIssues, category .. ".data is empty")
+        end
+        
+        if category ~= "refloot" and category ~= "quests-itemreq" and category ~= "areatrigger" then
+            if not dbStats[category].hasLoc then
+                table.insert(criticalIssues, category .. ".loc completely missing")
+            elseif dbStats[category].locCount == 0 then
+                table.insert(warningIssues, category .. ".loc is empty")
+            end
+        end
+    end
+    
+    -- Check localization issues
+    for category, status in pairs(localeStatus) do
+        if status == "missing" then
+            table.insert(criticalIssues, "No localization for " .. category .. " (locale: " .. currentLocale .. ")")
+        end
+    end
+    
+    -- Overall assessment
+    local totalIssues = validationResults.critical_errors + validationResults.warnings
+    local overallStatus = ""
+    
+    if validationResults.critical_errors > 0 then
+        overallStatus = SKULL .. " CRITICAL ISSUES FOUND"
+        print(SKULL .. " Critical errors: " .. validationResults.critical_errors)
+        
+        if #criticalIssues > 0 then
+            print(CROSS .. " Critical Issues Summary:")
+            for i, issue in ipairs(criticalIssues) do
+                print("   " .. SKULL .. " " .. issue)
+            end
+        end
+    elseif validationResults.warnings > 0 then
+        overallStatus = CROSS .. " WARNINGS PRESENT"  
+        print(CROSS .. " Warnings: " .. validationResults.warnings)
+        
+        if #warningIssues > 0 then
+            print(TRIANGLE .. " Warning Issues Summary:")
+            for i, issue in ipairs(warningIssues) do
+                print("   " .. CROSS .. " " .. issue)
+            end
+        end
+    else
+        overallStatus = STAR .. " ALL SYSTEMS VALIDATED"
+    end
+    
+    print(overallStatus)
+    print(TRIANGLE .. " Working quests: " .. questsWorking .. " | Items with sources: " .. itemsWithSources)
+    print(TRIANGLE .. " Units with coords: " .. unitsWithCoords .. " | Objects with coords: " .. objectsWithCoords)
+    
+    -- Recommendations
+    if validationResults.critical_errors == 0 and questsWorking > 0 then
+        print(DIAMOND .. " RECOMMENDATIONS:")
+        print("   " .. STAR .. " Database appears functional for pfQuest")
+        print("   " .. CIRCE .. " Try: /pftest to see example working quests")
+        print("   " .. MOON .. " Try: /pfq <questID> to analyze specific quests")
+        
+        if questsWorking < 50 then
+            print("   " .. CROSS .. " Consider running full extraction for more quests")
+        end
+        if questsWorking < 10 then
+            print("   " .. SKULL .. " Very low quest count - may need database fixes")
+        end
+    elseif validationResults.critical_errors > 0 then
+        print(DIAMOND .. " TROUBLESHOOTING:")
+        print("   " .. SKULL .. " Critical issues detected - extraction may be incomplete")
+        print("   " .. TRIANGLE .. " Check extractor.lua configuration and re-run")
+        print("   " .. SQUARE .. " Verify database connection and permissions")
+        
+        if questsWorking == 0 and questsWithStarters > 0 and questsWithFinishers > 0 then
+            print("   " .. MOON .. " Quest data exists but lacks coordinates - check coordinate extraction")
+        end
+        
+        if #criticalIssues > 0 then
+            print("   " .. CROSS .. " Focus on fixing the " .. #criticalIssues .. " critical issue(s) listed above")
+        end
+    end
+    
+    print("=== End pfQuest Full Validation ===")
 end
