@@ -13,9 +13,9 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 1           -- Лимит для того что тестируем
-local OTHER_LIMIT = 1             -- Лимит для всего остального
-local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
+local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
+local OTHER_LIMIT = 6000             -- Лимит для всего остального
+local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -1575,16 +1575,9 @@ if config.expansions[expansion_to_process] then
     pfDB["units"] = pfDB["units"] or {}
     pfDB["units"][data] = {}
 
-    -- Count total creatures first
-    local count_query = mysql:execute('SELECT COUNT(*) as total FROM creature_template')
-    local count_result = {}
-    count_query:fetch(count_result, "a")
-    local total_creatures = tonumber(count_result.total) or 0
-    print("  Processing " .. total_creatures .. " creatures...")
-
-    -- iterate over all creatures
-    local processed = 0
-    local creature_template = {}
+    -- STEP 1/3: Pass 1 - Collect all creature entry IDs first (MAJOR OPTIMIZATION)
+    print("  Pass 1: Collecting all creature entry IDs...")
+    local all_creature_ids = {}
     local limit_clause = ""
     local where_clause = ""
 
@@ -1597,14 +1590,122 @@ if config.expansions[expansion_to_process] then
       limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. UNITS_LIMIT) or ''
     end
 
-    local query = mysql:execute('SELECT * FROM creature_template' .. where_clause .. ' GROUP BY creature_template.entry ORDER BY creature_template.entry' .. limit_clause)
-    while query:fetch(creature_template, "a") do
+    local pass1_query = mysql:execute('SELECT entry FROM creature_template' .. where_clause .. ' GROUP BY entry ORDER BY entry' .. limit_clause)
+    if pass1_query then
+        local temp_creature = {}
+        while pass1_query:fetch(temp_creature, "a") do
+            if debug("units_pass1") then break end
+            table.insert(all_creature_ids, tonumber(temp_creature.entry))
+        end
+    end
+    print("  Pass 1 complete: Collected " .. #all_creature_ids .. " creature IDs for batch processing")
+
+    -- STEP 2/3: Pass 2a - Batch load all creature coordinates (eliminates 46k+ individual queries!)
+    print("  Pass 2a: Batch loading creature coordinates...")
+    local creature_coords_cache = {}
+
+    if #all_creature_ids > 0 then
+        local chunk_size = 2000  -- Process 2000 creatures at a time for optimal performance
+        local total_chunks = math.ceil(#all_creature_ids / chunk_size)
+
+        for chunk = 1, total_chunks do
+            local start_idx = (chunk - 1) * chunk_size + 1
+            local end_idx = math.min(chunk * chunk_size, #all_creature_ids)
+            local chunk_ids = {}
+            for i = start_idx, end_idx do
+                table.insert(chunk_ids, all_creature_ids[i])
+            end
+            local creature_ids_string = table.concat(chunk_ids, ",")
+
+            print("  Processing coordinate chunk " .. chunk .. "/" .. total_chunks .. " (" .. #chunk_ids .. " creatures)")
+            local batch_query = mysql:execute("SELECT id1, guid, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM creature WHERE id1 IN (" .. creature_ids_string .. ") ORDER BY id1, guid")
+            if batch_query then
+                local temp_data = {}
+                while batch_query:fetch(temp_data, "a") do
+                    if debug("units_batch_coords") then break end
+
+                    local creature_id = tonumber(temp_data.id1)
+                    creature_coords_cache[creature_id] = creature_coords_cache[creature_id] or {}
+
+                    -- Apply same coordinate conversion logic as GetCreatureCoords function
+                    local npc_world_x = tonumber(temp_data.position_x)
+                    local npc_world_y = tonumber(temp_data.position_y)
+                    local map_id = tonumber(temp_data.map)
+                    local db_zoneId = tonumber(temp_data.zoneId)
+                    local db_areaId = tonumber(temp_data.areaId)
+
+                    local display_zone_for_units_lua
+                    if db_zoneId ~= 0 then
+                        display_zone_for_units_lua = db_zoneId
+                    elseif db_areaId ~= 0 then
+                        local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
+                        if parent_of_area ~= 0 then
+                            display_zone_for_units_lua = parent_of_area
+                        else
+                            display_zone_for_units_lua = db_areaId
+                        end
+                    end
+
+                    if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then
+                        if npc_world_x and npc_world_y and map_id then
+                            local coords_fallback_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
+                            if coords_fallback_data and coords_fallback_data[1] and coords_fallback_data[1][3] then
+                                display_zone_for_units_lua = coords_fallback_data[1][3]
+                                if display_zone_for_units_lua == 0 then display_zone_for_units_lua = map_id end
+                            else
+                                display_zone_for_units_lua = map_id
+                            end
+                        else
+                            display_zone_for_units_lua = 1
+                        end
+                        if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then display_zone_for_units_lua = 1 end
+                    end
+
+                    local zone_x, zone_y = 50, 50 -- Default
+                    local zone_bounds = GetWorldMapAreaBoundariesForZone(display_zone_for_units_lua, map_id)
+
+                    if npc_world_x and npc_world_y and zone_bounds then
+                        local Z_WorldX_L = zone_bounds.x_left
+                        local Z_WorldX_R = zone_bounds.x_right
+                        local Z_WorldY_T = zone_bounds.y_top
+                        local Z_WorldY_B = zone_bounds.y_bottom
+
+                        local zone_map_world_width = Z_WorldX_R - Z_WorldX_L
+                        local zone_map_world_height = Z_WorldY_T - Z_WorldY_B
+
+                        if zone_map_world_width > 0 and zone_map_world_height > 0 then
+                            local pfQuest_X_pct = ((Z_WorldY_T - npc_world_y) / zone_map_world_height) * 100
+                            local pfQuest_Y_pct = 100 - (((npc_world_x - Z_WorldX_L) / zone_map_world_width) * 100)
+                            zone_x = pfQuest_X_pct
+                            zone_y = pfQuest_Y_pct
+                        end
+                    end
+
+                    zone_x = math.max(0, math.min(100, zone_x))
+                    zone_y = math.max(0, math.min(100, zone_y))
+
+                    local creature_respawn_time = tonumber(temp_data.spawntimesecs) or 0
+                    table.insert(creature_coords_cache[creature_id], {round(zone_x,2), round(zone_y,2), display_zone_for_units_lua, creature_respawn_time})
+                end
+            end
+            collectgarbage("collect")  -- Memory cleanup between chunks
+        end
+    end
+    print("  Pass 2a complete: Cached coordinates for " .. #all_creature_ids .. " creatures")
+
+    -- STEP 3/3: Pass 2b - Original processing (now using cached coordinate data)
+    print("  Pass 2b: Processing creature templates with cached coordinates...")
+    local processed = 0
+    local creature_template = {}
+
+    local template_query = mysql:execute('SELECT * FROM creature_template' .. where_clause .. ' GROUP BY creature_template.entry ORDER BY creature_template.entry' .. limit_clause)
+    while template_query:fetch(creature_template, "a") do
       if debug("units") then break end
       processed = processed + 1
 
       -- Show progress every 1000 creatures
       if processed % 1000 == 0 then
-        print("  Processed " .. processed .. "/" .. total_creatures .. " creatures (" .. math.floor(processed/total_creatures*100) .. "%)")
+        print("  Processed " .. processed .. "/" .. #all_creature_ids .. " creatures (" .. math.floor(processed/#all_creature_ids*100) .. "%)")
       end
 
       local entry   = tonumber(creature_template[C.Entry])
@@ -1647,10 +1748,12 @@ if config.expansions[expansion_to_process] then
       do -- coordinates
         pfDB["units"][data][entry]["coords"] = {}
 
-        for id, coords in pairs(GetCreatureCoords(entry)) do
-          local x, y, zone, respawn = unpack(coords)
-          if debug("units_coords") then break end
-          table.insert(pfDB["units"][data][entry]["coords"], { x, y, zone, respawn })
+        -- USE BATCH DATA - MAJOR OPTIMIZATION! (eliminates 46k+ individual queries!)
+        if creature_coords_cache[entry] then
+            for _, coords in ipairs(creature_coords_cache[entry]) do
+                if debug("units_coords") then break end
+                table.insert(pfDB["units"][data][entry]["coords"], coords)
+            end
         end
 
         if core ~= "vmangos" then
@@ -2092,59 +2195,161 @@ if config.expansions[expansion_to_process] then
     local reference_loot_data = {}     -- item_id -> {ref1, ref2, ...}
     local vendor_data = {}             -- item_id -> {vendor1, vendor2, ...}
     local vendor_template_data = {}    -- item_id -> {vendor1, vendor2, ...}
+    local item_loot_data = {}          -- item_id -> {container1, container2, ...}
+    local gameobject_loot_data = {}    -- item_id -> {gameobject1, gameobject2, ...}
 
     if #all_item_ids > 0 then
-      local item_ids_string = table.concat(all_item_ids, ",")
       print("  Pass 2a: Batch loading relationships for " .. #all_item_ids .. " items...")
 
-      -- Batch load creature drops
-      print("    Loading creature drops...")
-      local batch_query = mysql:execute("SELECT Entry, Item, Chance FROM creature_loot_template WHERE Item IN (" .. item_ids_string .. ") AND Reference = 0 ORDER BY Item, Entry")
-      if batch_query then
-        local temp_data = {}
-        while batch_query:fetch(temp_data, "a") do
-          if debug("items_creature_batch") then break end
-          local item_id = tonumber(temp_data.Item)
-          local creature_id = tonumber(temp_data.Entry)
-          local chance = math.abs(tonumber(temp_data.Chance) or 0)
+      -- Optimized chunked processing to avoid huge IN clauses
+      local chunk_size = 2000  -- Process 2000 items at a time for optimal performance
+      local total_chunks = math.ceil(#all_item_ids / chunk_size)
 
-          if chance > 0 then
-            creature_loot_data[item_id] = creature_loot_data[item_id] or {}
-            table.insert(creature_loot_data[item_id], {entry = creature_id, chance = chance})
+      -- Batch load creature drops (chunked)
+      print("    Loading creature drops...")
+      for chunk = 1, total_chunks do
+        local start_idx = (chunk - 1) * chunk_size + 1
+        local end_idx = math.min(chunk * chunk_size, #all_item_ids)
+        local chunk_ids = {}
+        for i = start_idx, end_idx do
+          table.insert(chunk_ids, all_item_ids[i])
+        end
+        local item_ids_string = table.concat(chunk_ids, ",")
+
+        local batch_query = mysql:execute("SELECT Entry, Item, Chance FROM creature_loot_template WHERE Item IN (" .. item_ids_string .. ") AND Reference = 0 ORDER BY Item, Entry")
+        if batch_query then
+          local temp_data = {}
+          while batch_query:fetch(temp_data, "a") do
+            if debug("items_creature_batch") then break end
+            local item_id = tonumber(temp_data.Item)
+            local creature_id = tonumber(temp_data.Entry)
+            local chance = math.abs(tonumber(temp_data.Chance) or 0)
+
+            if chance > 0 then
+              creature_loot_data[item_id] = creature_loot_data[item_id] or {}
+              table.insert(creature_loot_data[item_id], {entry = creature_id, chance = chance})
+            end
           end
         end
+        collectgarbage("collect")  -- Memory cleanup between chunks
       end
 
-      -- Batch load reference loot
+      -- Batch load reference loot (chunked)
       print("    Loading reference loot...")
-      local batch_query = mysql:execute("SELECT entry, item, Chance FROM reference_loot_template WHERE item IN (" .. item_ids_string .. ") ORDER BY item, entry")
-      if batch_query then
-        local temp_data = {}
-        while batch_query:fetch(temp_data, "a") do
-          if debug("items_reference_batch") then break end
-          local item_id = tonumber(temp_data.item)
-          local ref_id = tonumber(temp_data.entry)
-          local chance = math.abs(tonumber(temp_data.Chance) or 0)
-
-          reference_loot_data[item_id] = reference_loot_data[item_id] or {}
-          table.insert(reference_loot_data[item_id], {entry = ref_id, chance = chance})
+      for chunk = 1, total_chunks do
+        local start_idx = (chunk - 1) * chunk_size + 1
+        local end_idx = math.min(chunk * chunk_size, #all_item_ids)
+        local chunk_ids = {}
+        for i = start_idx, end_idx do
+          table.insert(chunk_ids, all_item_ids[i])
         end
+        local item_ids_string = table.concat(chunk_ids, ",")
+
+        local batch_query = mysql:execute("SELECT entry, item, Chance FROM reference_loot_template WHERE item IN (" .. item_ids_string .. ") ORDER BY item, entry")
+        if batch_query then
+          local temp_data = {}
+          while batch_query:fetch(temp_data, "a") do
+            if debug("items_reference_batch") then break end
+            local item_id = tonumber(temp_data.item)
+            local ref_id = tonumber(temp_data.entry)
+            local chance = math.abs(tonumber(temp_data.Chance) or 0)
+
+            reference_loot_data[item_id] = reference_loot_data[item_id] or {}
+            table.insert(reference_loot_data[item_id], {entry = ref_id, chance = chance})
+          end
+        end
+        collectgarbage("collect")
       end
 
-      -- Batch load vendors
+      -- Batch load vendors (chunked)
       print("    Loading vendors...")
-      local batch_query = mysql:execute("SELECT entry, item, maxcount FROM npc_vendor WHERE item IN (" .. item_ids_string .. ") ORDER BY item, entry")
-      if batch_query then
-        local temp_data = {}
-        while batch_query:fetch(temp_data, "a") do
-          if debug("items_vendor_batch") then break end
-          local item_id = tonumber(temp_data.item)
-          local vendor_id = tonumber(temp_data.entry)
-          local maxcount = tonumber(temp_data.maxcount)
-
-          vendor_data[item_id] = vendor_data[item_id] or {}
-          table.insert(vendor_data[item_id], {vendor = vendor_id, maxcount = maxcount})
+      for chunk = 1, total_chunks do
+        local start_idx = (chunk - 1) * chunk_size + 1
+        local end_idx = math.min(chunk * chunk_size, #all_item_ids)
+        local chunk_ids = {}
+        for i = start_idx, end_idx do
+          table.insert(chunk_ids, all_item_ids[i])
         end
+        local item_ids_string = table.concat(chunk_ids, ",")
+
+        local batch_query = mysql:execute("SELECT entry, item, maxcount FROM npc_vendor WHERE item IN (" .. item_ids_string .. ") ORDER BY item, entry")
+        if batch_query then
+          local temp_data = {}
+          while batch_query:fetch(temp_data, "a") do
+            if debug("items_vendor_batch") then break end
+            local item_id = tonumber(temp_data.item)
+            local vendor_id = tonumber(temp_data.entry)
+            local maxcount = tonumber(temp_data.maxcount)
+
+            vendor_data[item_id] = vendor_data[item_id] or {}
+            table.insert(vendor_data[item_id], {vendor = vendor_id, maxcount = maxcount})
+          end
+        end
+        collectgarbage("collect")
+      end
+
+      -- Batch load item containers (item_loot_template) - this was the major bottleneck!
+      print("    Loading item containers...")
+      for chunk = 1, total_chunks do
+        local start_idx = (chunk - 1) * chunk_size + 1
+        local end_idx = math.min(chunk * chunk_size, #all_item_ids)
+        local chunk_ids = {}
+        for i = start_idx, end_idx do
+          table.insert(chunk_ids, all_item_ids[i])
+        end
+        local item_ids_string = table.concat(chunk_ids, ",")
+
+        local batch_query = mysql:execute("SELECT entry, item, ChanceOrQuestChance FROM item_loot_template WHERE item IN (" .. item_ids_string .. ") ORDER BY item, entry")
+        if batch_query then
+          local temp_data = {}
+          while batch_query:fetch(temp_data, "a") do
+            if debug("items_container_batch") then break end
+            local item_id = tonumber(temp_data.item)
+            local container_id = tonumber(temp_data.entry)
+            local chance = math.abs(tonumber(temp_data.ChanceOrQuestChance) or 0)
+
+            if chance > 0 then
+              item_loot_data[item_id] = item_loot_data[item_id] or {}
+              table.insert(item_loot_data[item_id], {entry = container_id, chance = chance})
+            end
+          end
+        end
+        collectgarbage("collect")
+      end
+
+      -- Batch load gameobject drops (another major bottleneck!)
+      print("    Loading gameobject drops...")
+      local chance_field = core == "acore" and "Chance" or "ChanceOrQuestChance"
+      local item_field = core == "acore" and "Item" or "item"
+      local loot_entry_field = core == "acore" and "Entry" or "entry"
+
+      for chunk = 1, total_chunks do
+        local start_idx = (chunk - 1) * chunk_size + 1
+        local end_idx = math.min(chunk * chunk_size, #all_item_ids)
+        local chunk_ids = {}
+        for i = start_idx, end_idx do
+          table.insert(chunk_ids, all_item_ids[i])
+        end
+        local item_ids_string = table.concat(chunk_ids, ",")
+
+        local sql_query = "SELECT gameobject_template.entry, gameobject_loot_template." .. chance_field .. " as chance_value, gameobject_loot_template." .. item_field .. " as item_id FROM gameobject_loot_template INNER JOIN gameobject_template ON gameobject_template.data1 = gameobject_loot_template." .. loot_entry_field .. " WHERE (gameobject_template.type = 3 OR gameobject_template.type = 25) AND gameobject_loot_template." .. item_field .. " IN (" .. item_ids_string .. ") ORDER BY gameobject_loot_template." .. item_field .. ", gameobject_template.entry"
+
+        local batch_query = mysql:execute(sql_query)
+        if batch_query then
+          local temp_data = {}
+          while batch_query:fetch(temp_data, "a") do
+            if debug("items_gameobject_batch") then break end
+            local item_id = tonumber(temp_data.item_id)
+            local gameobject_id = tonumber(temp_data.entry)
+            local chance = math.abs(tonumber(temp_data.chance_value) or 0)
+
+            if chance > 0 then
+              gameobject_loot_data[item_id] = gameobject_loot_data[item_id] or {}
+              table.insert(gameobject_loot_data[item_id], {entry = gameobject_id, chance = chance})
+            end
+          end
+        end
+        collectgarbage("collect")
       end
 
       print("  Pass 2a complete: Batch data loaded")
@@ -2164,23 +2369,17 @@ if config.expansions[expansion_to_process] then
       local entry = tonumber(item_template.entry)
       local scans = { [0] = { entry, nil } }
 
-      -- add items that contain the actual item to the itemlist
-      local item_loot_item = {}
-      local count = 0
-
-      -- Check if entry exists
+      -- add items that contain the actual item to the itemlist (USE BATCH DATA - MAJOR OPTIMIZATION!)
       if not item_template.entry then
         print("Warning: Skipping item with nil entry")
       else
-        local query = mysql:execute('SELECT entry, ChanceOrQuestChance FROM item_loot_template WHERE item = ' .. item_template.entry .. ' ORDER BY entry')
-        if query then
-          while query:fetch(item_loot_item, "a") do
+        -- Use pre-loaded batch data instead of SQL query (eliminates 46k individual queries!)
+        if item_loot_data[entry] then
+          for _, container_info in ipairs(item_loot_data[entry]) do
             if debug("items_container") then break end
-            if math.abs(item_loot_item.ChanceOrQuestChance) > 0 then
-              local chance = math.abs(item_loot_item.ChanceOrQuestChance)
-              chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
-              table.insert(scans, { tonumber(item_loot_item.entry), chance })
-            end
+            local chance = container_info.chance
+            chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
+            table.insert(scans, { container_info.entry, chance })
           end
         end
       end
@@ -2205,33 +2404,16 @@ if config.expansions[expansion_to_process] then
           end
         end
 
-        -- fill object table
-        local gameobject_loot_template = {}
-        local object_filter = ""
-        if QUEST_784_TEST then
-          local object_list = table.concat(QUEST_784_OBJECTS, ",")
-          object_filter = " AND gameobject_template.entry IN (" .. object_list .. ") "
-        end
-        -- Try AzerothCore field names
-        local chance_field = core == "acore" and "Chance" or "ChanceOrQuestChance"
-        local item_field = core == "acore" and "Item" or "item"
-        local loot_entry_field = core == "acore" and "Entry" or "entry"
-
-        local sql_query = [[
-          SELECT gameobject_template.entry, gameobject_loot_template.]] .. chance_field .. [[ as chance_value FROM gameobject_loot_template
-          INNER JOIN gameobject_template ON gameobject_template.data1 = gameobject_loot_template.]] .. loot_entry_field .. [[
-          WHERE ( gameobject_template.type = 3 OR gameobject_template.type = 25 )
-          AND gameobject_loot_template.]] .. item_field .. [[ = ]] .. entry .. object_filter .. [[ ORDER BY gameobject_template.entry ]]
-        local query = mysql:execute(sql_query)
-        if query then
-          while query:fetch(gameobject_loot_template, "a") do
+        -- fill object table (USE BATCH DATA - ELIMINATES ANOTHER 46K QUERIES!)
+        if gameobject_loot_data[entry] then
+          for _, gameobject_info in ipairs(gameobject_loot_data[entry]) do
             if debug("items_object") then break end
-            local chance = math.abs(gameobject_loot_template.chance_value) * chance
-            chance = chance < 0.01 and round(chance, 5) or round(chance, 2)
+            local final_chance = gameobject_info.chance * chance
+            final_chance = final_chance < 0.01 and round(final_chance, 5) or round(final_chance, 2)
 
-            if chance > 0 then
+            if final_chance > 0 then
               pfDB["items"][data][entry]["O"] = pfDB["items"][data][entry]["O"] or {}
-              pfDB["items"][data][entry]["O"][tonumber(gameobject_loot_template.entry)] = chance
+              pfDB["items"][data][entry]["O"][gameobject_info.entry] = final_chance
             end
           end
         end
