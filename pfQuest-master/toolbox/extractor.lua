@@ -13,9 +13,9 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 500           -- Лимит для того что тестируем
-local OTHER_LIMIT = 500             -- Лимит для всего остального
-local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
+local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
+local OTHER_LIMIT = 6000             -- Лимит для всего остального
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -1444,6 +1444,9 @@ if config.expansions[expansion_to_process] then
     if pfDB and pfDB["areatrigger"] then
       table.insert(execution_times, {name = "areatrigger", time = end_time_areatrigger - start_time_areatrigger})
     end
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after areatriggers: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
     local start_time_zones = os.clock()
@@ -1550,6 +1553,9 @@ if config.expansions[expansion_to_process] then
     if pfDB and pfDB["zones"] then
       table.insert(execution_times, {name = "zones", time = end_time_zones - start_time_zones})
     end
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after zones: " .. math.floor(collectgarbage("count")) .. " KB")
     end -- конец do -- zones
 
 
@@ -1832,6 +1838,9 @@ if config.expansions[expansion_to_process] then
     if pfDB and pfDB["units"] then
       table.insert(execution_times, {name = "units", time = end_time_units - start_time_units})
     end
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after units: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
   local start_time_objects = os.clock()
@@ -1877,18 +1886,18 @@ if config.expansions[expansion_to_process] then
     -- STEP 2/3: Pass 2a - Batch load all gameobject coordinates with proper conversion
     print("  Pass 2a: Batch loading gameobject coordinates...")
     local gameobject_coords_cache = {}
-    
+
     if #all_object_ids > 0 then
       local object_ids_string = table.concat(all_object_ids, ",")
       -- Get all necessary fields for coordinate conversion (same as GetGameObjectCoords)
       local batch_coords_query = mysql:execute("SELECT id, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM gameobject WHERE id IN (" .. object_ids_string .. ")")
-      
+
       if batch_coords_query then
         local coord_data = {}
         local coords_loaded = 0
         while batch_coords_query:fetch(coord_data, "a") do
           if debug("objects_batch_coords") then break end
-          
+
           local object_id = tonumber(coord_data.id)
           local map_id = tonumber(coord_data.map)
           local world_x = tonumber(coord_data.position_x)
@@ -1896,12 +1905,12 @@ if config.expansions[expansion_to_process] then
           local db_zoneId = tonumber(coord_data.zoneId)
           local db_areaId = tonumber(coord_data.areaId)
           local respawn = tonumber(coord_data.spawntimesecs)
-          
+
           -- Apply same coordinate conversion logic as GetGameObjectCoords
           local display_map_areatable_id = 0
-          local zone_x = 0
-          local zone_y = 0
-          
+          local zone_x = 50  -- Default coordinates same as GetGameObjectCoords
+          local zone_y = 50
+
           -- Determine zone ID (same logic as GetGameObjectCoords)
           if db_zoneId ~= 0 then
             display_map_areatable_id = db_zoneId
@@ -1913,17 +1922,23 @@ if config.expansions[expansion_to_process] then
               display_map_areatable_id = db_areaId
             end
           end
-          
-          -- Fallback if no valid zone found
-          if display_map_areatable_id == 0 then
-            local custom_coords = GetCustomCoords(map_id, world_x, world_y)
-            if custom_coords ~= 0 then
-              display_map_areatable_id = custom_coords
+
+          -- Fallback if no valid zone found (same logic as GetGameObjectCoords)
+          if not display_map_areatable_id or display_map_areatable_id == 0 then
+            if world_x and world_y and map_id then
+              local coords_fallback_data = GetCustomCoords(map_id, world_x, world_y)
+              if coords_fallback_data and coords_fallback_data[1] and coords_fallback_data[1][3] then
+                display_map_areatable_id = coords_fallback_data[1][3]
+                if display_map_areatable_id == 0 then display_map_areatable_id = map_id end
+              else
+                display_map_areatable_id = map_id
+              end
             else
-              display_map_areatable_id = map_id
+              display_map_areatable_id = 1
             end
+            if not display_map_areatable_id or display_map_areatable_id == 0 then display_map_areatable_id = 1 end
           end
-          
+
           -- Convert world coordinates to zone coordinates (same as GetGameObjectCoords)
           local zone_bounds = GetWorldMapAreaBoundariesForZone(display_map_areatable_id, map_id)
           if world_x and world_y and zone_bounds then
@@ -1931,31 +1946,31 @@ if config.expansions[expansion_to_process] then
             local Z_WorldX_R = zone_bounds.x_right
             local Z_WorldY_T = zone_bounds.y_top
             local Z_WorldY_B = zone_bounds.y_bottom
-            
+
             local zone_map_world_width = Z_WorldX_R - Z_WorldX_L
             local zone_map_world_height = Z_WorldY_T - Z_WorldY_B
-            
+
             if zone_map_world_width > 0 and zone_map_world_height > 0 then
               local pfQuest_X_pct = ((Z_WorldY_T - world_y) / zone_map_world_height) * 100
               local pfQuest_Y_pct = 100 - (((world_x - Z_WorldX_L) / zone_map_world_width) * 100)
-              
+
               zone_x = pfQuest_X_pct
               zone_y = pfQuest_Y_pct
-              
+
               -- Clamp coordinates to 0-100 range
               zone_x = math.max(0, math.min(100, zone_x))
               zone_y = math.max(0, math.min(100, zone_y))
-              
+
               -- Round to 2 decimal places for consistency with original output
               zone_x = math.floor(zone_x * 100 + 0.5) / 100
               zone_y = math.floor(zone_y * 100 + 0.5) / 100
             end
           end
-          
+
           if not gameobject_coords_cache[object_id] then
             gameobject_coords_cache[object_id] = {}
           end
-          
+
           table.insert(gameobject_coords_cache[object_id], {zone_x, zone_y, display_map_areatable_id, respawn})
           coords_loaded = coords_loaded + 1
         end
@@ -2012,6 +2027,9 @@ if config.expansions[expansion_to_process] then
     if pfDB and pfDB["objects"] then
       table.insert(execution_times, {name = "objects", time = end_time_objects - start_time_objects})
     end
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after objects: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
   local start_time_items = os.clock()
@@ -2245,6 +2263,9 @@ if config.expansions[expansion_to_process] then
     if pfDB and pfDB["items"] then
       table.insert(execution_times, {name = "items", time = end_time_items - start_time_items})
     end
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after items: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
   local start_time_refloot = os.clock()
@@ -2330,6 +2351,9 @@ if config.expansions[expansion_to_process] then
     if pfDB and pfDB["refloot"] then
       table.insert(execution_times, {name = "refloot", time = end_time_refloot - start_time_refloot})
     end
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after refloot: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
   -- ================================================================
@@ -3313,6 +3337,9 @@ if config.expansions[expansion_to_process] then
     else
       print("  ItemReq Summary: No item-target relationships found (may be normal for AzerothCore).")
     end
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after quests: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
 
@@ -3385,6 +3412,9 @@ if config.expansions[expansion_to_process] then
     if pfDB and pfDB["minimap"..exp] then
       table.insert(execution_times, {name = "minimap", time = end_time_minimap - start_time_minimap})
     end
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after minimap: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
   local start_time_meta = os.clock()
@@ -3552,6 +3582,9 @@ if config.expansions[expansion_to_process] then
     if pfDB and pfDB["meta"..exp] then
       table.insert(execution_times, {name = "meta", time = end_time_meta - start_time_meta})
     end
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after meta: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
   local start_time_locales = os.clock()
@@ -3871,6 +3904,9 @@ if config.expansions[expansion_to_process] then
     end
     local end_time_locales = os.clock()
     table.insert(execution_times, {name = "locales", time = end_time_locales - start_time_locales})
+    -- ДОБАВЬТЕ:
+    collectgarbage("collect")
+    print("  Memory cleanup after quest-locales: " .. math.floor(collectgarbage("count")) .. " KB")
   end
 
   do -- professions locales
@@ -3958,6 +3994,10 @@ if config.expansions[expansion_to_process] then
     end
   end
 
+      -- ДОБАВЬТЕ:
+      collectgarbage("collect")
+      print("  Memory cleanup after compression: " .. math.floor(collectgarbage("count")) .. " KB")
+
   -- ================================================================
   -- ZONES LOCALES EXTRACTION
   -- ================================================================
@@ -4008,6 +4048,9 @@ if config.expansions[expansion_to_process] then
           end
       end
   end
+      -- ДОБАВЬТЕ:
+      collectgarbage("collect")
+      print("  Memory cleanup after zone-locales: " .. math.floor(collectgarbage("count")) .. " KB")
 
   -- write down tables
   print("- writing database...")
@@ -4015,26 +4058,42 @@ if config.expansions[expansion_to_process] then
 
   mkdir(output)
   serialize(output .. string.format("areatrigger%s.lua", exp), "pfDB[\"areatrigger\"][\""..data.."\"]", pfDB["areatrigger"][data])
+  collectgarbage("collect")
   serialize(output .. string.format("units%s.lua", exp), "pfDB[\"units\"][\""..data.."\"]", pfDB["units"][data])
+  collectgarbage("collect")
   serialize(output .. string.format("objects%s.lua", exp), "pfDB[\"objects\"][\""..data.."\"]", pfDB["objects"][data])
+  collectgarbage("collect")
   serialize(output .. string.format("items%s.lua", exp), "pfDB[\"items\"][\""..data.."\"]", pfDB["items"][data])
+  collectgarbage("collect")
   serialize(output .. string.format("refloot%s.lua", exp), "pfDB[\"refloot\"][\""..data.."\"]", pfDB["refloot"][data])
+  collectgarbage("collect")
   serialize(output .. string.format("quests%s.lua", exp), "pfDB[\"quests\"][\""..data.."\"]", pfDB["quests"][data])
+  collectgarbage("collect")
   serialize(output .. string.format("quests-itemreq%s.lua", exp), "pfDB[\"quests-itemreq\"][\""..data.."\"]", pfDB["quests-itemreq"][data])
+  collectgarbage("collect")
   serialize(output .. string.format("zones%s.lua", exp), "pfDB[\"zones\"][\""..data.."\"]", pfDB["zones"][data])
+  collectgarbage("collect")
   serialize(output .. string.format("minimap%s.lua", exp), "pfDB[\"minimap"..exp.."\"]", pfDB["minimap"..exp])
+  collectgarbage("collect")
   serialize(output .. string.format("meta%s.lua", exp), "pfDB[\"meta"..exp.."\"]", pfDB["meta"..exp])
+  collectgarbage("collect")
 
   for loc in pairs(locales) do
     local locale = loc .. ( expansion ~= "vanilla"  and "-" .. expansion or "" )
 
     mkdir(output .. loc)
     serialize(output .. string.format("%s/units%s.lua", loc, exp), "pfDB[\"units\"][\""..locale.."\"]", pfDB["units"][locale])
+    collectgarbage("collect")
     serialize(output .. string.format("%s/objects%s.lua", loc, exp), "pfDB[\"objects\"][\""..locale.."\"]", pfDB["objects"][locale])
+    collectgarbage("collect")
     serialize(output .. string.format("%s/items%s.lua", loc, exp), "pfDB[\"items\"][\""..locale.."\"]", pfDB["items"][locale])
+    collectgarbage("collect")
     serialize(output .. string.format("%s/quests%s.lua", loc, exp), "pfDB[\"quests\"][\""..locale.."\"]", pfDB["quests"][locale])
+    collectgarbage("collect")
     serialize(output .. string.format("%s/professions%s.lua", loc, exp), "pfDB[\"professions\"][\""..locale.."\"]", pfDB["professions"][locale])
+    collectgarbage("collect")
     serialize(output .. string.format("%s/zones%s.lua", loc, exp), "pfDB[\"zones\"][\""..locale.."\"]", pfDB["zones"][locale])
+    collectgarbage("collect")
   end
 
   -- Create minimal empty init.lua to avoid 'block too big' error
