@@ -13,8 +13,8 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 6000           -- Лимит для того что тестируем
-local OTHER_LIMIT = 6000             -- Лимит для всего остального
+local FOCUS_LIMIT = 1           -- Лимит для того что тестируем
+local OTHER_LIMIT = 1             -- Лимит для всего остального
 local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
@@ -218,7 +218,6 @@ function serialize(filename, varname, data, indent, raw)
   -- Try to set larger buffer for better I/O performance (Lua 5.1+ only)
   if file.setvbuf then
     file:setvbuf("full", 8192)
-    print("setvbuf: 8192")
   end
 
   if raw then
@@ -2424,6 +2423,77 @@ if config.expansions[expansion_to_process] then
     pfDB["quests-itemreq"] = pfDB["quests-itemreq"] or {}
     pfDB["quests-itemreq"][data] = {}
 
+    -- AzerothCore-specific ItemReq extraction (execute ONCE before quest processing)
+    local function extract_itemreq_azerothcore()
+      if core ~= "acore" then
+        return 0 -- Skip if not AzerothCore
+      end
+
+      print("  Extracting ItemReq for AzerothCore...")
+      local extracted_count = 0
+
+      -- Mechanism 1: NPC-targets via conditions (covers most cases)
+      local npc_query = [[
+        SELECT i.entry, i.spellid_1, c.ConditionValue2
+        FROM item_template i
+        JOIN conditions c ON c.SourceEntry = i.spellid_1
+        WHERE i.class = 12 AND i.spellid_1 > 0
+          AND c.SourceTypeOrReferenceId = 17
+          AND c.ConditionTypeOrReference = 31
+          AND c.ConditionValue1 = 3
+      ]]
+
+      local npc_result = mysql:execute(npc_query)
+      if npc_result then
+        local npc_row = {}
+        while npc_result:fetch(npc_row) do
+          local itemID = tonumber(npc_row[1])
+          local spellID = tonumber(npc_row[2])
+          local npcID = tonumber(npc_row[3])
+
+          if itemID and spellID and npcID then
+            pfDB["quests-itemreq"][data][itemID] = pfDB["quests-itemreq"][data][itemID] or {}
+            pfDB["quests-itemreq"][data][itemID][npcID] = spellID
+            extracted_count = extracted_count + 1
+          end
+        end
+      end
+
+      -- Mechanism 2: GameObject-targets via smart_scripts
+      local go_query = [[
+        SELECT i.entry, i.spellid_1, s.entryorguid
+        FROM item_template i
+        JOIN smart_scripts s ON s.event_param1 = i.spellid_1
+        WHERE i.class = 12 AND i.spellid_1 > 0
+          AND s.source_type = 1 AND s.event_type = 8
+      ]]
+
+      local go_result = mysql:execute(go_query)
+      if go_result then
+        local go_row = {}
+        while go_result:fetch(go_row) do
+          local itemID = tonumber(go_row[1])
+          local spellID = tonumber(go_row[2])
+          local goID = tonumber(go_row[3])
+
+          if itemID and spellID and goID then
+            pfDB["quests-itemreq"][data][itemID] = pfDB["quests-itemreq"][data][itemID] or {}
+            pfDB["quests-itemreq"][data][itemID][-goID] = spellID  -- Negative for GameObjects
+            extracted_count = extracted_count + 1
+          end
+        end
+      end
+
+      if extracted_count > 0 then
+        print("    AzerothCore ItemReq: Found " .. extracted_count .. " item-target relationships")
+      end
+
+      return extracted_count
+    end
+
+    -- Execute AzerothCore ItemReq extraction once
+    local azerothcore_itemreq_count = extract_itemreq_azerothcore()
+
     -- iterate over all quests (LIMITED FOR TESTING)
     local quest_template = {}
     local quest_pk_column = (core == "acore" and "ID" or "entry") -- Added for AzerothCore
@@ -2943,6 +3013,7 @@ if config.expansions[expansion_to_process] then
         end
       end
 
+
       -- scan all involved questitems for spells that require or are required by gameobjects, units or zones
       -- ITEMREQ SECTION FIXES FOR AZEROTHCORE:
       -- 1. Uses spell_scripts instead of spell_script_target
@@ -3173,7 +3244,7 @@ if config.expansions[expansion_to_process] then
           end
         end
         if itemreq_count > 0 then
-          print("  DEBUG: Found " .. itemreq_count .. " item-target relationships for this quest batch.")
+--           print("  DEBUG: Found " .. itemreq_count .. " item-target relationships for this quest batch.")
         end
 
         -- item is used to open an object (DISABLED - requires pfquest)
@@ -3336,7 +3407,7 @@ if config.expansions[expansion_to_process] then
 
     -- Final itemreq summary
     local total_itemreq_count = 0
-    for itemid, targets in pairs(pfDB["quests-itemreq"]["data"] or {}) do
+    for itemid, targets in pairs(pfDB["quests-itemreq"][data] or {}) do
       for targetid, spellid in pairs(targets) do
         total_itemreq_count = total_itemreq_count + 1
       end
