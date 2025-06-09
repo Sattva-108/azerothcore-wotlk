@@ -328,6 +328,16 @@ function serialize_value(file, value, indent)
             end
             small_line = small_line .. "}"
             line = line .. small_line
+          elseif is_simple_array_of_primitives(v) then
+            -- Handle simple arrays of primitives that are too large for smalltable (>10 elements)
+            local medium_line = "{"
+            local medium_init
+            for _, sv in ipairs(v) do
+              medium_line = medium_line .. (medium_init and "," or "") .. tostring(sv)
+              if not medium_init then medium_init = true end
+            end
+            medium_line = medium_line .. "}"
+            line = line .. medium_line
           else
             -- Handle other nested tables compactly
             local nested_line = "{"
@@ -348,8 +358,18 @@ function serialize_value(file, value, indent)
                   end
                   inner_small = inner_small .. "}"
                   nested_line = nested_line .. inner_small
+                elseif is_simple_array_of_primitives(nv) then
+                  -- Handle simple arrays of primitives that are too large for smalltable (>10 elements)
+                  local medium_array = "{"
+                  local medium_init
+                  for _, isv in ipairs(nv) do
+                    medium_array = medium_array .. (medium_init and "," or "") .. tostring(isv)
+                    if not medium_init then medium_init = true end
+                  end
+                  medium_array = medium_array .. "}"
+                  nested_line = nested_line .. medium_array
                 else
-                  -- Fallback for complex tables that aren't smalltables
+                  -- Fallback for complex tables that aren't smalltables or simple arrays
                   nested_line = nested_line .. "{}"
                 end
               else
@@ -447,6 +467,27 @@ function smalltable(tbl)
   end
 
   return true
+end
+
+-- Check if table is a simple array of primitives (numbers, strings, booleans)
+-- without nested tables, regardless of size
+function is_simple_array_of_primitives(tbl)
+  local size = tblsize(tbl)
+  if size < 1 then return false end
+
+  -- Check if all keys are sequential numbers starting from 1
+  for i = 1, size do
+    if tbl[i] == nil then return false end
+    if type(tbl[i]) == "table" then return false end
+  end
+
+  -- Verify no extra non-sequential keys exist
+  local count = 0
+  for _ in pairs(tbl) do
+    count = count + 1
+  end
+  
+  return count == size
 end
 
 -- Check if table is coords-like structure: {[1]={...}, [2]={...}, ...}
