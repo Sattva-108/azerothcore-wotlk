@@ -3447,29 +3447,7 @@ if config.expansions[expansion_to_process] then
 --           print("  DEBUG: Found " .. itemreq_count .. " item-target relationships for this quest batch.")
         end
 
-        -- item is used to open an object (DISABLED - requires pfquest)
-        for id in pairs(items) do
-          if id > 0 then
-            -- DISABLED: This requires pfquest.Lock table which is not available in AzerothCore
-            if false then -- Disable pfquest dependency
-              local object_items = {}
-              local query = mysql:execute([[
-                SELECT gameobject_template.entry AS object
-                FROM gameobject_template, pfquest.Lock_]]..expansion..[[
-                WHERE type = 10 and data0 = pfquest.Lock_]]..expansion..[[.id
-                AND pfquest.Lock_]]..expansion..[[.data = ]] .. id .. [[
-              ]])
-              if query then
-                while query:fetch(object_items, "a") do
-                  if debug("quests_itemobject") then break end
-                  pfDB["quests-itemreq"][data][id] = pfDB["quests-itemreq"][data][id] or {}
-                  pfDB["quests-itemreq"][data][id][-tonumber(object_items.object)] = 0
-                  itemreq[id] = true
-                end
-              end
-            end
-          end
-        end
+        -- NOTE: Lock-based object logic removed (redundant with RequiresSpellFocus logic)
 
         -- scan for related areatriggers
         local areatrigger_involvedrelation = {}
