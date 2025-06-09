@@ -503,21 +503,84 @@ function is_quest_table(tbl)
 end
 
 -- Table subtraction function
-function tablesubstract(t1, t2)
+function tablesubstract(t1, t2, parent_key_path)
+  parent_key_path = parent_key_path or ""
   if not t1 or not t2 then return t1 or {} end
   local result = {}
   for k, v in pairs(t1) do
+    local current_key_path = parent_key_path .. "." .. tostring(k)
+
+    -- DEBUG: Universal tracking for quest 10502 related keys
+    if (type(k) == "number" and k == 10502) or 
+       (k == "obj" and string.find(parent_key_path, "10502")) or 
+       (k == "U" and string.find(parent_key_path, "10502%.obj")) then
+      print(string.format("DEBUG tablesubstract: Path '%s', Key '%s'", parent_key_path, tostring(k)))
+      local t1_val_str = type(v) == "table" and ("Table, size " .. tblsize(v)) or tostring(v)
+      local t2_val_str = (t2 and t2[k] and (type(t2[k]) == "table" and ("Table, size " .. tblsize(t2[k])) or tostring(t2[k]))) or "nil/missing"
+      print("  t1[k]: " .. t1_val_str)
+      print("  t2[k]: " .. t2_val_str)
+      if k == "U" and string.find(parent_key_path, "10502%.obj") then
+        if type(v) == "table" and #v > 0 then 
+          print("    t1.U content: " .. table.concat(v, ",")) 
+        end
+        if t2 and t2[k] and type(t2[k]) == "table" and #t2[k] > 0 then 
+          print("    t2.U content: " .. table.concat(t2[k], ",")) 
+        end
+      end
+    end
+
     if not t2[k] or (type(v) == "table" and type(t2[k]) == "table") then
       if type(v) == "table" and type(t2[k]) == "table" then
-        local sub = tablesubstract(v, t2[k])
+        -- DEBUG: Before recursive call for critical keys
+        if (k == 10502 or k == "obj" or k == "U") and type(v) == "table" then
+          print(string.format("DEBUG tablesubstract: About to recurse for key '%s'", tostring(k)))
+        end
+        
+        local sub = tablesubstract(v, t2[k], current_key_path)
+        
+        -- DEBUG: After recursive call for critical keys
+        if (k == 10502 or k == "obj" or k == "U") and type(v) == "table" then
+          local has_content = next(sub) ~= nil
+          print(string.format("DEBUG tablesubstract: Recursion for key '%s' returned %s", tostring(k), has_content and "CONTENT" or "EMPTY"))
+          if k == "obj" and sub.U then
+            print("  obj recursion result contains U:", table.concat(sub.U, ", "))
+          end
+        end
+        
         if next(sub) then
           result[k] = sub
+          -- DEBUG: Track what gets included in result for U arrays
+          if k == "U" and type(sub) == "table" and sub[1] and type(sub[1]) == "number" then
+            print("DEBUG tablesubstract obj.U RESULT after recursion:", table.concat(sub, ", "))
+          end
+        else
+          -- DEBUG: Track when sub result is empty and nothing gets added
+          if k == "U" and type(v) == "table" and v[1] and type(v[1]) == "number" then
+            print("DEBUG tablesubstract obj.U EMPTY RESULT - nothing added to final result")
+          elseif k == "obj" then
+            print("DEBUG tablesubstract obj EMPTY RESULT - nothing added to final result")
+          elseif k == 10502 then
+            print("DEBUG tablesubstract Q10502 EMPTY RESULT - nothing added to final result")
+          end
         end
       elseif not t2[k] then
         result[k] = v
+        -- DEBUG: Track direct assignment when t2[k] doesn't exist
+        if k == "U" and type(v) == "table" and v[1] and type(v[1]) == "number" then
+          print("DEBUG tablesubstract obj.U DIRECT ASSIGNMENT:", table.concat(v, ", "))
+        end
       end
     elseif v ~= t2[k] then
       result[k] = v
+      -- DEBUG: Track assignment when values differ
+      if k == "U" and type(v) == "table" and v[1] and type(v[1]) == "number" then
+        print("DEBUG tablesubstract obj.U DIFFERENT VALUES:", table.concat(v, ", "))
+      end
+    else
+      -- DEBUG: Track when identical values are excluded
+      if k == "U" and type(v) == "table" and v[1] and type(v[1]) == "number" then
+        print("DEBUG tablesubstract obj.U IDENTICAL - EXCLUDED from result")
+      end
     end
   end
   return result
@@ -3152,6 +3215,14 @@ if config.expansions[expansion_to_process] then
       -- temporary add provided quest item
       items[srcitem] = true
 
+      -- DEBUG: Check quest data for problematic quests
+      if entry == 10502 or entry == 10503 or entry == 10505 or entry == 13789 or entry == 13791 then
+        print("DEBUG Q" .. entry .. ": current_quest_data.RequiredNpcOrGo1 =", current_quest_data.RequiredNpcOrGo1)
+        print("DEBUG Q" .. entry .. ": current_quest_data.RequiredNpcOrGo2 =", current_quest_data.RequiredNpcOrGo2)
+        print("DEBUG Q" .. entry .. ": current_quest_data.RequiredNpcOrGo3 =", current_quest_data.RequiredNpcOrGo3)
+        print("DEBUG Q" .. entry .. ": current_quest_data.RequiredNpcOrGo4 =", current_quest_data.RequiredNpcOrGo4)
+      end
+
       -- Mapping for ReqCreatureOrGOId, ReqItemId, ReqSourceId based on C config or defaults
       local req_npc_go_id_base = C.ReqCreatureOrGOId or "RequiredNpcOrGo" -- Defaulting to AC naming
       local req_item_id_base = C.ReqItemId or "RequiredItemId" -- Defaulting to AC naming
@@ -3161,6 +3232,17 @@ if config.expansions[expansion_to_process] then
         local req_npc_go_col = req_npc_go_id_base .. i
         local req_item_col = req_item_id_base .. i
         local req_source_col = req_source_id_base .. i -- Might be unused if AC has no direct map
+
+        -- DEBUG: Detailed check for problematic quests
+        if (entry == 10502 or entry == 10503 or entry == 10505 or entry == 13789 or entry == 13791) and req_npc_go_col == "RequiredNpcOrGo1" then
+          local val = current_quest_data[req_npc_go_col]
+          print("DEBUG Q" .. entry .. " Check: req_npc_go_col =", req_npc_go_col, "Value from DB =", val, "tonumber(val) =", tonumber(val))
+          if val and tonumber(val) > 0 then
+            print("DEBUG Q" .. entry .. " Check: Adding unit", tonumber(val))
+          else
+            print("DEBUG Q" .. entry .. " Check: NOT adding unit", tonumber(val))
+          end
+        end
 
         if current_quest_data[req_npc_go_col] and tonumber(current_quest_data[req_npc_go_col]) > 0 then
           units[tonumber(current_quest_data[req_npc_go_col])] = true
@@ -3198,6 +3280,14 @@ if config.expansions[expansion_to_process] then
         end
       end
 
+      -- DEBUG: Track units before kill credit processing
+      if entry == 10502 or entry == 10503 or entry == 10505 or entry == 13789 or entry == 13791 then
+        print("DEBUG Q" .. entry .. " BEFORE kill credits:")
+        for unit_id in pairs(units) do
+          print("  Unit:", unit_id)
+        end
+      end
+
       -- USE BATCH KILL CREDIT DATA - ITERATIVE APPROACH (100% accurate, eliminates 30k+ individual queries!)
       if core ~= "vmangos" then
         -- Build queue of units to process (mimics original growing loop behavior)
@@ -3219,10 +3309,23 @@ if config.expansions[expansion_to_process] then
                   units[credit_entry] = true
                   -- CRITICAL: Add newly found units to processing queue (reproduces original behavior)
                   table.insert(units_to_process, credit_entry)
+                  
+                  -- DEBUG: Track when new units are added via kill credits
+                  if entry == 10502 or entry == 10503 or entry == 10505 or entry == 13789 or entry == 13791 then
+                    print("DEBUG Q" .. entry .. " ADDED via kill credit: unit " .. credit_entry .. " from " .. current_id)
+                  end
                 end
               end
             end
           end
+        end
+      end
+
+      -- DEBUG: Track units after kill credit processing  
+      if entry == 10502 or entry == 10503 or entry == 10505 or entry == 13789 or entry == 13791 then
+        print("DEBUG Q" .. entry .. " AFTER kill credits:")
+        for unit_id in pairs(units) do
+          print("  Unit:", unit_id)
         end
       end
 
@@ -3504,12 +3607,45 @@ if config.expansions[expansion_to_process] then
       end
 
           do -- write objectives
+              -- DEBUG: Final writing stage  
+              if entry == 10502 or entry == 10503 or entry == 10505 or entry == 13789 or entry == 13791 then
+                print("DEBUG Q" .. entry .. " FINAL WRITING:")
+                print("  tblsize(units) =", tblsize(units))
+                print("  units table contents:")
+                for unit_id, value in pairs(units) do
+                  print("    [" .. unit_id .. "] = " .. tostring(value))
+                end
+              end
+
               if tblsize(units) > 0 or tblsize(objects) > 0 or tblsize(items) > 0 or tblsize(itemreq) > 0 or tblsize(areatrigger) > 0 or tblsize(zones) > 0 then
                   pfDB["quests"][data][entry]["obj"] = pfDB["quests"][data][entry]["obj"] or {}
+
+                  -- DEBUG: Check if we enter the units writing loop
+                  if entry == 10502 or entry == 10503 or entry == 10505 or entry == 13789 or entry == 13791 then
+                    print("DEBUG Q" .. entry .. " About to iterate units with opairs:")
+                  end
 
                   for id in opairs(units) do
                       pfDB["quests"][data][entry]["obj"]["U"] = pfDB["quests"][data][entry]["obj"]["U"] or {}
                       table.insert(pfDB["quests"][data][entry]["obj"]["U"], tonumber(id))
+                      
+                      -- DEBUG: Track each unit being written
+                      if entry == 10502 or entry == 10503 or entry == 10505 or entry == 13789 or entry == 13791 then
+                        print("DEBUG Q" .. entry .. " Writing unit:", id, "tonumber(id):", tonumber(id))
+                      end
+                  end
+
+                  -- DEBUG: Check final result
+                  if entry == 10502 or entry == 10503 or entry == 10505 or entry == 13789 or entry == 13791 then
+                    local final_units = pfDB["quests"][data][entry]["obj"]["U"] 
+                    print("DEBUG Q" .. entry .. " FINAL obj.U:")
+                    if final_units then
+                      for i, unit_id in ipairs(final_units) do
+                        print("  [" .. i .. "] = " .. unit_id)
+                      end
+                    else
+                      print("  obj.U is nil!")
+                    end
                   end
 
                   for id in opairs(objects) do
@@ -4268,7 +4404,56 @@ if config.expansions[expansion_to_process] then
     pfDB["objects"][data] = tablesubstract(pfDB["objects"][data], pfDB["objects"]["data"])
     pfDB["items"][data] = tablesubstract(pfDB["items"][data], pfDB["items"]["data"])
     pfDB["refloot"][data] = tablesubstract(pfDB["refloot"][data], pfDB["refloot"]["data"])
-    pfDB["quests"][data] = tablesubstract(pfDB["quests"][data], pfDB["quests"]["data"])
+    -- DEBUG: Comprehensive check before tablesubstract for quests
+    print("DEBUG BEFORE tablesubstract for quests:")
+    if pfDB["quests"][data] and pfDB["quests"][data][10502] then
+        print("DEBUG Q10502 WOTLK (data) BEFORE tablesubstract:")
+        if pfDB["quests"][data][10502].obj and pfDB["quests"][data][10502].obj.U then
+            print("  obj.U exists, size:", #pfDB["quests"][data][10502].obj.U)
+            for idx, val_unit in ipairs(pfDB["quests"][data][10502].obj.U) do
+                print("    U[" .. idx .. "]=" .. val_unit)
+            end
+        else
+            print("  obj.U is missing or not an array.")
+        end
+    else
+        print("DEBUG Q10502 WOTLK (data) BEFORE tablesubstract: Quest 10502 not found or obj.U structure is problematic.")
+    end
+
+    if pfDB["quests"]["data"] and pfDB["quests"]["data"][10502] then
+        print("DEBUG Q10502 VANILLA (data) BEFORE tablesubstract:")
+        if pfDB["quests"]["data"][10502].obj and pfDB["quests"]["data"][10502].obj.U then
+            print("  obj.U exists, size:", #pfDB["quests"]["data"][10502].obj.U)
+            for idx, val_unit in ipairs(pfDB["quests"]["data"][10502].obj.U) do
+                print("    U[" .. idx .. "]=" .. val_unit)
+            end
+        else
+            print("  obj.U is missing or not an array.")
+        end
+    else
+        print("DEBUG Q10502 VANILLA (data) BEFORE tablesubstract: Quest 10502 not found in vanilla or obj.U structure is problematic.")
+    end
+
+    pfDB["quests"][data] = tablesubstract(pfDB["quests"][data], pfDB["quests"]["data"], "pfDB.quests")
+
+    -- DEBUG: Comprehensive check after tablesubstract for quests
+    print("DEBUG AFTER tablesubstract for quests:")
+    if pfDB["quests"][data] and pfDB["quests"][data][10502] then
+        print("DEBUG Q10502 WOTLK (data) AFTER tablesubstract:")
+        if pfDB["quests"][data][10502].obj and pfDB["quests"][data][10502].obj.U then
+            print("  obj.U exists, size:", #pfDB["quests"][data][10502].obj.U)
+            for idx, val_unit in ipairs(pfDB["quests"][data][10502].obj.U) do
+                print("    U[" .. idx .. "]=" .. val_unit)
+            end
+            if #pfDB["quests"][data][10502].obj.U == 0 then
+                print("  obj.U IS NOW EMPTY!")
+            end
+        else
+            print("  obj.U IS NOW MISSING or not an array!")
+        end
+    else
+        print("DEBUG Q10502 WOTLK (data) AFTER tablesubstract: Quest 10502 is now missing!")
+    end
     pfDB["quests-itemreq"][data] = tablesubstract(pfDB["quests-itemreq"][data], pfDB["quests-itemreq"]["data"])
     pfDB["zones"][data] = tablesubstract(pfDB["zones"][data], pfDB["zones"]["data"])
     pfDB["minimap"..exp] = tablesubstract(pfDB["minimap"..exp], pfDB["minimap"])
