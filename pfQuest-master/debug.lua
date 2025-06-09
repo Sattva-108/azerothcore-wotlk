@@ -1718,3 +1718,401 @@ SlashCmdList["PFALLVALIDATE"] = function()
     
     print("=== End pfQuest Full Validation ===")
 end
+
+-- === ITEMREQ QUEST SEARCH ===
+local function searchQuestsWithItemReq(searchTerm)
+    if not pfDB or not pfDB["quests-itemreq"] or not pfDB["quests-itemreq"]["data"] then
+        print(SKULL .. " No itemreq data found!")
+        return {}
+    end
+    
+    local currentZone = GetRealZoneText()
+    local currentZoneId = nil
+    
+    -- Find current zone ID from zones database (try multiple approaches)
+    if pfDB["zones"] and pfDB["zones"]["loc"] then
+        for zoneId, zoneName in pairs(pfDB["zones"]["loc"]) do
+            if zoneName == currentZone then
+                currentZoneId = zoneId
+                break
+            end
+        end
+    end
+    
+    -- Debug: print zone matching
+    print("DEBUG: Current zone '" .. currentZone .. "' -> Zone ID: " .. (currentZoneId or "NOT FOUND"))
+    
+    -- If no exact match, try partial matching
+    if not currentZoneId and pfDB["zones"] and pfDB["zones"]["loc"] then
+        local currentZoneLower = string.lower(currentZone)
+        for zoneId, zoneName in pairs(pfDB["zones"]["loc"]) do
+            if string.find(string.lower(zoneName), currentZoneLower) or string.find(currentZoneLower, string.lower(zoneName)) then
+                currentZoneId = zoneId
+                print("DEBUG: Partial match found: '" .. zoneName .. "' -> Zone ID: " .. zoneId)
+                break
+            end
+        end
+    end
+    
+    local results = {}
+    local searchLower = searchTerm and string.lower(searchTerm) or ""
+    
+    -- Search through all items with itemreq
+    for itemId, targets in pairs(pfDB["quests-itemreq"]["data"]) do
+        local itemName = ""
+        
+        -- Get item name
+        if pfDB["items"] and pfDB["items"]["loc"] and pfDB["items"]["loc"][itemId] then
+            itemName = pfDB["items"]["loc"][itemId]
+        else
+            itemName = "Item " .. itemId
+        end
+        
+        -- Check if item matches search term
+        local matches = not searchTerm or 
+                       string.find(string.lower(itemName), searchLower) or
+                       tostring(itemId) == searchTerm
+        
+        if matches then
+            -- Find quests that use this item
+            local questsUsingItem = {}
+            
+            if pfDB["quests"] and pfDB["quests"]["data"] then
+                for questId, quest in pairs(pfDB["quests"]["data"]) do
+                    if quest.obj and quest.obj.IR then
+                        for _, reqItemId in ipairs(quest.obj.IR) do
+                            if reqItemId == itemId then
+                                table.insert(questsUsingItem, questId)
+                            end
+                        end
+                    end
+                end
+            end
+            
+            -- Check zones for each quest
+            for _, questId in ipairs(questsUsingItem) do
+                local quest = pfDB["quests"]["data"][questId]
+                local questName = "Quest " .. questId
+                local isInCurrentZone = false
+                local questZones = {}
+                
+                -- Get quest name
+                if pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][questId] then
+                    local questData = pfDB["quests"]["loc"][questId]
+                    if type(questData) == "table" and questData.T then
+                        questName = questData.T
+                    elseif type(questData) == "string" then
+                        questName = questData
+                    end
+                end
+                
+                -- Check quest starter zones and objective zones
+                if quest then
+                    -- Check quest starters
+                    if quest.start then
+                        if quest.start.U then
+                            for _, unitId in ipairs(quest.start.U) do
+                                local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
+                                if unit and unit.coords then
+                                    for _, coord in ipairs(unit.coords) do
+                                        local zoneId = coord[3]
+                                        questZones[zoneId] = true
+                                        if zoneId == currentZoneId then
+                                            isInCurrentZone = true
+                                            print("DEBUG: Quest " .. questId .. " starter NPC " .. unitId .. " found in current zone " .. zoneId)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        
+                        if quest.start.O then
+                            for _, objectId in ipairs(quest.start.O) do
+                                local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId]
+                                if obj and obj.coords then
+                                    for _, coord in ipairs(obj.coords) do
+                                        local zoneId = coord[3]
+                                        questZones[zoneId] = true
+                                        if zoneId == currentZoneId then
+                                            isInCurrentZone = true
+                                            print("DEBUG: Quest " .. questId .. " starter Object " .. objectId .. " found in current zone " .. zoneId)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    
+                    -- Also check quest objectives for items that might be used in current zone
+                    if quest.obj then
+                        if quest.obj.U then
+                            for _, unitId in ipairs(quest.obj.U) do
+                                local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][unitId]
+                                if unit and unit.coords then
+                                    for _, coord in ipairs(unit.coords) do
+                                        local zoneId = coord[3]
+                                        questZones[zoneId] = true
+                                        if zoneId == currentZoneId then
+                                            isInCurrentZone = true
+                                            print("DEBUG: Quest " .. questId .. " objective NPC " .. unitId .. " found in current zone " .. zoneId)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                        
+                        if quest.obj.O then
+                            for _, objectId in ipairs(quest.obj.O) do
+                                local obj = pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId]
+                                if obj and obj.coords then
+                                    for _, coord in ipairs(obj.coords) do
+                                        local zoneId = coord[3]
+                                        questZones[zoneId] = true
+                                        if zoneId == currentZoneId then
+                                            isInCurrentZone = true
+                                            print("DEBUG: Quest " .. questId .. " objective Object " .. objectId .. " found in current zone " .. zoneId)
+                                        end
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                
+                table.insert(results, {
+                    questId = questId,
+                    questName = questName,
+                    itemId = itemId,
+                    itemName = itemName,
+                    targets = targets,
+                    isInCurrentZone = isInCurrentZone,
+                    zones = questZones
+                })
+            end
+        end
+    end
+    
+    -- Sort results: current zone first, then by quest name
+    table.sort(results, function(a, b)
+        if a.isInCurrentZone ~= b.isInCurrentZone then
+            return a.isInCurrentZone
+        end
+        return a.questName < b.questName
+    end)
+    
+    return results, currentZone
+end
+
+-- Command: /pfi [search_term]
+SLASH_PFI1 = "/pfi"
+SlashCmdList["PFI"] = function(msg)
+    local searchTerm = msg and msg ~= "" and msg or nil
+    local results, currentZone = searchQuestsWithItemReq(searchTerm)
+    
+    print("=== pfQuest ItemReq Debug ===")
+    print("Zone: " .. (currentZone or "Unknown"))
+    print("Quests: " .. #results)
+    print("")
+    
+    if #results == 0 then
+        print("No quests found with itemreq data" .. (searchTerm and " matching '" .. searchTerm .. "'" or ""))
+        print("=== End Debug ===")
+        return
+    end
+    
+    -- Limit to 15 results
+    local maxResults = math.min(#results, 15)
+    
+    for i = 1, maxResults do
+        local result = results[i]
+        
+        print("[" .. result.questId .. "] " .. result.questName)
+        print(" - Item: " .. result.itemName .. " (" .. result.itemId .. ")")
+        
+        -- Show targets
+        local targetCount = 0
+        for targetId, spellId in pairs(result.targets) do
+            targetCount = targetCount + 1
+            if targetCount > 3 then -- Limit targets per quest
+                break
+            end
+            
+            local targetName = "Unknown"
+            
+            if targetId > 0 then
+                -- NPC target
+                if pfDB["units"] and pfDB["units"]["loc"] and pfDB["units"]["loc"][targetId] then
+                    targetName = pfDB["units"]["loc"][targetId]
+                else
+                    targetName = "Unit " .. targetId
+                end
+            else
+                -- GameObject target
+                local objId = math.abs(targetId)
+                if pfDB["objects"] and pfDB["objects"]["loc"] and pfDB["objects"]["loc"][objId] then
+                    targetName = pfDB["objects"]["loc"][objId]
+                else
+                    targetName = "Object " .. objId
+                end
+            end
+            
+            print("   -> Target: " .. targetName)
+            print("      SpellID: " .. spellId)
+        end
+        
+        print("")
+    end
+    
+    if #results > maxResults then
+        print("... and " .. (#results - maxResults) .. " more results")
+        print("")
+    end
+    
+    print("Use /pfq <ID> for full quest info")
+    print("=== End Debug ===")
+end
+
+-- === RARE CREATURES SEARCH ===
+local function searchRareCreatures(searchTerm)
+    if not pfDB or not pfDB["meta"] or not pfDB["meta"]["rares"] then
+        return {}, "No Data"
+    end
+    
+    local currentZone = GetRealZoneText()
+    local currentZoneId = nil
+    
+    -- Find current zone ID
+    if pfDB["zones"] and pfDB["zones"]["loc"] then
+        for zoneId, zoneName in pairs(pfDB["zones"]["loc"]) do
+            if zoneName == currentZone then
+                currentZoneId = zoneId
+                break
+            end
+        end
+    end
+    
+    local results = {}
+    local searchLower = searchTerm and string.lower(searchTerm) or ""
+    
+    -- Search through rares
+    for rareId, rareLevel in pairs(pfDB["meta"]["rares"]) do
+        local rareName = ""
+        
+        -- Get rare name
+        if pfDB["units"] and pfDB["units"]["loc"] and pfDB["units"]["loc"][rareId] then
+            rareName = pfDB["units"]["loc"][rareId]
+        else
+            rareName = "Rare " .. rareId
+        end
+        
+        -- Check if rare matches search term
+        local matches = not searchTerm or 
+                       string.find(string.lower(rareName), searchLower) or
+                       tostring(rareId) == searchTerm
+        
+        if matches then
+            local isInCurrentZone = false
+            local rareZones = {}
+            
+            -- Check rare locations
+            local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][rareId]
+            if unit and unit.coords then
+                for _, coord in ipairs(unit.coords) do
+                    local zoneId = coord[3]
+                    rareZones[zoneId] = true
+                    if zoneId == currentZoneId then
+                        isInCurrentZone = true
+                    end
+                end
+            end
+            
+            table.insert(results, {
+                rareId = rareId,
+                rareName = rareName,
+                level = rareLevel,
+                coords = unit and unit.coords or {},
+                isInCurrentZone = isInCurrentZone,
+                zones = rareZones
+            })
+        end
+    end
+    
+    -- Sort results: current zone first, then by level desc, then by name
+    table.sort(results, function(a, b)
+        if a.isInCurrentZone ~= b.isInCurrentZone then
+            return a.isInCurrentZone
+        end
+        if a.level ~= b.level then
+            return a.level > b.level
+        end
+        return a.rareName < b.rareName
+    end)
+    
+    return results, currentZone
+end
+
+-- Command: /pfr [search_term]
+SLASH_PFR1 = "/pfr"
+SlashCmdList["PFR"] = function(msg)
+    local searchTerm = msg and msg ~= "" and msg or nil
+    local results, currentZone = searchRareCreatures(searchTerm)
+    
+    print("=== pfQuest Rares Debug ===")
+    print("Zone: " .. (currentZone or "Unknown"))
+    print("Rares: " .. #results)
+    print("")
+    
+    if #results == 0 then
+        print("No rare creatures found" .. (searchTerm and " matching '" .. searchTerm .. "'" or ""))
+        print("=== End Debug ===")
+        return
+    end
+    
+    -- Limit to 15 results
+    local maxResults = math.min(#results, 15)
+    
+    for i = 1, maxResults do
+        local result = results[i]
+        
+        print("[" .. result.rareId .. "] " .. result.rareName .. " (Level " .. result.level .. ")")
+        
+        -- Show first few spawn locations
+        local coordCount = 0
+        for _, coord in ipairs(result.coords) do
+            coordCount = coordCount + 1
+            if coordCount > 2 then -- Limit locations per rare
+                break
+            end
+            
+            local zoneId = coord[3]
+            local zoneName = "Unknown Zone"
+            
+            if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                zoneName = pfDB["zones"]["loc"][zoneId]
+            end
+            
+            print("   -> Location: " .. zoneName .. " (" .. coord[1] .. ", " .. coord[2] .. ")")
+        end
+        
+        if #result.coords > 2 then
+            print("   -> ... and " .. (#result.coords - 2) .. " more locations")
+        end
+        
+        print("")
+    end
+    
+    if #results > maxResults then
+        print("... and " .. (#results - maxResults) .. " more rares")
+        print("")
+    end
+    
+    print("Use /pfq rare_id for more info")
+    print("=== End Debug ===")
+end
+
+print("|cff00FF00pfQuest Debug Commands:|r")
+print("|cff00BFFF/pfi [search]|r - Search quests with item requirements")
+print("|cff00BFFF/pfr [search]|r - Search rare creatures")
+print("|cff00BFFF/pfbrowser|r - Open visual debug browser")
+print("|cff00BFFF/pftest|r - Test working quests")
+print("|cff00BFFF/pfq <ID>|r - Show specific quest")

@@ -31,4 +31,5 @@ init\ruRU-tbc.xml
 init\ptBR-tbc.xml
 
 debug.lua
+toolbox\pfquest_debug_browser.lua
 init\addon.xml

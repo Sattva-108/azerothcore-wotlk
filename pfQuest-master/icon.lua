@@ -4,7 +4,7 @@ pfBrowserIcon:SetClampedToScreen(true)
 pfBrowserIcon:SetMovable(true)
 pfBrowserIcon:EnableMouse(true)
 pfBrowserIcon:RegisterForDrag('LeftButton')
-pfBrowserIcon:RegisterForClicks('LeftButtonUp', 'RightButtonUp')
+pfBrowserIcon:RegisterForClicks('LeftButtonUp', 'RightButtonUp', 'MiddleButtonUp')
 pfBrowserIcon:SetScript("OnDragStart", function()
   if IsShiftKeyDown() then
     this:StartMoving()
@@ -14,6 +14,12 @@ pfBrowserIcon:SetScript("OnDragStop", function() this:StopMovingOrSizing() end)
 pfBrowserIcon:SetScript("OnClick", function()
   if arg1 == "RightButton" then
     if pfQuestConfig:IsShown() then pfQuestConfig:Hide() else pfQuestConfig:Show() end
+  elseif arg1 == "MiddleButton" then
+    if ToggleDebugBrowser then
+      ToggleDebugBrowser()
+    else
+      DEFAULT_CHAT_FRAME:AddMessage("|cffff3333Debug browser not loaded. Use /pfbrowser to open.|r")
+    end
   else
     if pfBrowser:IsShown() then pfBrowser:Hide() else pfBrowser:Show() end
   end
@@ -24,6 +30,7 @@ pfBrowserIcon:SetScript("OnEnter", function()
   GameTooltip:SetText("pfQuest")
   GameTooltip:AddDoubleLine(pfQuest_Loc["Left-Click"], pfQuest_Loc["Open Browser"], 1, 1, 1, 1, 1, 1)
   GameTooltip:AddDoubleLine(pfQuest_Loc["Right-Click"], pfQuest_Loc["Open Configuration"], 1, 1, 1, 1, 1, 1)
+  GameTooltip:AddDoubleLine("Middle-Click", "Open Debug Browser", 1, 1, 1, 1, 1, 1)
   GameTooltip:AddDoubleLine(pfQuest_Loc["Shift-Click"], pfQuest_Loc["Move Button"], 1, 1, 1, 1, 1, 1)
   GameTooltip:Show()
 end)
