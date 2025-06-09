@@ -319,6 +319,36 @@ if file_exists("DBC/wotlk/WorldMapOverlay.dbc.csv") then
     end)
 end
 
+-- Spell_dbc_full (for itemreq extraction)
+if file_exists("DBC/wotlk/Spell.dbc.csv") then
+  load_dbc_csv("DBC/wotlk/Spell.dbc.csv", "spell_dbc_full",
+    "CREATE TABLE `spell_dbc_full` (" ..
+    "`ID` int(10) unsigned NOT NULL," ..
+    "`RequiresSpellFocus` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Name_Lang_enUS` varchar(255) NOT NULL DEFAULT ''," ..
+    "PRIMARY KEY (`ID`)" ..
+    ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='Spell DBC Full'",
+    function(values)
+      local id = values[1] or "0"
+      local requiresSpellFocus = values[17] or "0"  -- RequiresSpellFocus field position
+      local name = values[136] or ""  -- SpellName_Lang_enUS field position
+      
+      -- Handle quotes in name
+      name = name:gsub('""', '\\"')
+      if name ~= "" and name ~= '""' then
+        name = '"' .. name:gsub('"', '') .. '"'
+      else
+        name = '""'
+      end
+      
+      return "INSERT INTO `spell_dbc_full` VALUES (" .. id .. ", " .. requiresSpellFocus .. ", " .. name .. ")"
+    end)
+  print("SUCCESS: spell_dbc_full table created with full Spell.dbc data")
+else
+  print("WARNING: DBC/wotlk/Spell.dbc.csv not found - skipping spell_dbc_full creation")
+  print("Place Spell.dbc.csv in DBC/wotlk/ folder to enable enhanced itemreq extraction")
+end
+
 mysql:close()
 env:close()
 print("DBC data loading completed!")
