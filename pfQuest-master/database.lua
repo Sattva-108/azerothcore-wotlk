@@ -1329,17 +1329,17 @@ function pfDatabase:QuestFilter(id, plevel, pclass, prace)
     end
 
     -- hide if none of the pre-quests has been completed
-    if not one_complete then return end
+--     if not one_complete then return end
   end
 
   -- hide non-available quests for your race
-  if quests[id]["race"] and not ( bit.band(quests[id]["race"], prace) == prace ) then return end
+--   if quests[id]["race"] and not ( bit.band(quests[id]["race"], prace) == prace ) then return end
 
   -- hide non-available quests for your class
-  if quests[id]["class"] and not ( bit.band(quests[id]["class"], pclass) == pclass ) then return end
+--   if quests[id]["class"] and not ( bit.band(quests[id]["class"], pclass) == pclass ) then return end
 
   -- hide non-available quests for your profession
-  if quests[id]["skill"] and not pfDatabase:GetPlayerSkill(quests[id]["skill"]) then return end
+--   if quests[id]["skill"] and not pfDatabase:GetPlayerSkill(quests[id]["skill"]) then return end
 
   -- hide lowlevel quests
   if quests[id]["lvl"] and quests[id]["lvl"] < plevel - 4 and pfQuest_config["showlowlevel"] == "0" then return end

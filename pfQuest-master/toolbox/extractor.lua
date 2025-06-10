@@ -13,18 +13,18 @@
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 1000           -- Лимит для того что тестируем
-local OTHER_LIMIT = 1000             -- Лимит для всего остального
-local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
+local FOCUS_LIMIT = 1           -- Лимит для того что тестируем
+local OTHER_LIMIT = 1             -- Лимит для всего остального
+local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_ID = 848 -- securing the lines
-local QUEST_784_NPCS = {3390}  -- NPCs из анализа квеста 784
-local QUEST_784_ITEMS = {5012}  -- Items для тестирования (quest items, rewards)
-local QUEST_784_OBJECTS = {3640}  -- Objects для тестирования (примеры)
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_IDS = {12790, 13158} -- securing the lines + additional test quest
+local QUEST_784_NPCS = {29156, 16128, 31080}  -- NPCs из анализа квеста 784
+local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
+local QUEST_784_OBJECTS = {}  -- Objects для тестирования (примеры)
 
 
 -- ================================================================
@@ -107,7 +107,7 @@ local PROGRESS_STEP = 100
 print("================================================================")
 print("pfQuest Extraction Settings:")
 if QUEST_784_TEST then
-  print("   Mode: QUEST 784 DEBUG - Quest ID " .. QUEST_784_ID)
+  print("   Mode: QUEST 784 DEBUG - Quest IDs: " .. table.concat(QUEST_784_IDS, ", "))
   print("   NPCs: " .. table.concat(QUEST_784_NPCS, ", "))
   print("   Objects: " .. table.concat(QUEST_784_OBJECTS, ", "))
 elseif FULL_EXTRACTION then
@@ -2738,8 +2738,8 @@ if config.expansions[expansion_to_process] then
     local where_clause = ""
     local limit_clause = ""
     if QUEST_784_TEST then
-      where_clause = " WHERE qt." .. quest_pk_column .. " = " .. QUEST_784_ID .. " "
-      print("🎯 QUEST 784 DEBUG: Processing only quest " .. QUEST_784_ID)
+      where_clause = " WHERE qt." .. quest_pk_column .. " IN (" .. table.concat(QUEST_784_IDS, ", ") .. ") "
+      print("🎯 QUEST 784 DEBUG: Processing quests " .. table.concat(QUEST_784_IDS, ", "))
     else
       limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
     end
@@ -4092,7 +4092,7 @@ if config.expansions[expansion_to_process] then
 
         -- QUEST 784 DEBUG MODE - фильтруем только нужный квест
         if QUEST_784_TEST then
-          where_clause = " WHERE quest_template.ID = " .. QUEST_784_ID .. " "
+          where_clause = " WHERE quest_template.ID IN (" .. table.concat(QUEST_784_IDS, ", ") .. ") "
         else
           limit_clause = QUEST_LIMIT and (' LIMIT ' .. QUEST_LIMIT) or ''
         end
