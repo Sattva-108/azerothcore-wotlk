@@ -15,12 +15,12 @@
 local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
 local FOCUS_LIMIT = 1           -- Лимит для того что тестируем
 local OTHER_LIMIT = 1             -- Лимит для всего остального
-local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_IDS = {12790, 13158} -- securing the lines + additional test quest
 local QUEST_784_NPCS = {29156, 16128, 31080}  -- NPCs из анализа квеста 784
 local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
@@ -3680,9 +3680,18 @@ if config.expansions[expansion_to_process] then
             local world_y_top = tonumber(minimap_size.x_max)
             local world_x_right = tonumber(minimap_size.y_max)
 
-            -- Используем math.abs для гарантии положительных размеров
-            local calculated_width = math.abs(world_x_right - world_x_left)
-            local calculated_height = math.abs(world_y_top - world_y_bottom)
+            local calculated_width, calculated_height
+            
+            -- Специальная обработка для Даларана
+            if tonumber(minimap_size.areatableID) == 4395 and tonumber(minimap_size.mapID) == 571 then
+                -- Используем эффективные размеры для Даларана
+                calculated_width = 553.588235   -- DALARAN_EFFECTIVE_WIDTH (6066.655715 - 5513.06748)
+                calculated_height = 833.36      -- DALARAN_EFFECTIVE_HEIGHT (1054.37468 - 221.01468)
+            else
+                -- Используем math.abs для гарантии положительных размеров для остальных зон
+                calculated_width = math.abs(world_x_right - world_x_left)
+                calculated_height = math.abs(world_y_top - world_y_bottom)
+            end
 
             -- Проверка на нулевые размеры, чтобы избежать деления на ноль где-либо дальше
             if calculated_width == 0 then calculated_width = 1 end -- Минимальная ширина
