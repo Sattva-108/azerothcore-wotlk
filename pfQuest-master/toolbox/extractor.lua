@@ -20,9 +20,9 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_IDS = {12790, 13158} -- securing the lines + additional test quest
-local QUEST_784_NPCS = {29156, 16128, 31080}  -- NPCs из анализа квеста 784
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_IDS = {12790, 13158, 12974} -- securing the lines + additional test quest
+local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007}  -- NPCs из анализа квеста 784
 local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
 local QUEST_784_OBJECTS = {}  -- Objects для тестирования (примеры)
 
@@ -763,7 +763,13 @@ function removedupes(tab)
   for _, k in pairs(tab) do
     -- Check if coordinate array is valid (no nil values)
     if k and #k >= 3 and k[1] and k[2] and k[3] then
-      local key = table.concat(k, ",")  -- Create a unique key for each coordinate set
+      -- Create unique key using only coordinate values (x, y, zone, respawn)
+      -- Skip boolean fields for key generation
+      local keyParts = {tostring(k[1]), tostring(k[2]), tostring(k[3])}
+      if k[4] then
+        table.insert(keyParts, tostring(k[4]))
+      end
+      local key = table.concat(keyParts, ",")
       if not _vals[key] then
         _vals[key] = true
         table.insert(result, k)
@@ -3681,7 +3687,7 @@ if config.expansions[expansion_to_process] then
             local world_x_right = tonumber(minimap_size.y_max)
 
             local calculated_width, calculated_height
-            
+
             -- Специальная обработка для Даларана
             if tonumber(minimap_size.areatableID) == 4395 and tonumber(minimap_size.mapID) == 571 then
                 -- Используем эффективные размеры для Даларана
