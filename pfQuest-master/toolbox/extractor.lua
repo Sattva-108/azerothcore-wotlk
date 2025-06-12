@@ -1128,6 +1128,17 @@ if config.expansions[expansion_to_process] then
     -- Кэш для границ зон из WorldMapArea_wotlk
     local zone_map_world_boundaries_cache = {}
     function GetWorldMapAreaBoundariesForZone(target_areatable_id, continent_map_id)
+        -- Специальная обработка для Даларана - возвращаем эффективные границы немедленно
+        if target_areatable_id == 4395 and continent_map_id == 571 then
+            local dalaran_bounds = {
+                x_left = 5513.06748,    -- X_MIN_eff
+                x_right = 6066.655715,  -- X_MAX_eff
+                y_top = 1054.37468,     -- Y_MAX_eff (большее значение Y в мире)
+                y_bottom = 221.01468    -- Y_MIN_eff (меньшее значение Y в мире)
+            }
+            return dalaran_bounds
+        end
+
         local cache_key = tostring(target_areatable_id) .. "_" .. tostring(continent_map_id)
         if zone_map_world_boundaries_cache[cache_key] then
             return zone_map_world_boundaries_cache[cache_key]
@@ -1258,10 +1269,28 @@ if config.expansions[expansion_to_process] then
 
                 local zone_x, zone_y = 50, 50 -- Default
 
-                -- Получаем мировые границы для display_zone_for_units_lua
-                local zone_bounds = GetWorldMapAreaBoundariesForZone(display_zone_for_units_lua, map_id)
+                -- Специальная обработка для карты Даларана (MapID 571)
+                if map_id == 571 and display_zone_for_units_lua == 4395 and npc_world_x and npc_world_y then
+                    -- Эффективные границы для Даларана
+                    local X_MIN_eff = 5513.06748
+                    local X_MAX_eff = 6066.655715
+                    local Y_MIN_eff = 221.01468
+                    local Y_MAX_eff = 1054.37468
 
-                if npc_world_x and npc_world_y and zone_bounds then
+                    local DALARAN_EFFECTIVE_WIDTH = X_MAX_eff - X_MIN_eff
+                    local DALARAN_EFFECTIVE_HEIGHT = Y_MAX_eff - Y_MIN_eff
+
+                    -- Расчет координат для pfQuest используя эффективные границы
+                    local zone_x_percent = ((Y_MAX_eff - npc_world_y) / DALARAN_EFFECTIVE_HEIGHT) * 100
+                    local zone_y_percent = 100 - (((npc_world_x - X_MIN_eff) / DALARAN_EFFECTIVE_WIDTH) * 100)
+
+                    zone_x = math.max(0, math.min(100, zone_x_percent))
+                    zone_y = math.max(0, math.min(100, zone_y_percent))
+                else
+                    -- Получаем мировые границы для display_zone_for_units_lua
+                    local zone_bounds = GetWorldMapAreaBoundariesForZone(display_zone_for_units_lua, map_id)
+
+                    if npc_world_x and npc_world_y and zone_bounds then
                     local Z_WorldX_L = zone_bounds.x_left
                     local Z_WorldX_R = zone_bounds.x_right
                     local Z_WorldY_T = zone_bounds.y_top    -- Большее значение Y в мире
@@ -1289,6 +1318,7 @@ if config.expansions[expansion_to_process] then
                     -- if not zone_bounds then
                     --      print(string.format("WARNING: No WMA boundaries for AreaTable.ID %d on MapID %d. NPC GUID %s defaulting to 50,50.", display_zone_for_units_lua, map_id, creature_data.guid or "N/A"))
                     -- end
+                    end
                 end
 
                 zone_x = math.max(0, math.min(100, zone_x))
@@ -1377,9 +1407,27 @@ if config.expansions[expansion_to_process] then
 
                 local zone_x, zone_y = 50, 50 -- Default
 
-                local zone_bounds = GetWorldMapAreaBoundariesForZone(display_map_areatable_id, map_id)
+                -- Специальная обработка для карты Даларана (MapID 571)
+                if map_id == 571 and display_map_areatable_id == 4395 and gobj_world_x and gobj_world_y then
+                    -- Эффективные границы для Даларана
+                    local X_MIN_eff = 5513.06748
+                    local X_MAX_eff = 6066.655715
+                    local Y_MIN_eff = 221.01468
+                    local Y_MAX_eff = 1054.37468
 
-                if gobj_world_x and gobj_world_y and zone_bounds then
+                    local DALARAN_EFFECTIVE_WIDTH = X_MAX_eff - X_MIN_eff
+                    local DALARAN_EFFECTIVE_HEIGHT = Y_MAX_eff - Y_MIN_eff
+
+                    -- Расчет координат для pfQuest используя эффективные границы
+                    local zone_x_percent = ((Y_MAX_eff - gobj_world_y) / DALARAN_EFFECTIVE_HEIGHT) * 100
+                    local zone_y_percent = 100 - (((gobj_world_x - X_MIN_eff) / DALARAN_EFFECTIVE_WIDTH) * 100)
+
+                    zone_x = math.max(0, math.min(100, zone_x_percent))
+                    zone_y = math.max(0, math.min(100, zone_y_percent))
+                else
+                    local zone_bounds = GetWorldMapAreaBoundariesForZone(display_map_areatable_id, map_id)
+
+                    if gobj_world_x and gobj_world_y and zone_bounds then
                     local Z_WorldX_L = zone_bounds.x_left
                     local Z_WorldX_R = zone_bounds.x_right
                     local Z_WorldY_T = zone_bounds.y_top
@@ -1405,6 +1453,7 @@ if config.expansions[expansion_to_process] then
                     -- if not zone_bounds then
                     --      print(string.format("WARNING: No WMA boundaries for GObject AreaTable.ID %d on MapID %d. GObject GUID %s defaulting to 50,50.", display_map_areatable_id, map_id, gobject_data.guid or "N/A"))
                     -- end
+                    end
                 end
 
                 zone_x = math.max(0, math.min(100, zone_x))
