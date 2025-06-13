@@ -20,7 +20,7 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_IDS = {12790, 13158, 12974} -- securing the lines + additional test quest
 local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100, 3652, 3672, 5768}  -- NPCs из анализа квеста 784 + тесты зон
 local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
@@ -1018,15 +1018,17 @@ if config.expansions[expansion_to_process] then
         if core == "acore" then
             local geo_sql = string.format([[
                 SELECT
-                    wma.areatableID
+                    wma.areatableID,
+                    (POW(((wma.y_min + wma.y_max)/2 - %f), 2) + POW(((wma.x_min + wma.x_max)/2 - %f), 2)) AS dist
                 FROM WorldMapArea_%s wma
                 WHERE wma.mapID = %d
+                  AND wma.areatableID > 0
                   AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) -- World X
                   AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) -- World Y
                 ORDER BY
-                    (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) ASC
+                    dist ASC
                 LIMIT 1
-            ]], expansion or "wotlk", m, x, y)
+            ]], x, y, (config.dbc_expansion or "wotlk"), m, x, y, x, y)
 
             -- ================================================================
             --  КЛЮЧЕВОЙ ДЕБАГ: Печатаем финальный SQL-запрос
@@ -1068,6 +1070,7 @@ if config.expansions[expansion_to_process] then
                     SELECT wma.areatableID, wma.x_min, wma.x_max, wma.y_min, wma.y_max
                     FROM WorldMapArea_wotlk wma
                     WHERE wma.mapID = %d
+                      AND wma.areatableID > 0
                       AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max)
                       AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max)
                     ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) DESC
