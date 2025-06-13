@@ -1315,17 +1315,17 @@ end
                 local npc_world_x, npc_world_y = creature_data.position_x, creature_data.position_y
                 local map_id, db_zoneId = creature_data.map, creature_data.zoneId
 
-                local display_zone_for_units_lua
+                -- FIXED: Use NormalizeDisplayZone first, then fallback to geometric calculation
+                local display_zone_for_units_lua = NormalizeDisplayZone(db_zoneId, map_id, npc_world_x, npc_world_y)
 
-                -- Use unified continental zone check
-                if IsContinentalZone(db_zoneId) then
-                    display_zone_for_units_lua = db_zoneId
-                    if id1_template == 7057 or id1_template == 100 or id1_template == 3652 or id1_template == 3672 or id1_template == 5768 then
-                        print(string.format("[GC ORIGINAL] NPC %d using original continental zone: %d", id1_template, db_zoneId))
-                    end
-                else
+                if id1_template == 7057 or id1_template == 100 or id1_template == 3652 or id1_template == 3672 or id1_template == 5768 then
+                    print(string.format("[GC NORMALIZE] NPC %d normalized zone: %d -> %d", id1_template, db_zoneId, display_zone_for_units_lua))
+                end
+
+                -- Fallback to geometric calculation if still not continental
+                if not IsContinentalZone(display_zone_for_units_lua) then
                     if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
-                        local geo_sql = string.format([[ SELECT wma.areatableID FROM WorldMapArea_%s wma WHERE wma.mapID = %d AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) DESC LIMIT 1 ]], expansion or "wotlk", map_id, npc_world_x, npc_world_y)
+                        local geo_sql = string.format([[ SELECT wma.areatableID FROM WorldMapArea_wotlk wma WHERE wma.mapID = %d AND wma.areatableID > 0 AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) DESC LIMIT 1 ]], map_id, npc_world_x, npc_world_y)
                         local query = mysql:execute(geo_sql)
                         if query then
                             local result = {}
@@ -1339,7 +1339,11 @@ end
                         end
                     end
                 end
-                display_zone_for_units_lua = display_zone_for_units_lua or db_zoneId
+
+                -- Final fallback
+                if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then
+                    display_zone_for_units_lua = db_zoneId
+                end
 
                 if id1_template == 7057 or id1_template == 100 then
                     print(string.format("[DEBUG GetCreatureCoords] ID %d, OriginalZone %d -> FinalZone %d", id1_template, db_zoneId, display_zone_for_units_lua))
@@ -1764,70 +1768,29 @@ end
                     local db_zoneId = tonumber(temp_data.zoneId)
                     local db_areaId = tonumber(temp_data.areaId)
 
-                    local display_zone_for_units_lua
+                    -- FIXED: Use NormalizeDisplayZone first (same logic as GetCreatureCoords)
+                    local display_zone_for_units_lua = NormalizeDisplayZone(db_zoneId, map_id, npc_world_x, npc_world_y)
 
-                    -- FIXED: Smart zone selection logic
-                    if map_id == 0 then
-                        -- Check if original zone is already continental
-                        if IsContinentalZone(db_zoneId) then
-                            display_zone_for_units_lua = db_zoneId
-                            -- DEBUG: Zone selection debugging for key test NPCs
-                            if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
---                                 print(string.format("[BATCH ORIGINAL] NPC %d using original continental zone: %d", creature_id, db_zoneId))
-                            end
-                        else
-                            -- Original zone is not continental, calculate by coordinates
+                    if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
+                        print(string.format("[BATCH NORMALIZE] NPC %d normalized zone: %d -> %d", creature_id, db_zoneId, display_zone_for_units_lua))
+                    end
+
+                    -- Fallback to geometric calculation if still not continental
+                    if not IsContinentalZone(display_zone_for_units_lua) then
+                        if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
                             local coords_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
                             if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
                                 display_zone_for_units_lua = coords_data[1][3]
-                                -- DEBUG: Zone calculation debugging for key test NPCs
                                 if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
---                                     print(string.format("[BATCH CALCULATED] NPC %d calculated zone by coords: %d (was %d)", creature_id, display_zone_for_units_lua, db_zoneId))
+                                    print(string.format("[BATCH CALCULATED] NPC %d calculated zone by coords: %d", creature_id, display_zone_for_units_lua))
                                 end
                             end
                         end
                     end
 
-                    -- Fallback to database values if no geometric calculation was done
-                    if not display_zone_for_units_lua then
-                        if db_zoneId ~= 0 then
-                            display_zone_for_units_lua = db_zoneId
-                        elseif db_areaId ~= 0 then
-                            local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
-                            if parent_of_area ~= 0 then
-                                display_zone_for_units_lua = parent_of_area
-                            else
-                                display_zone_for_units_lua = db_areaId
-                            end
-                        end
-                    end
-
-                    -- Apply normalization ONLY for non-continental zones
-                    local zone_before_normalize = display_zone_for_units_lua
-                    if not IsContinentalZone(display_zone_for_units_lua) then
-                        display_zone_for_units_lua = NormalizeDisplayZone(display_zone_for_units_lua, map_id, npc_world_x, npc_world_y)
-                        if creature_id == 7057 or creature_id == 100 then
---                             print(string.format("[BATCH NORMALIZE] NPC %d: %d -> %d", creature_id, zone_before_normalize, display_zone_for_units_lua))
-                        end
-                    else
-                        if creature_id == 7057 or creature_id == 100 then
---                             print(string.format("[BATCH SKIP NORMALIZE] NPC %d: keeping continental zone %d", creature_id, display_zone_for_units_lua))
-                        end
-                    end
-
+                    -- Final fallback (same as GetCreatureCoords)
                     if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then
-                        if npc_world_x and npc_world_y and map_id then
-                            local coords_fallback_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
-                            if coords_fallback_data and coords_fallback_data[1] and coords_fallback_data[1][3] then
-                                display_zone_for_units_lua = coords_fallback_data[1][3]
-                                if display_zone_for_units_lua == 0 then display_zone_for_units_lua = map_id end
-                            else
-                                display_zone_for_units_lua = map_id
-                            end
-                        else
-                            display_zone_for_units_lua = 1
-                        end
-                        if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then display_zone_for_units_lua = 1 end
+                        display_zone_for_units_lua = db_zoneId
                     end
 
                     local zone_x, zone_y = 50, 50 -- Default
