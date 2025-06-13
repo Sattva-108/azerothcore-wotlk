@@ -20,7 +20,7 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
 local QUEST_784_IDS = {12790, 13158, 12974} -- securing the lines + additional test quest
 local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057}  -- NPCs из анализа квеста 784
 local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
@@ -1062,9 +1062,55 @@ if config.expansions[expansion_to_process] then
                 end
             end
 
-            local fallback_zones = { [0] = 12, [1] = 14, [530] = 3520, [571] = 65 }
-            local fallback_zone = fallback_zones[m] or m or 1
-            table.insert(ret, { 50, 50, fallback_zone, 0 })
+            -- FIXED: Add direct SQL query for continental maps to find zone by coordinates
+            if m == 0 then
+                local sql_zone_by_coords = string.format([[
+                    SELECT wma.areatableID, wma.x_min, wma.x_max, wma.y_min, wma.y_max
+                    FROM WorldMapArea_wotlk wma
+                    WHERE wma.mapID = %d
+                      AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max)
+                      AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max)
+                    ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) ASC
+                    LIMIT 1
+                ]], m, x, y)
+                
+                local cursor_zone = mysql:execute(sql_zone_by_coords)
+                if cursor_zone then
+                    local zone_data = {}
+                    if cursor_zone:fetch(zone_data, "a") then
+                        local zone_id = tonumber(zone_data.areatableID)
+                        local x_min = tonumber(zone_data.x_min)
+                        local x_max = tonumber(zone_data.x_max)
+                        local y_min = tonumber(zone_data.y_min)
+                        local y_max = tonumber(zone_data.y_max)
+                        
+                        if zone_id and x_min and x_max and y_min and y_max then
+                            -- Calculate zone-relative coordinates
+                            local zone_map_world_width = x_max - x_min
+                            local zone_map_world_height = y_max - y_min
+                            
+                            local zone_x_pct = 50 -- Default
+                            local zone_y_pct = 50 -- Default
+                            
+                            if zone_map_world_width > 0 and zone_map_world_height > 0 then
+                                zone_x_pct = ((y_max - y) / zone_map_world_height) * 100
+                                zone_y_pct = 100 - (((x - x_min) / zone_map_world_width) * 100)
+                            end
+                            
+                            zone_x_pct = math.max(0, math.min(100, zone_x_pct))
+                            zone_y_pct = math.max(0, math.min(100, zone_y_pct))
+                            
+                            table.insert(ret, { round(zone_x_pct, 2), round(zone_y_pct, 2), zone_id, 0 })
+                            cursor_zone:close()
+                            return ret
+                        end
+                    end
+                    cursor_zone:close()
+                end
+            end
+            
+            -- DEBUG: No coordinates found - return empty to expose the issue
+            print(string.format("[GetCustomCoords DEBUG] No coordinates found for map=%d x=%.2f y=%.2f", m, x, y))
             return ret
         end
 
@@ -1229,7 +1275,7 @@ end
         if core == "acore" then
             local creature_spawn_data_cache = {}
             local sql_get_creatures = string.format(
-                "SELECT guid, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM creature WHERE id1 = %d",
+                "SELECT guid, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM creature WHERE id1 = %d ORDER BY map, guid",
                 id1_template
             )
             local cursor_creatures = mysql:execute(sql_get_creatures) -- Переименовал, чтобы не конфликтовать с cursor для границ
@@ -1261,6 +1307,11 @@ end
                 local npc_world_x = creature_data.position_x
                 local npc_world_y = creature_data.position_y
                 local map_id = creature_data.map -- Это continent_id
+                
+                -- DEBUG: Track NPC 7057 coordinates processing
+                if id1_template == 7057 then
+                    print(string.format("[GC DEBUG] NPC 7057 guid=%s map=%d x=%.2f y=%.2f", creature_data.guid or "N/A", map_id, npc_world_x, npc_world_y))
+                end
 
                 local db_zoneId = creature_data.zoneId
                 local db_areaId = creature_data.areaId -- Это специфичный AreaTable.ID
@@ -1268,14 +1319,29 @@ end
                 -- Определяем display_zone_for_units_lua (карта, на которой NPC будет отображаться)
                 local display_zone_for_units_lua
 
-                if db_zoneId ~= 0 then
-                    display_zone_for_units_lua = db_zoneId
-                elseif db_areaId ~= 0 then
-                    local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
-                    if parent_of_area ~= 0 then
-                        display_zone_for_units_lua = parent_of_area
-                    else
-                        display_zone_for_units_lua = db_areaId -- areaId сам себе основная зона
+                -- FIXED: For continental maps (map=0), calculate zone by coordinates first
+                if map_id == 0 then
+                    -- Try to find correct zone by geometric calculation
+                    local coords_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
+                    if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
+                        display_zone_for_units_lua = coords_data[1][3]
+                        if id1_template == 7057 then
+                            print(string.format("[GC FIX] NPC 7057 calculated zone by coords: %d", display_zone_for_units_lua))
+                        end
+                    end
+                end
+                
+                -- Fallback to database values if no geometric calculation was done
+                if not display_zone_for_units_lua then
+                    if db_zoneId ~= 0 then
+                        display_zone_for_units_lua = db_zoneId
+                    elseif db_areaId ~= 0 then
+                        local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
+                        if parent_of_area ~= 0 then
+                            display_zone_for_units_lua = parent_of_area
+                        else
+                            display_zone_for_units_lua = db_areaId -- areaId сам себе основная зона
+                        end
                     end
                 end
 
@@ -1753,7 +1819,7 @@ end
             local creature_ids_string = table.concat(chunk_ids, ",")
 
             print("  Processing coordinate chunk " .. chunk .. "/" .. total_chunks .. " (" .. #chunk_ids .. " creatures)")
-            local batch_query = mysql:execute("SELECT id1, guid, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM creature WHERE id1 IN (" .. creature_ids_string .. ") ORDER BY id1, guid")
+            local batch_query = mysql:execute("SELECT id1, guid, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM creature WHERE id1 IN (" .. creature_ids_string .. ") ORDER BY id1, map, guid")
             if batch_query then
                 local temp_data = {}
                 while batch_query:fetch(temp_data, "a") do
@@ -1766,18 +1832,39 @@ end
                     local npc_world_x = tonumber(temp_data.position_x)
                     local npc_world_y = tonumber(temp_data.position_y)
                     local map_id = tonumber(temp_data.map)
+                    
+                    -- DEBUG: Track NPC 7057 coordinates processing
+                    if creature_id == 7057 then
+                        print(string.format("[BATCH DEBUG] NPC 7057 guid=%s map=%d x=%.2f y=%.2f", temp_data.guid or "N/A", map_id, npc_world_x, npc_world_y))
+                    end
                     local db_zoneId = tonumber(temp_data.zoneId)
                     local db_areaId = tonumber(temp_data.areaId)
 
                     local display_zone_for_units_lua
-                    if db_zoneId ~= 0 then
-                        display_zone_for_units_lua = db_zoneId
-                    elseif db_areaId ~= 0 then
-                        local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
-                        if parent_of_area ~= 0 then
-                            display_zone_for_units_lua = parent_of_area
-                        else
-                            display_zone_for_units_lua = db_areaId
+                    
+                    -- FIXED: For continental maps (map=0), calculate zone by coordinates first
+                    if map_id == 0 then
+                        -- Try to find correct zone by geometric calculation
+                        local coords_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
+                        if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
+                            display_zone_for_units_lua = coords_data[1][3]
+                            if creature_id == 7057 then
+                                print(string.format("[BATCH FIX] NPC 7057 calculated zone by coords: %d", display_zone_for_units_lua))
+                            end
+                        end
+                    end
+                    
+                    -- Fallback to database values if no geometric calculation was done
+                    if not display_zone_for_units_lua then
+                        if db_zoneId ~= 0 then
+                            display_zone_for_units_lua = db_zoneId
+                        elseif db_areaId ~= 0 then
+                            local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
+                            if parent_of_area ~= 0 then
+                                display_zone_for_units_lua = parent_of_area
+                            else
+                                display_zone_for_units_lua = db_areaId
+                            end
                         end
                     end
 
