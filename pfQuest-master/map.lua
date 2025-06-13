@@ -906,9 +906,16 @@ function pfMap:UpdateMinimap()
     return
   end
 
-  -- immediate check for Underbelly (without delay)
-  if GetCurrentMapAreaID() == 505 and GetCurrentMapDungeonLevel() == 2 then
-    pfMap.playerIsInUnderbelly = true
+  -- immediate check for Underbelly (only check if map area could be Dalaran)
+  local mapAreaID = GetCurrentMapAreaID()
+  print(mapAreaID)
+  if mapAreaID == 505 then
+    -- Only call GetCurrentMapDungeonLevel if we're definitely in Dalaran
+    if GetCurrentMapDungeonLevel() == 2 then
+      pfMap.playerIsInUnderbelly = true
+    else
+      pfMap.playerIsInUnderbelly = false
+    end
   else
     pfMap.playerIsInUnderbelly = false
   end
