@@ -1256,35 +1256,37 @@ function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
   if not initial_zone then return map_id or 1 end -- Защита от nil
 
   -- Для отладки конкретного NPC
-  if initial_zone == 1337 or (world_x and math.floor(world_x) == -6272) then
---       print(string.format("[NDZ] Normalizing zone %s for map %s at %s,%s", tostring(initial_zone), tostring(map_id), tostring(world_x), tostring(world_y)))
+  if initial_zone == 1337 or initial_zone == 718 then
+      print(string.format("[NDZ] Normalizing zone %s for map %s at %s,%s", tostring(initial_zone), tostring(map_id), tostring(world_x), tostring(world_y)))
   end
 
   if IsContinentalZone(initial_zone) then
     return initial_zone
   end
 
+  -- Try GetCustomCoords first since GetParentAreaFromAreaTable is not working reliably
+  if world_x and world_y and map_id then
+    local c = GetCustomCoords(map_id, world_x, world_y)
+    if c and c[1] and c[1][3] and c[1][3] ~= 0 then
+      if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Found geometric zone:", c[1][3]) end
+      return c[1][3]
+    end
+    if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] GetCustomCoords returned empty or invalid") end
+  end
+
+  -- Fallback: try parent area lookup (keeping for compatibility)
   local safety, candidate = 0, initial_zone
   while candidate and candidate ~= 0 and safety < 5 do
-    -- GetParentAreaFromAreaTable должна быть определена до этого места
     candidate = GetParentAreaFromAreaTable(candidate)
+    if initial_zone == 1337 or initial_zone == 718 then print(string.format("[NDZ] Parent step %d: %d -> %d", safety, initial_zone, candidate or 0)) end
     if candidate and candidate ~= 0 and IsContinentalZone(candidate) then
---       if initial_zone == 1337 then print("[NDZ] Found parent zone:", candidate) end
+      if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Found parent zone:", candidate) end
       return candidate
     end
     safety = safety + 1
   end
 
-  if world_x and world_y and map_id then
-    -- GetCustomCoords должна быть определена до этого места
-    local c = GetCustomCoords(map_id, world_x, world_y)
-    if c and c[1] and c[1][3] and c[1][3] ~= 0 then
---       if initial_zone == 1337 then print("[NDZ] Found geometric zone:", c[1][3]) end
-      return c[1][3]
-    end
-  end
-
---   if initial_zone == 1337 then print("[NDZ] Failed to normalize, returning original:", initial_zone) end
+  if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Failed to normalize, returning original:", initial_zone) end
   return initial_zone
 end
     function GetCreatureCoords(id1_template) -- id1_template это creature_template.entry
