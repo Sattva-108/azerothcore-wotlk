@@ -20,7 +20,7 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_IDS = {12790, 13158, 12974} -- securing the lines + additional test quest
 local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007}  -- NPCs из анализа квеста 784
 local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
@@ -1137,10 +1137,11 @@ if config.expansions[expansion_to_process] then
         -- Специальная обработка для Даларана - возвращаем эффективные границы немедленно
         if target_areatable_id == 4395 and continent_map_id == 571 then
             local dalaran_bounds = {
-                x_left = 5513.06748,    -- X_MIN_eff
-                x_right = 6066.655715,  -- X_MAX_eff
-                y_top = 1054.37468,     -- Y_MAX_eff (большее значение Y в мире)
-                y_bottom = 221.01468    -- Y_MIN_eff (меньшее значение Y в мире)
+                x_left = 5513.33,     -- X_MIN_eff
+                x_right = 6066.67,    -- X_MAX_eff
+                y_top = 1052.51,      -- Y_MAX_eff (большее значение Y в мире)
+                y_bottom = 222.495    -- Y_MIN_eff (меньшее значение Y в мире)
+
             }
             return dalaran_bounds
         end
@@ -1278,10 +1279,11 @@ if config.expansions[expansion_to_process] then
                 -- Специальная обработка для карты Даларана (MapID 571)
                 if map_id == 571 and display_zone_for_units_lua == 4395 and npc_world_x and npc_world_y then
                     -- Эффективные границы для Даларана
-                    local X_MIN_eff = 5513.06748
-                    local X_MAX_eff = 6066.655715
-                    local Y_MIN_eff = 221.01468
-                    local Y_MAX_eff = 1054.37468
+                    local X_MIN_eff = 5513.33
+                    local X_MAX_eff = 6066.67
+                    local Y_MIN_eff = 222.495
+                    local Y_MAX_eff = 1052.51
+
 
                     local DALARAN_EFFECTIVE_WIDTH = X_MAX_eff - X_MIN_eff
                     local DALARAN_EFFECTIVE_HEIGHT = Y_MAX_eff - Y_MIN_eff
@@ -1416,10 +1418,10 @@ if config.expansions[expansion_to_process] then
                 -- Специальная обработка для карты Даларана (MapID 571)
                 if map_id == 571 and display_map_areatable_id == 4395 and gobj_world_x and gobj_world_y then
                     -- Эффективные границы для Даларана
-                    local X_MIN_eff = 5513.06748
-                    local X_MAX_eff = 6066.655715
-                    local Y_MIN_eff = 221.01468
-                    local Y_MAX_eff = 1054.37468
+                    local X_MIN_eff = 5513.33
+                    local X_MAX_eff = 6066.67
+                    local Y_MIN_eff = 222.495
+                    local Y_MAX_eff = 1052.51
 
                     local DALARAN_EFFECTIVE_WIDTH = X_MAX_eff - X_MIN_eff
                     local DALARAN_EFFECTIVE_HEIGHT = Y_MAX_eff - Y_MIN_eff
@@ -3691,8 +3693,8 @@ if config.expansions[expansion_to_process] then
             -- Специальная обработка для Даларана
             if tonumber(minimap_size.areatableID) == 4395 and tonumber(minimap_size.mapID) == 571 then
                 -- Используем эффективные размеры для Даларана
-                calculated_width = 553.588235   -- DALARAN_EFFECTIVE_WIDTH (6066.655715 - 5513.06748)
-                calculated_height = 833.36      -- DALARAN_EFFECTIVE_HEIGHT (1054.37468 - 221.01468)
+                calculated_width = 553.34      -- DALARAN_EFFECTIVE_WIDTH (6066.67 - 5513.33)
+                calculated_height = 830.015    -- DALARAN_EFFECTIVE_HEIGHT (1052.51 - 222.495)
             else
                 -- Используем math.abs для гарантии положительных размеров для остальных зон
                 calculated_width = math.abs(world_x_right - world_x_left)
