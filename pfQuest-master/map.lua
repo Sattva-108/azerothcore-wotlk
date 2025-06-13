@@ -194,6 +194,7 @@ pfMap.mpins = {}
 pfMap.drawlayer = Minimap
 pfMap.unifiedcache = unifiedcache
 pfMap.playerIsInUnderbelly = false
+pfMap.checkUnderbelly = false
 
 pfMap.minimap_indoor = minimap_indoor
 pfMap.minimap_zoom = minimap_zoom
