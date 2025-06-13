@@ -231,6 +231,7 @@ function pfMap:HasMinimap()
   return true
 end
 
+
 function pfMap.tooltip:GetColor(min, max)
   local max = max or 1
   local min = min or max or 1
@@ -416,7 +417,7 @@ function pfMap:ShowMapID(map)
       end
     else
       -- wotlk
-      WorldMapFrame:Show()
+    ShowUIPanel(WorldMapFrame)
     end
 
     pfMap:SetMapByID(map)
