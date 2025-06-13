@@ -906,26 +906,15 @@ function pfMap:UpdateMinimap()
     return
   end
 
-  -- immediate check for Underbelly (only check if map area could be Dalaran)
-  local mapAreaID = GetCurrentMapAreaID()
-  print(mapAreaID)
-  if mapAreaID == 505 then
-    -- Only call GetCurrentMapDungeonLevel if we're definitely in Dalaran
+  -- check for Underbelly only when in Dalaran
+  if pfMap.checkUnderbelly then
     if GetCurrentMapDungeonLevel() == 2 then
-      pfMap.playerIsInUnderbelly = true
-    else
-      pfMap.playerIsInUnderbelly = false
+      -- Hide all minimap nodes when in Underbelly
+      for id, pin in pairs(pfMap.mpins) do
+        pin:Hide()
+      end
+      return
     end
-  else
-    pfMap.playerIsInUnderbelly = false
-  end
-
-  -- hide all minimap nodes when in Underbelly
-  if pfMap.playerIsInUnderbelly then
-    for id, pin in pairs(pfMap.mpins) do
-      pin:Hide()
-    end
-    return
   end
 
   -- hide all minimap nodes while shift is pressed
@@ -1040,6 +1029,7 @@ pfMap:RegisterEvent("ZONE_CHANGED")
 pfMap:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 pfMap:RegisterEvent("MINIMAP_ZONE_CHANGED")
 pfMap:RegisterEvent("WORLD_MAP_UPDATE")
+pfMap:RegisterEvent("PLAYER_ENTERING_WORLD")
 pfMap:SetScript("OnEvent", function()
   -- save current zone
   zone = GetCurrentMapZone()
@@ -1048,6 +1038,17 @@ pfMap:SetScript("OnEvent", function()
   if event == "ZONE_CHANGED" or event == "MINIMAP_ZONE_CHANGED" or event == "ZONE_CHANGED_NEW_AREA" then
     if not WorldMapFrame:IsShown() then
       SetMapToCurrentZone()
+    end
+  end
+
+  -- Enable/disable Underbelly checking based on whether we're in Dalaran
+  if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
+    local mapAreaID = GetCurrentMapAreaID()
+    if mapAreaID == 505 then
+      pfMap.checkUnderbelly = true
+    else
+      pfMap.checkUnderbelly = false
+      pfMap.playerIsInUnderbelly = false
     end
   end
 
