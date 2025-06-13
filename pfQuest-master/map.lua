@@ -906,6 +906,13 @@ function pfMap:UpdateMinimap()
     return
   end
 
+  -- immediate check for Underbelly (without delay)
+  if GetCurrentMapAreaID() == 505 and GetCurrentMapDungeonLevel() == 2 then
+    pfMap.playerIsInUnderbelly = true
+  else
+    pfMap.playerIsInUnderbelly = false
+  end
+
   -- hide all minimap nodes when in Underbelly
   if pfMap.playerIsInUnderbelly then
     for id, pin in pairs(pfMap.mpins) do
@@ -1023,6 +1030,7 @@ end
 
 local zone, last_zone
 pfMap:RegisterEvent("ZONE_CHANGED")
+pfMap:RegisterEvent("ZONE_CHANGED_INDOORS")
 pfMap:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 pfMap:RegisterEvent("MINIMAP_ZONE_CHANGED")
 pfMap:RegisterEvent("WORLD_MAP_UPDATE")
@@ -1039,13 +1047,11 @@ pfMap:SetScript("OnEvent", function()
   end
 
   -- Check if player is in Underbelly when zone changes or entering world
-  if event == "ZONE_CHANGED" or event == "PLAYER_ENTERING_WORLD" then
+  if event == "ZONE_CHANGED" or event == "PLAYER_ENTERING_WORLD" or event == "MINIMAP_ZONE_CHANGED" or event == "ZONE_CHANGED_INDOORS" then
     -- Dalaran map area ID is 505, dungeon level 2 is Underbelly
     if GetCurrentMapAreaID() == 505 and GetCurrentMapDungeonLevel() == 2 then
-        print("true")
       pfMap.playerIsInUnderbelly = true
     else
-        print("false")
       pfMap.playerIsInUnderbelly = false
     end
   end
@@ -1059,6 +1065,17 @@ end)
 
 local hlstate, shiftstate, transition, hidecluster, fps, resetmap
 pfMap:SetScript("OnUpdate", function()
+  -- check Underbelly status every 0.5 seconds
+  if not this.underbellyCheck or this.underbellyCheck < GetTime() then
+    this.underbellyCheck = GetTime() + 0.01
+
+    if GetCurrentMapAreaID() == 505 and GetCurrentMapDungeonLevel() == 2 then
+      pfMap.playerIsInUnderbelly = true
+    else
+      pfMap.playerIsInUnderbelly = false
+    end
+  end
+
   -- handle highlights and animations
   if pfMap.queue_update or transition or pfMap.highlight ~= hlstate or shiftstate ~= hidecluster then
     hlstate, shiftstate, transition = pfMap.highlight, hidecluster, nil
