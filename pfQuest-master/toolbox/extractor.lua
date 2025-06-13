@@ -20,9 +20,9 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
 local QUEST_784_IDS = {12790, 13158, 12974} -- securing the lines + additional test quest
-local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100}  -- NPCs из анализа квеста 784
+local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100, 3652, 3672, 5768}  -- NPCs из анализа квеста 784 + тесты зон
 local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
 local QUEST_784_OBJECTS = {}  -- Objects для тестирования (примеры)
 
@@ -1070,7 +1070,7 @@ if config.expansions[expansion_to_process] then
                     WHERE wma.mapID = %d
                       AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max)
                       AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max)
-                    ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) ASC
+                    ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) DESC
                     LIMIT 1
                 ]], m, x, y)
 
@@ -1154,6 +1154,10 @@ if config.expansions[expansion_to_process] then
                     local count = tonumber(result.cnt) or 0
                     cursor_check:close()
                     if count > 0 then
+                        -- DEBUG: Show which zones are considered continental
+                        if zone_id == 12 or zone_id == 718 or zone_id == 1337 then
+                            print(string.format("[IsContinentalZone] Zone %d found on map %d - CONTINENTAL", zone_id, map_id))
+                        end
                         return true -- Found on a continental map
                     end
                 end
@@ -1161,6 +1165,10 @@ if config.expansions[expansion_to_process] then
             end
         end
 
+        -- DEBUG: Show which zones are NOT continental
+        if zone_id == 12 or zone_id == 718 or zone_id == 1337 then
+            print(string.format("[IsContinentalZone] Zone %d NOT found on any continental map", zone_id))
+        end
         return false -- Not found on any continental map
     end
 
@@ -1312,18 +1320,18 @@ end
                 -- Use unified continental zone check
                 if IsContinentalZone(db_zoneId) then
                     display_zone_for_units_lua = db_zoneId
-                    if id1_template == 7057 or id1_template == 100 then
+                    if id1_template == 7057 or id1_template == 100 or id1_template == 3652 or id1_template == 3672 or id1_template == 5768 then
                         print(string.format("[GC ORIGINAL] NPC %d using original continental zone: %d", id1_template, db_zoneId))
                     end
                 else
                     if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
-                        local geo_sql = string.format([[ SELECT wma.areatableID FROM WorldMapArea_%s wma WHERE wma.mapID = %d AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) ASC LIMIT 1 ]], expansion or "wotlk", map_id, npc_world_x, npc_world_y)
+                        local geo_sql = string.format([[ SELECT wma.areatableID FROM WorldMapArea_%s wma WHERE wma.mapID = %d AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) DESC LIMIT 1 ]], expansion or "wotlk", map_id, npc_world_x, npc_world_y)
                         local query = mysql:execute(geo_sql)
                         if query then
                             local result = {}
                             if query:fetch(result, "a") then
                                 display_zone_for_units_lua = tonumber(result.areatableID)
-                                if id1_template == 7057 or id1_template == 100 then
+                                if id1_template == 7057 or id1_template == 100 or id1_template == 3652 or id1_template == 3672 or id1_template == 5768 then
                                     print(string.format("[GC CALCULATED] NPC %d calculated zone by coords: %d", id1_template, display_zone_for_units_lua))
                                 end
                             end
@@ -1763,19 +1771,19 @@ end
                         -- Check if original zone is already continental
                         if IsContinentalZone(db_zoneId) then
                             display_zone_for_units_lua = db_zoneId
-                            -- DEBUG: Uncomment for zone selection debugging
-                            -- if creature_id == 7057 or creature_id == 100 then
-                            --     print(string.format("[BATCH ORIGINAL] NPC %d using original continental zone: %d", creature_id, db_zoneId))
-                            -- end
+                            -- DEBUG: Zone selection debugging for key test NPCs
+                            if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
+--                                 print(string.format("[BATCH ORIGINAL] NPC %d using original continental zone: %d", creature_id, db_zoneId))
+                            end
                         else
                             -- Original zone is not continental, calculate by coordinates
                             local coords_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
                             if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
                                 display_zone_for_units_lua = coords_data[1][3]
-                                -- DEBUG: Uncomment for zone calculation debugging
-                                -- if creature_id == 7057 or creature_id == 100 then
-                                --     print(string.format("[BATCH CALCULATED] NPC %d calculated zone by coords: %d", creature_id, display_zone_for_units_lua))
-                                -- end
+                                -- DEBUG: Zone calculation debugging for key test NPCs
+                                if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
+--                                     print(string.format("[BATCH CALCULATED] NPC %d calculated zone by coords: %d (was %d)", creature_id, display_zone_for_units_lua, db_zoneId))
+                                end
                             end
                         end
                     end
@@ -1799,11 +1807,11 @@ end
                     if not IsContinentalZone(display_zone_for_units_lua) then
                         display_zone_for_units_lua = NormalizeDisplayZone(display_zone_for_units_lua, map_id, npc_world_x, npc_world_y)
                         if creature_id == 7057 or creature_id == 100 then
-                            print(string.format("[BATCH NORMALIZE] NPC %d: %d -> %d", creature_id, zone_before_normalize, display_zone_for_units_lua))
+--                             print(string.format("[BATCH NORMALIZE] NPC %d: %d -> %d", creature_id, zone_before_normalize, display_zone_for_units_lua))
                         end
                     else
                         if creature_id == 7057 or creature_id == 100 then
-                            print(string.format("[BATCH SKIP NORMALIZE] NPC %d: keeping continental zone %d", creature_id, display_zone_for_units_lua))
+--                             print(string.format("[BATCH SKIP NORMALIZE] NPC %d: keeping continental zone %d", creature_id, display_zone_for_units_lua))
                         end
                     end
 
