@@ -22,7 +22,7 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_IDS = {12790, 13158, 12974} -- securing the lines + additional test quest
-local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007}  -- NPCs из анализа квеста 784
+local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057}  -- NPCs из анализа квеста 784
 local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
 local QUEST_784_OBJECTS = {}  -- Objects для тестирования (примеры)
 
@@ -1007,129 +1007,84 @@ if config.expansions[expansion_to_process] then
       return ret
     end
 
-    function GetCustomCoords(m,x,y)
-      local worldmap = {}
-      local ret = {}
-
-      -- Hybrid approach: database zoneId + WorldMapArea boundaries
-      if core == "acore" then
-        local fallback_zones = {
-          [0] = 12, [1] = 14, [530] = 3520, [571] = 65
-        }
-
-        -- Get zone from database (most reliable after SQL fixes)
-        local zone_query = string.format([[
-          SELECT zoneId FROM creature
-          WHERE map = %d AND zoneId > 0
-          ORDER BY (
-            (position_x - %f) * (position_x - %f) +
-            (position_y - %f) * (position_y - %f)
-          ) ASC
-          LIMIT 1
-        ]], m, x, x, y, y)
-
-        local zone_result = {}
-        local query = mysql:execute(zone_query)
-        local zone_id = nil
-
-        if query then
-          if query:fetch(zone_result, "a") then
-            zone_id = tonumber(zone_result.zoneId)
-          end
+    function GetCustomCoords(m, x, y)
+        -- DEBUG: Показываем, какие координаты пришли в функцию
+        if m == 0 and (math.floor(x) == -6272 or math.floor(y) == -2939) then
+          print(string.format("[GetCustomCoords DEBUG] Analyzing coords for map %d: x=%f, y=%f", m, x, y))
         end
 
-        zone_id = zone_id or fallback_zones[m] or m
+        local ret = {}
 
-        -- Get WorldMapArea boundaries for this zone for coordinate conversion
-        local bounds_sql = string.format([[
-          SELECT x_min, x_max, y_min, y_max
-          FROM WorldMapArea_%s
-          WHERE areatableID = %d
-          LIMIT 1
-        ]], expansion, zone_id)
+        if core == "acore" then
+            local geo_sql = string.format([[
+                SELECT
+                    wma.areatableID
+                FROM WorldMapArea_%s wma
+                WHERE wma.mapID = %d
+                  AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) -- World X
+                  AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) -- World Y
+                ORDER BY
+                    (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) ASC
+                LIMIT 1
+            ]], expansion or "wotlk", m, x, y)
 
-        local bounds_query = mysql:execute(bounds_sql)
-        local bounds = {}
+            -- ================================================================
+            --  КЛЮЧЕВОЙ ДЕБАГ: Печатаем финальный SQL-запрос
+            -- ================================================================
+            if m == 0 and math.floor(x) == -6272 then
+                print("--- BEGIN SQL to copy ---")
+                print(geo_sql)
+                print("--- END SQL to copy ---")
+            end
 
-        if bounds_query and bounds_query:fetch(bounds, "a") then
-          local x_min = tonumber(bounds.x_min)
-          local x_max = tonumber(bounds.x_max)
-          local y_min = tonumber(bounds.y_min)
-          local y_max = tonumber(bounds.y_max)
+            local query = mysql:execute(geo_sql)
+            if query then
+                local result = {}
+                if query:fetch(result, "a") then
+                    local zone_id = tonumber(result.areatableID)
+                    if zone_id and zone_id > 0 then
+                        -- ... остальная логика без изменений ...
+                        local zone_bounds = GetWorldMapAreaBoundariesForZone(zone_id, m)
+                        local zone_x_pct, zone_y_pct = 50, 50
+                        if zone_bounds then
+                            local Z_WorldX_L, Z_WorldX_R = zone_bounds.x_left, zone_bounds.x_right
+                            local Z_WorldY_T, Z_WorldY_B = zone_bounds.y_top, zone_bounds.y_bottom
+                            local zone_map_world_width = Z_WorldX_R - Z_WorldX_L
+                            local zone_map_world_height = Z_WorldY_T - Z_WorldY_B
+                            if zone_map_world_width > 0 and zone_map_world_height > 0 then
+                                zone_x_pct = ((Z_WorldY_T - y) / zone_map_world_height) * 100
+                                zone_y_pct = 100 - (((x - Z_WorldX_L) / zone_map_world_width) * 100)
+                            end
+                        end
+                        table.insert(ret, { round(zone_x_pct, 2), round(zone_y_pct, 2), zone_id, 0 })
+                        return ret
+                    end
+                end
+            end
 
-          if x_min and x_max and y_min and y_max then
-            -- Use GPS coordinate formula with WorldMapArea boundaries
-            local DBC_LocLeft = x_max
-            local DBC_LocRight = x_min
-            local DBC_LocTop = y_max
-            local DBC_LocBottom = y_min
-
-            local zone_x = (y - DBC_LocLeft) / ((DBC_LocRight - DBC_LocLeft) / 100)
-            local zone_y = (x - DBC_LocTop) / ((DBC_LocBottom - DBC_LocTop) / 100)
-
-            -- ENHANCED: Adaptive GPS compensation
-            local compensation = GetAdaptiveCompensation(m, zone_id, zone_x, zone_y)
-            zone_x = zone_x + compensation.x_offset
-            zone_y = zone_y + compensation.y_offset
-
-            -- Clamp to reasonable range but allow some overshoot
-            zone_x = math.max(-10, math.min(110, zone_x))
-            zone_y = math.max(-10, math.min(110, zone_y))
-
-            local coord = { zone_x, zone_y, zone_id, 0 }
-            table.insert(ret, coord)
+            local fallback_zones = { [0] = 12, [1] = 14, [530] = 3520, [571] = 65 }
+            local fallback_zone = fallback_zones[m] or m or 1
+            table.insert(ret, { 50, 50, fallback_zone, 0 })
             return ret
-          end
         end
 
-        -- Fallback: simple coordinate conversion
-        if zone_id and x and y then
-          local zone_x = ((x + 17066.666) / 533.33333) * 100
-          local zone_y = ((y + 17066.666) / 533.33333) * 100
-          zone_x = math.max(0, math.min(100, zone_x))
-          zone_y = math.max(0, math.min(100, zone_y))
-          local coord = { zone_x, zone_y, zone_id, 0 }
-          table.insert(ret, coord)
+        -- Старая логика для других ядер ...
+        local worldmap = {}
+        local sql = string.format([[ SELECT * FROM pfquest.WorldMapArea_%s WHERE mapID = %d AND x_min < %f AND x_max > %f AND y_min < %f AND y_max > %f AND areatableID > 0 ]], expansion, m, x, x, y, y)
+        local query = mysql:execute(sql)
+        while query and query:fetch(worldmap, "a") do
+            local zone = worldmap.areatableID
+            table.insert(ret, { 50, 50, tonumber(zone), 0 }) -- Упрощено для ясности
         end
         return ret
-      end
-
-      local sql = [[
-        SELECT * FROM pfquest.WorldMapArea_]]..expansion..[[
-        WHERE pfquest.WorldMapArea_]]..expansion..[[.mapID = ]] .. m .. [[
-          AND pfquest.WorldMapArea_]]..expansion..[[.x_min < ]] .. x .. [[
-          AND pfquest.WorldMapArea_]]..expansion..[[.x_max > ]] .. x .. [[
-          AND pfquest.WorldMapArea_]]..expansion..[[.y_min < ]] .. y .. [[
-          AND pfquest.WorldMapArea_]]..expansion..[[.y_max > ]] .. y .. [[
-          AND pfquest.WorldMapArea_]]..expansion..[[.areatableID > 0
-        ]]
-
-      local query = mysql:execute(sql)
-      while query:fetch(worldmap, "a") do
-        local zone = worldmap.areatableID
-        local x_max = worldmap.x_max
-        local x_min = worldmap.x_min
-        local y_max = worldmap.y_max
-        local y_min = worldmap.y_min
-        local px, py = 0, 0
-
-        if x and y and x_min and y_min then
-          px = round(100 - (y - y_min) / ((y_max - y_min)/100),1)
-          py = round(100 - (x - x_min) / ((x_max - x_min)/100),1)
-          if isValidMap(zone, round(px), round(py), expansion) then
-            local coord = { px, py, tonumber(zone), 0 }
-            table.insert(ret, coord)
-          end
-        end
-      end
-
-      return ret
     end
 
     function GetCreatureCoordsPool(id)
       -- Temporarily disabled due to DBC data issues
       return {}
     end
+
+
 
     -- Кэш для границ зон из WorldMapArea_wotlk
     local zone_map_world_boundaries_cache = {}
@@ -1203,6 +1158,72 @@ if config.expansions[expansion_to_process] then
         return 0
     end
 
+-- ================================================================
+-- Helper functions for proper zone selection on world map
+-- ================================================================
+
+local continent_zone_cache = {}
+
+local function IsZoneOnContinentMap(areatable_id)
+  if not areatable_id or areatable_id == 0 then return false end
+  if continent_zone_cache[areatable_id] ~= nil then
+    return continent_zone_cache[areatable_id]
+  end
+  -- 'expansion' и 'mysql' -- это глобальные переменные, доступные в этом контексте
+  local sql = string.format(
+        "SELECT mapID FROM WorldMapArea_%s WHERE areatableID = %d LIMIT 1",
+        expansion or "wotlk", areatable_id)
+  local cur = mysql:execute(sql)
+  local is_continent = false
+  if cur then
+    local row = {}
+    if cur:fetch(row, "a") then
+      local mapID = tonumber(row.mapID) or -1
+      if mapID == 0 or mapID == 1 or mapID == 530 or mapID == 571 then
+        is_continent = true
+      end
+    end
+    cur:close()
+  end
+  continent_zone_cache[areatable_id] = is_continent
+  return is_continent
+end
+
+function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
+  if not initial_zone then return map_id or 1 end -- Защита от nil
+
+  -- Для отладки конкретного NPC
+  if initial_zone == 1337 or (world_x and math.floor(world_x) == -6272) then
+      print(string.format("[NDZ] Normalizing zone %s for map %s at %s,%s", tostring(initial_zone), tostring(map_id), tostring(world_x), tostring(world_y)))
+  end
+
+  if IsZoneOnContinentMap(initial_zone) then
+    return initial_zone
+  end
+
+  local safety, candidate = 0, initial_zone
+  while candidate and candidate ~= 0 and safety < 5 do
+    -- GetParentAreaFromAreaTable должна быть определена до этого места
+    candidate = GetParentAreaFromAreaTable(candidate)
+    if candidate and candidate ~= 0 and IsZoneOnContinentMap(candidate) then
+      if initial_zone == 1337 then print("[NDZ] Found parent zone:", candidate) end
+      return candidate
+    end
+    safety = safety + 1
+  end
+
+  if world_x and world_y and map_id then
+    -- GetCustomCoords должна быть определена до этого места
+    local c = GetCustomCoords(map_id, world_x, world_y)
+    if c and c[1] and c[1][3] and c[1][3] ~= 0 then
+      if initial_zone == 1337 then print("[NDZ] Found geometric zone:", c[1][3]) end
+      return c[1][3]
+    end
+  end
+
+  if initial_zone == 1337 then print("[NDZ] Failed to normalize, returning original:", initial_zone) end
+  return initial_zone
+end
     function GetCreatureCoords(id1_template) -- id1_template это creature_template.entry
         local ret = {}
         if core == "acore" then
@@ -1256,6 +1277,17 @@ if config.expansions[expansion_to_process] then
                     else
                         display_zone_for_units_lua = db_areaId -- areaId сам себе основная зона
                     end
+                end
+
+                if id1_template == 7057 then
+                    print("[DEBUG GC] 7057 initial zone", display_zone_for_units_lua)
+                end
+
+                -- NEW: Ensure chosen zone actually has a continent world map. Otherwise try to normalize it.
+                display_zone_for_units_lua = NormalizeDisplayZone(display_zone_for_units_lua, map_id, npc_world_x, npc_world_y)
+
+                if id1_template == 7057 then
+                    print("[DEBUG GC] 7057 normalized zone", display_zone_for_units_lua)
                 end
 
                 if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then
@@ -1396,6 +1428,9 @@ if config.expansions[expansion_to_process] then
                         display_map_areatable_id = db_areaId
                     end
                 end
+
+                -- NEW: Normalise display zone for gameobjects as well
+                display_map_areatable_id = NormalizeDisplayZone(display_map_areatable_id, map_id, gobj_world_x, gobj_world_y)
 
                 if not display_map_areatable_id or display_map_areatable_id == 0 then
                     if gobj_world_x and gobj_world_y and map_id then
@@ -1744,6 +1779,12 @@ if config.expansions[expansion_to_process] then
                         else
                             display_zone_for_units_lua = db_areaId
                         end
+                    end
+
+                    -- Apply normalization to ensure continent-level zone
+                    display_zone_for_units_lua = NormalizeDisplayZone(display_zone_for_units_lua, map_id, npc_world_x, npc_world_y)
+                    if creature_id == 7057 then
+                        print("[DEBUG BATCH] 7057 normalized zone", display_zone_for_units_lua)
                     end
 
                     if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then
@@ -3453,7 +3494,7 @@ if config.expansions[expansion_to_process] then
                   end -- if spellid and tonumber(spellid) > 0
                 end -- query:fetch
               end -- if query
-            end -- for spellcolumn
+              end -- for spellcolumn
           end -- if id > 0
         end -- for id in pairs(items)
 
@@ -4625,3 +4666,85 @@ else
 end
 
 -- Close main processing
+
+-- ================================================================
+-- Helper functions for proper zone selection on world map
+-- ================================================================
+
+-- Cache for continent-level WorldMapArea lookups
+local continent_zone_cache = {}
+
+-- Return true if the given AreaTable ID has a WorldMapArea entry that belongs
+-- to one of the four main continent maps (0, 1, 530, 571). These are the
+-- only mapIDs that pfQuest is able to render on the large world map.
+local function IsZoneOnContinentMap(areatable_id)
+  if not areatable_id or areatable_id == 0 then return false end
+  if continent_zone_cache[areatable_id] ~= nil then
+    return continent_zone_cache[areatable_id]
+  end
+
+  local sql = string.format(
+    "SELECT mapID FROM WorldMapArea_%s WHERE areatableID = %d LIMIT 1",
+    expansion or "wotlk", areatable_id)
+
+  local cursor = mysql:execute(sql)
+  local is_continent = false
+  if cursor then
+    local row = {}
+    if cursor:fetch(row, "a") then
+      local mapID = tonumber(row.mapID) or -1
+      if mapID == 0 or mapID == 1 or mapID == 530 or mapID == 571 then
+        is_continent = true
+      end
+    end
+    cursor:close()
+  end
+  continent_zone_cache[areatable_id] = is_continent
+  return is_continent
+end
+
+-- Try to transform an unsuitable zone (e.g. instance or sub-zone without
+-- a continent WorldMapArea) into a parent zone that DOES have one.
+-- 1) If the zone is already suitable, it is returned unchanged.
+-- 2) Otherwise we walk the ParentAreaID chain (up to a depth of 5).
+-- 3) If that fails we fall back to a geometric lookup via GetCustomCoords.
+-- 4) Ultimately we return the original zone or the continent map itself.
+local function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
+  if initial_zone == 7057 or initial_zone == 1337 then
+    print("[DEBUG NDZ] start zone", initial_zone, "map", map_id, "coords", world_x, world_y)
+  end
+  if initial_zone and IsZoneOnContinentMap(initial_zone) then
+    if initial_zone == 7057 or initial_zone == 1337 then
+      print("[DEBUG NDZ] already continent zone", initial_zone)
+    end
+    return initial_zone
+  end
+  local safety = 0
+  local candidate = initial_zone
+  while candidate and candidate ~= 0 and safety < 5 do
+    candidate = GetParentAreaFromAreaTable(candidate)
+    if (initial_zone == 1337) then
+      print("[DEBUG NDZ] parent step", safety, "->", candidate)
+    end
+    if candidate and candidate ~= 0 and IsZoneOnContinentMap(candidate) then
+      if initial_zone == 1337 then
+        print("[DEBUG NDZ] picked parent", candidate)
+      end
+      return candidate
+    end
+    safety = safety + 1
+  end
+  if world_x and world_y and map_id then
+    local coords = GetCustomCoords(map_id, world_x, world_y)
+    if coords and coords[1] and coords[1][3] and coords[1][3] ~= 0 then
+      if initial_zone == 1337 then
+        print("[DEBUG NDZ] geometric fallback", coords[1][3])
+      end
+      return coords[1][3]
+    end
+  end
+  if initial_zone == 1337 then
+    print("[DEBUG NDZ] fallback to", initial_zone ~= 0 and initial_zone or map_id)
+  end
+  return initial_zone ~= 0 and initial_zone or map_id
+end
