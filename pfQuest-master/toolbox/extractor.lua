@@ -20,7 +20,7 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_IDS = {12790, 13158, 12974} -- securing the lines + additional test quest
 local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100}  -- NPCs из анализа квеста 784
 local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
@@ -1134,19 +1134,19 @@ if config.expansions[expansion_to_process] then
 
     -- Function to check if a zone ID represents a continental zone (not an instance)
     function IsContinentalZone(zone_id)
-        if not zone_id or zone_id == 0 then 
-            return false 
+        if not zone_id or zone_id == 0 then
+            return false
         end
-        
+
         -- Check if zone has a WorldMapArea entry for continental maps (0, 1, 530, 571)
         local continental_maps = {0, 1, 530, 571}
-        
+
         for _, map_id in ipairs(continental_maps) do
             local sql_check = string.format([[
-                SELECT COUNT(*) as cnt FROM WorldMapArea_wotlk 
+                SELECT COUNT(*) as cnt FROM WorldMapArea_wotlk
                 WHERE areatableID = %d AND mapID = %d
             ]], zone_id, map_id)
-            
+
             local cursor_check = mysql:execute(sql_check)
             if cursor_check then
                 local result = {}
@@ -1154,21 +1154,13 @@ if config.expansions[expansion_to_process] then
                     local count = tonumber(result.cnt) or 0
                     cursor_check:close()
                     if count > 0 then
-                        -- DEBUG: Show what zones are detected as continental
-                        if zone_id == 12 or zone_id == 1337 then
-                            print(string.format("[IsContinentalZone] Zone %d found on map %d - CONTINENTAL", zone_id, map_id))
-                        end
                         return true -- Found on a continental map
                     end
                 end
                 cursor_check:close()
             end
         end
-        
-        -- DEBUG: Show what zones are NOT continental
-        if zone_id == 12 or zone_id == 1337 then
-            print(string.format("[IsContinentalZone] Zone %d NOT found on any continental map", zone_id))
-        end
+
         return false -- Not found on any continental map
     end
 
@@ -1250,40 +1242,17 @@ if config.expansions[expansion_to_process] then
 
 local continent_zone_cache = {}
 
-local function IsZoneOnContinentMap(areatable_id)
-  if not areatable_id or areatable_id == 0 then return false end
-  if continent_zone_cache[areatable_id] ~= nil then
-    return continent_zone_cache[areatable_id]
-  end
-  -- 'expansion' и 'mysql' -- это глобальные переменные, доступные в этом контексте
-  local sql = string.format(
-        "SELECT mapID FROM WorldMapArea_%s WHERE areatableID = %d LIMIT 1",
-        expansion or "wotlk", areatable_id)
-  local cur = mysql:execute(sql)
-  local is_continent = false
-  if cur then
-    local row = {}
-    if cur:fetch(row, "a") then
-      local mapID = tonumber(row.mapID) or -1
-      if mapID == 0 or mapID == 1 or mapID == 530 or mapID == 571 then
-        is_continent = true
-      end
-    end
-    cur:close()
-  end
-  continent_zone_cache[areatable_id] = is_continent
-  return is_continent
-end
+-- REMOVED: IsZoneOnContinentMap - replaced with IsContinentalZone
 
 function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
   if not initial_zone then return map_id or 1 end -- Защита от nil
 
   -- Для отладки конкретного NPC
   if initial_zone == 1337 or (world_x and math.floor(world_x) == -6272) then
-      print(string.format("[NDZ] Normalizing zone %s for map %s at %s,%s", tostring(initial_zone), tostring(map_id), tostring(world_x), tostring(world_y)))
+--       print(string.format("[NDZ] Normalizing zone %s for map %s at %s,%s", tostring(initial_zone), tostring(map_id), tostring(world_x), tostring(world_y)))
   end
 
-  if IsZoneOnContinentMap(initial_zone) then
+  if IsContinentalZone(initial_zone) then
     return initial_zone
   end
 
@@ -1291,8 +1260,8 @@ function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
   while candidate and candidate ~= 0 and safety < 5 do
     -- GetParentAreaFromAreaTable должна быть определена до этого места
     candidate = GetParentAreaFromAreaTable(candidate)
-    if candidate and candidate ~= 0 and IsZoneOnContinentMap(candidate) then
-      if initial_zone == 1337 then print("[NDZ] Found parent zone:", candidate) end
+    if candidate and candidate ~= 0 and IsContinentalZone(candidate) then
+--       if initial_zone == 1337 then print("[NDZ] Found parent zone:", candidate) end
       return candidate
     end
     safety = safety + 1
@@ -1302,12 +1271,12 @@ function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
     -- GetCustomCoords должна быть определена до этого места
     local c = GetCustomCoords(map_id, world_x, world_y)
     if c and c[1] and c[1][3] and c[1][3] ~= 0 then
-      if initial_zone == 1337 then print("[NDZ] Found geometric zone:", c[1][3]) end
+--       if initial_zone == 1337 then print("[NDZ] Found geometric zone:", c[1][3]) end
       return c[1][3]
     end
   end
 
-  if initial_zone == 1337 then print("[NDZ] Failed to normalize, returning original:", initial_zone) end
+--   if initial_zone == 1337 then print("[NDZ] Failed to normalize, returning original:", initial_zone) end
   return initial_zone
 end
     function GetCreatureCoords(id1_template) -- id1_template это creature_template.entry
@@ -1339,7 +1308,7 @@ end
                 local map_id, db_zoneId = creature_data.map, creature_data.zoneId
 
                 local display_zone_for_units_lua
-                
+
                 -- Use unified continental zone check
                 if IsContinentalZone(db_zoneId) then
                     display_zone_for_units_lua = db_zoneId
@@ -1352,7 +1321,7 @@ end
                         local query = mysql:execute(geo_sql)
                         if query then
                             local result = {}
-                            if query:fetch(result, "a") then 
+                            if query:fetch(result, "a") then
                                 display_zone_for_units_lua = tonumber(result.areatableID)
                                 if id1_template == 7057 or id1_template == 100 then
                                     print(string.format("[GC CALCULATED] NPC %d calculated zone by coords: %d", id1_template, display_zone_for_units_lua))
@@ -1780,10 +1749,10 @@ end
                     local npc_world_y = tonumber(temp_data.position_y)
                     local map_id = tonumber(temp_data.map)
 
-                    -- DEBUG: Track NPC 7057 coordinates processing
-                    if creature_id == 7057 then
-                        print(string.format("[BATCH DEBUG] NPC 7057 guid=%s map=%d x=%.2f y=%.2f", temp_data.guid or "N/A", map_id, npc_world_x, npc_world_y))
-                    end
+                    -- DEBUG: Uncomment for coordinate debugging
+                    -- if creature_id == 7057 then
+                    --     print(string.format("[BATCH DEBUG] NPC 7057 guid=%s map=%d x=%.2f y=%.2f", temp_data.guid or "N/A", map_id, npc_world_x, npc_world_y))
+                    -- end
                     local db_zoneId = tonumber(temp_data.zoneId)
                     local db_areaId = tonumber(temp_data.areaId)
 
@@ -1794,17 +1763,19 @@ end
                         -- Check if original zone is already continental
                         if IsContinentalZone(db_zoneId) then
                             display_zone_for_units_lua = db_zoneId
-                            if creature_id == 7057 or creature_id == 100 then
-                                print(string.format("[BATCH ORIGINAL] NPC %d using original continental zone: %d", creature_id, db_zoneId))
-                            end
+                            -- DEBUG: Uncomment for zone selection debugging
+                            -- if creature_id == 7057 or creature_id == 100 then
+                            --     print(string.format("[BATCH ORIGINAL] NPC %d using original continental zone: %d", creature_id, db_zoneId))
+                            -- end
                         else
                             -- Original zone is not continental, calculate by coordinates
                             local coords_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
                             if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
                                 display_zone_for_units_lua = coords_data[1][3]
-                                if creature_id == 7057 or creature_id == 100 then
-                                    print(string.format("[BATCH CALCULATED] NPC %d calculated zone by coords: %d", creature_id, display_zone_for_units_lua))
-                                end
+                                -- DEBUG: Uncomment for zone calculation debugging
+                                -- if creature_id == 7057 or creature_id == 100 then
+                                --     print(string.format("[BATCH CALCULATED] NPC %d calculated zone by coords: %d", creature_id, display_zone_for_units_lua))
+                                -- end
                             end
                         end
                     end
@@ -4723,77 +4694,5 @@ end
 -- Cache for continent-level WorldMapArea lookups
 local continent_zone_cache = {}
 
--- Return true if the given AreaTable ID has a WorldMapArea entry that belongs
--- to one of the four main continent maps (0, 1, 530, 571). These are the
--- only mapIDs that pfQuest is able to render on the large world map.
-local function IsZoneOnContinentMap(areatable_id)
-  if not areatable_id or areatable_id == 0 then return false end
-  if continent_zone_cache[areatable_id] ~= nil then
-    return continent_zone_cache[areatable_id]
-  end
-
-  local sql = string.format(
-    "SELECT mapID FROM WorldMapArea_%s WHERE areatableID = %d LIMIT 1",
-    expansion or "wotlk", areatable_id)
-
-  local cursor = mysql:execute(sql)
-  local is_continent = false
-  if cursor then
-    local row = {}
-    if cursor:fetch(row, "a") then
-      local mapID = tonumber(row.mapID) or -1
-      if mapID == 0 or mapID == 1 or mapID == 530 or mapID == 571 then
-        is_continent = true
-      end
-    end
-    cursor:close()
-  end
-  continent_zone_cache[areatable_id] = is_continent
-  return is_continent
-end
-
--- Try to transform an unsuitable zone (e.g. instance or sub-zone without
--- a continent WorldMapArea) into a parent zone that DOES have one.
--- 1) If the zone is already suitable, it is returned unchanged.
--- 2) Otherwise we walk the ParentAreaID chain (up to a depth of 5).
--- 3) If that fails we fall back to a geometric lookup via GetCustomCoords.
--- 4) Ultimately we return the original zone or the continent map itself.
-local function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
-  if initial_zone == 7057 or initial_zone == 1337 then
-    print("[DEBUG NDZ] start zone", initial_zone, "map", map_id, "coords", world_x, world_y)
-  end
-  if initial_zone and IsZoneOnContinentMap(initial_zone) then
-    if initial_zone == 7057 or initial_zone == 1337 then
-      print("[DEBUG NDZ] already continent zone", initial_zone)
-    end
-    return initial_zone
-  end
-  local safety = 0
-  local candidate = initial_zone
-  while candidate and candidate ~= 0 and safety < 5 do
-    candidate = GetParentAreaFromAreaTable(candidate)
-    if (initial_zone == 1337) then
-      print("[DEBUG NDZ] parent step", safety, "->", candidate)
-    end
-    if candidate and candidate ~= 0 and IsZoneOnContinentMap(candidate) then
-      if initial_zone == 1337 then
-        print("[DEBUG NDZ] picked parent", candidate)
-      end
-      return candidate
-    end
-    safety = safety + 1
-  end
-  if world_x and world_y and map_id then
-    local coords = GetCustomCoords(map_id, world_x, world_y)
-    if coords and coords[1] and coords[1][3] and coords[1][3] ~= 0 then
-      if initial_zone == 1337 then
-        print("[DEBUG NDZ] geometric fallback", coords[1][3])
-      end
-      return coords[1][3]
-    end
-  end
-  if initial_zone == 1337 then
-    print("[DEBUG NDZ] fallback to", initial_zone ~= 0 and initial_zone or map_id)
-  end
-  return initial_zone ~= 0 and initial_zone or map_id
-end
+-- REMOVED: Duplicate functions IsZoneOnContinentMap and NormalizeDisplayZone
+-- Using the original versions above instead
