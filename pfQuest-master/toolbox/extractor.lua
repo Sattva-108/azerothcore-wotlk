@@ -12,10 +12,10 @@
 
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
-local FOCUS_ON = {"units"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
+local FOCUS_ON = {"objects"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
 local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 1             -- Лимит для всего остального
-local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -2150,13 +2150,24 @@ end
     local gameobject_coords_cache = {}
 
     if #all_object_ids > 0 then
-      local object_ids_string = table.concat(all_object_ids, ",")
-      -- Get all necessary fields for coordinate conversion (same as GetGameObjectCoords)
-      local batch_coords_query = mysql:execute("SELECT id, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM gameobject WHERE id IN (" .. object_ids_string .. ")")
-
-      if batch_coords_query then
-        local coord_data = {}
+        local chunk_size = 5000  -- Process 5000 objects at a time for optimal performance
+        local total_chunks = math.ceil(#all_object_ids / chunk_size)
         local coords_loaded = 0
+
+        for chunk = 1, total_chunks do
+            local start_idx = (chunk - 1) * chunk_size + 1
+            local end_idx = math.min(chunk * chunk_size, #all_object_ids)
+            local chunk_ids = {}
+            for i = start_idx, end_idx do
+                table.insert(chunk_ids, all_object_ids[i])
+            end
+            local object_ids_string = table.concat(chunk_ids, ",")
+
+            print("  Processing coordinate chunk " .. chunk .. "/" .. total_chunks .. " (" .. #chunk_ids .. " objects)")
+            local batch_coords_query = mysql:execute("SELECT id, map, position_x, position_y, zoneId, areaId, spawntimesecs FROM gameobject WHERE id IN (" .. object_ids_string .. ") ORDER BY id, map")
+
+            if batch_coords_query then
+                local coord_data = {}
         while batch_coords_query:fetch(coord_data, "a") do
           if debug("objects_batch_coords") then break end
 
@@ -2168,18 +2179,8 @@ end
           local db_areaId = tonumber(coord_data.areaId)
           local respawn = tonumber(coord_data.spawntimesecs)
 
-          -- FIXED: Use NormalizeDisplayZone first (same logic as creatures)
+          -- Use NormalizeDisplayZone for proper zone detection (same as units - with cached IsContinentalZone)
           local display_map_areatable_id = NormalizeDisplayZone(db_zoneId, map_id, world_x, world_y)
-
-          -- Fallback to geometric calculation if still not continental
-          if not IsContinentalZone(display_map_areatable_id) then
-            if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
-              local coords_data = GetCustomCoords(map_id, world_x, world_y)
-              if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
-                display_map_areatable_id = coords_data[1][3]
-              end
-            end
-          end
 
           -- Final fallback
           if not display_map_areatable_id or display_map_areatable_id == 0 then
@@ -2224,11 +2225,23 @@ end
           table.insert(gameobject_coords_cache[object_id], {zone_x, zone_y, display_map_areatable_id, respawn})
           coords_loaded = coords_loaded + 1
         end
-        print("  Pass 2a complete: Loaded " .. coords_loaded .. " coordinate records with proper conversion")
-      else
-        print("  Pass 2a: No coordinate data loaded from batch query")
-      end
+            end
+            collectgarbage("collect")  -- Memory cleanup between chunks
+        end
     end
+    print("  Pass 2a complete: Cached coordinates for " .. #all_object_ids .. " objects")
+
+    -- DIAGNOSTIC: Check if cache was populated correctly
+    local cache_entries = 0
+    local total_coords = 0
+    for object_id, coords_list in pairs(gameobject_coords_cache) do
+        cache_entries = cache_entries + 1
+        total_coords = total_coords + #coords_list
+    end
+    print("  DIAGNOSTIC: gameobject_coords_cache has " .. cache_entries .. " entries with " .. total_coords .. " total coordinates")
+
+    -- MEMORY OPTIMIZATION: Force garbage collection after batch loading
+    collectgarbage("collect")
 
     -- Pass 2b: Original processing (now optimized with pre-loaded coordinate data)
     local processed = 0
@@ -2240,7 +2253,9 @@ end
 
       -- Show progress every 1000 objects
       if processed % 1000 == 0 then
-        print("  Processed " .. processed .. "/" .. total_objects .. " objects (" .. math.floor(processed/total_objects*100) .. "%)")
+        print("  Processed " .. processed .. "/" .. #all_object_ids .. " objects (" .. math.floor(processed/#all_object_ids*100) .. "%)")
+        -- MEMORY OPTIMIZATION: Force garbage collection every 1000 objects
+        collectgarbage("collect")
       end
 
       local entry  = tonumber(gameobject_template.entry)
@@ -2260,12 +2275,14 @@ end
       do -- coordinates - STEP 3/3: Use pre-loaded coordinate data
         pfDB["objects"][data][entry]["coords"] = {}
 
-        -- Use cached coordinates instead of SQL queries
+        -- USE BATCH DATA - MAJOR OPTIMIZATION! (eliminates individual GetGameObjectCoords calls!)
         if gameobject_coords_cache[entry] then
           for _, coords in ipairs(gameobject_coords_cache[entry]) do
             if debug("objects_coords") then break end
             table.insert(pfDB["objects"][data][entry]["coords"], coords)
           end
+          -- MEMORY OPTIMIZATION: Clear processed data immediately to free memory
+          gameobject_coords_cache[entry] = nil
         end
       end
 
@@ -2277,7 +2294,10 @@ end
     if pfDB and pfDB["objects"] then
       table.insert(execution_times, {name = "objects", time = end_time_objects - start_time_objects})
     end
-    -- ДОБАВЬТЕ:
+    -- FINAL MEMORY CLEANUP: Clear all object cache data
+    gameobject_coords_cache = nil
+    all_object_ids = nil
+    collectgarbage("collect")
     collectgarbage("collect")
     print("  Memory cleanup after objects: " .. math.floor(collectgarbage("count")) .. " KB")
   end
