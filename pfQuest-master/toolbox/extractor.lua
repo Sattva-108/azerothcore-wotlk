@@ -1017,56 +1017,9 @@ if config.expansions[expansion_to_process] then
         local ret = {}
 
         if core == "acore" then
-            local geo_sql = string.format([[
-                SELECT
-                    wma.areatableID,
-                    (POW(((wma.y_min + wma.y_max)/2 - %f), 2) + POW(((wma.x_min + wma.x_max)/2 - %f), 2)) AS dist
-                FROM WorldMapArea_wotlk wma
-                WHERE wma.mapID = %d
-                  AND wma.areatableID > 0
-                  AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) -- World X
-                  AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) -- World Y
-                ORDER BY
-                    dist ASC
-                LIMIT 1
-            ]], x, y, m, x, y)
-
-            -- ================================================================
-            --  КЛЮЧЕВОЙ ДЕБАГ: Печатаем финальный SQL-запрос
-            -- ================================================================
-            if m == 0 and math.floor(x) == -6272 then
-                print("--- BEGIN SQL to copy ---")
-                print(geo_sql)
-                print("--- END SQL to copy ---")
-            end
-
-            local query = mysql:execute(geo_sql)
-            if query then
-                local result = {}
-                if query:fetch(result, "a") then
-                    local zone_id = tonumber(result.areatableID)
-                    if zone_id and zone_id > 0 then
-                        -- ... остальная логика без изменений ...
-                        local zone_bounds = GetWorldMapAreaBoundariesForZone(zone_id, m)
-                        local zone_x_pct, zone_y_pct = 50, 50
-                        if zone_bounds then
-                            local Z_WorldX_L, Z_WorldX_R = zone_bounds.x_left, zone_bounds.x_right
-                            local Z_WorldY_T, Z_WorldY_B = zone_bounds.y_top, zone_bounds.y_bottom
-                            local zone_map_world_width = Z_WorldX_R - Z_WorldX_L
-                            local zone_map_world_height = Z_WorldY_T - Z_WorldY_B
-                            if zone_map_world_width > 0 and zone_map_world_height > 0 then
-                                zone_x_pct = ((Z_WorldY_T - y) / zone_map_world_height) * 100
-                                zone_y_pct = 100 - (((x - Z_WorldX_L) / zone_map_world_width) * 100)
-                            end
-                        end
-                        table.insert(ret, { round(zone_x_pct, 2), round(zone_y_pct, 2), zone_id, 0 })
-                        return ret
-                    end
-                end
-            end
 
             -- FIXED: Add direct SQL query for continental maps to find zone by coordinates
-            if m == 0 then
+            if m == 0 or m == 1 or m == 530 or m == 571 then
                 local sql_zone_by_coords = string.format([[
                     SELECT wma.areatableID, wma.x_min, wma.x_max, wma.y_min, wma.y_max
                     FROM WorldMapArea_wotlk wma
@@ -1074,7 +1027,7 @@ if config.expansions[expansion_to_process] then
                       AND wma.areatableID > 0
                       AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max)
                       AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max)
-                    ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) DESC
+                    ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) ASC
                     LIMIT 1
                 ]], m, x, y)
 
