@@ -21,10 +21,10 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
 local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_IDS = {12790, 13158, 12974} -- securing the lines + additional test quest
-local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100, 3652, 3672, 5768}  -- NPCs из анализа квеста 784 + тесты зон
-local QUEST_784_ITEMS = {}  -- Items для тестирования (quest items, rewards)
-local QUEST_784_OBJECTS = {}  -- Objects для тестирования (примеры)
+local QUEST_784_IDS = {12790, 13158, 12974, 2202, 962} -- securing the lines + additional test quest
+local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100, 3652, 3672, 5768, 3419}  -- NPCs из анализа квеста 784 + тесты зон
+local QUEST_784_ITEMS = {5339, 8047}  -- Items для тестирования (quest items, rewards)
+local QUEST_784_OBJECTS = {13891, 126049, 128293}  -- Objects для тестирования (примеры)
 
 
 -- ================================================================
@@ -1020,7 +1020,7 @@ if config.expansions[expansion_to_process] then
                 SELECT
                     wma.areatableID,
                     (POW(((wma.y_min + wma.y_max)/2 - %f), 2) + POW(((wma.x_min + wma.x_max)/2 - %f), 2)) AS dist
-                FROM WorldMapArea_%s wma
+                FROM WorldMapArea_wotlk wma
                 WHERE wma.mapID = %d
                   AND wma.areatableID > 0
                   AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) -- World X
@@ -1028,7 +1028,7 @@ if config.expansions[expansion_to_process] then
                 ORDER BY
                     dist ASC
                 LIMIT 1
-            ]], x, y, (config.dbc_expansion or "wotlk"), m, x, y, x, y)
+            ]], x, y, m, x, y)
 
             -- ================================================================
             --  КЛЮЧЕВОЙ ДЕБАГ: Печатаем финальный SQL-запрос
@@ -1119,7 +1119,7 @@ if config.expansions[expansion_to_process] then
 
         -- Старая логика для других ядер ...
         local worldmap = {}
-        local sql = string.format([[ SELECT * FROM pfquest.WorldMapArea_%s WHERE mapID = %d AND x_min < %f AND x_max > %f AND y_min < %f AND y_max > %f AND areatableID > 0 ]], expansion, m, x, x, y, y)
+        local sql = string.format([[ SELECT * FROM pfquest.WorldMapArea_wotlk WHERE mapID = %d AND x_min < %f AND x_max > %f AND y_min < %f AND y_max > %f AND areatableID > 0 ]], m, x, x, y, y)
         local query = mysql:execute(sql)
         while query and query:fetch(worldmap, "a") do
             local zone = worldmap.areatableID
@@ -1414,36 +1414,22 @@ end
                 local db_zoneId = gobject_data.zoneId
                 local db_areaId = gobject_data.areaId
 
-                local display_map_areatable_id -- ID карты, на которой объект будет отображаться
+                -- FIXED: Use NormalizeDisplayZone first (same logic as creatures)
+                local display_map_areatable_id = NormalizeDisplayZone(db_zoneId, map_id, gobj_world_x, gobj_world_y)
 
-                if db_zoneId ~= 0 then
-                    display_map_areatable_id = db_zoneId
-                elseif db_areaId ~= 0 then
-                    local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
-                    if parent_of_area ~= 0 then
-                        display_map_areatable_id = parent_of_area
-                    else
-                        display_map_areatable_id = db_areaId
+                -- Fallback to geometric calculation if still not continental
+                if not IsContinentalZone(display_map_areatable_id) then
+                    if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
+                        local coords_data = GetCustomCoords(map_id, gobj_world_x, gobj_world_y)
+                        if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
+                            display_map_areatable_id = coords_data[1][3]
+                        end
                     end
                 end
 
-                -- NEW: Normalise display zone for gameobjects as well
-                display_map_areatable_id = NormalizeDisplayZone(display_map_areatable_id, map_id, gobj_world_x, gobj_world_y)
-
+                -- Final fallback (same as creatures)
                 if not display_map_areatable_id or display_map_areatable_id == 0 then
-                    if gobj_world_x and gobj_world_y and map_id then
-                        local coords_fallback_data = GetCustomCoords(map_id, gobj_world_x, gobj_world_y)
-                        if coords_fallback_data and coords_fallback_data[1] and coords_fallback_data[1][3] then
-                            display_map_areatable_id = coords_fallback_data[1][3]
-                            if display_map_areatable_id == 0 then display_map_areatable_id = map_id end
-                        else
-                            display_map_areatable_id = map_id
-                        end
-                    else
-                        display_map_areatable_id = 1
-                    end
-                    if not display_map_areatable_id or display_map_areatable_id == 0 then display_map_areatable_id = 1 end
-                    -- print(string.format("INFO: GObject GUID %s (template %s) using fallback display_map_areatable_id: %d", gobject_data.guid or "N/A", id1_template, display_map_areatable_id))
+                    display_map_areatable_id = db_zoneId
                 end
 
                 local zone_x, zone_y = 50, 50 -- Default
@@ -2166,38 +2152,26 @@ end
           local db_areaId = tonumber(coord_data.areaId)
           local respawn = tonumber(coord_data.spawntimesecs)
 
-          -- Apply same coordinate conversion logic as GetGameObjectCoords
-          local display_map_areatable_id = 0
+          -- FIXED: Use NormalizeDisplayZone first (same logic as creatures)
+          local display_map_areatable_id = NormalizeDisplayZone(db_zoneId, map_id, world_x, world_y)
+
+          -- Fallback to geometric calculation if still not continental
+          if not IsContinentalZone(display_map_areatable_id) then
+            if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
+              local coords_data = GetCustomCoords(map_id, world_x, world_y)
+              if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
+                display_map_areatable_id = coords_data[1][3]
+              end
+            end
+          end
+
+          -- Final fallback
+          if not display_map_areatable_id or display_map_areatable_id == 0 then
+            display_map_areatable_id = db_zoneId
+          end
+
           local zone_x = 50  -- Default coordinates same as GetGameObjectCoords
           local zone_y = 50
-
-          -- Determine zone ID (same logic as GetGameObjectCoords)
-          if db_zoneId ~= 0 then
-            display_map_areatable_id = db_zoneId
-          elseif db_areaId ~= 0 then
-            local parent_of_area = GetParentAreaFromAreaTable(db_areaId)
-            if parent_of_area ~= 0 then
-              display_map_areatable_id = parent_of_area
-            else
-              display_map_areatable_id = db_areaId
-            end
-          end
-
-          -- Fallback if no valid zone found (same logic as GetGameObjectCoords)
-          if not display_map_areatable_id or display_map_areatable_id == 0 then
-            if world_x and world_y and map_id then
-              local coords_fallback_data = GetCustomCoords(map_id, world_x, world_y)
-              if coords_fallback_data and coords_fallback_data[1] and coords_fallback_data[1][3] then
-                display_map_areatable_id = coords_fallback_data[1][3]
-                if display_map_areatable_id == 0 then display_map_areatable_id = map_id end
-              else
-                display_map_areatable_id = map_id
-              end
-            else
-              display_map_areatable_id = 1
-            end
-            if not display_map_areatable_id or display_map_areatable_id == 0 then display_map_areatable_id = 1 end
-          end
 
           -- Convert world coordinates to zone coordinates (same as GetGameObjectCoords)
           local zone_bounds = GetWorldMapAreaBoundariesForZone(display_map_areatable_id, map_id)
