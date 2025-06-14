@@ -1027,9 +1027,10 @@ if config.expansions[expansion_to_process] then
                       AND wma.areatableID > 0
                       AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max)
                       AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max)
-                    ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) DESC
+                    ORDER BY ( POW(((wma.y_min + wma.y_max)/2 - %f),2)
+                             + POW(((wma.x_min + wma.x_max)/2 - %f),2) ) ASC
                     LIMIT 1
-                ]], m, x, y)
+                ]], m, x, y, x, y)
 
                 local cursor_zone = mysql:execute(sql_zone_by_coords)
                 if cursor_zone then
@@ -1222,9 +1223,6 @@ function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
     return 331
   elseif initial_zone == 2557 then -- Dire Maul → Feralas
     return 357
-  elseif initial_zone == 148 then -- Darkshore (if this is causing problems)
-    -- Keep as is for now, but this might need adjustment
-    return initial_zone
   end
 
   -- DEBUG: Uncomment for troubleshooting specific zones
@@ -1239,7 +1237,7 @@ function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
   -- Try GetCustomCoords first since GetParentAreaFromAreaTable is not working reliably
   if world_x and world_y and map_id then
     local c = GetCustomCoords(map_id, world_x, world_y)
-    if c and c[1] and c[1][3] and c[1][3] ~= 0 then
+    if c and c[1] and c[1][3] and c[1][3] ~= 0 and IsContinentalZone(c[1][3]) then
       -- DEBUG: Uncomment for debugging
       -- if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Found geometric zone:", c[1][3]) end
       return c[1][3]
@@ -1305,7 +1303,7 @@ end
                 -- Fallback to geometric calculation if still not continental
                 if not IsContinentalZone(display_zone_for_units_lua) then
                     if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
-                        local geo_sql = string.format([[ SELECT wma.areatableID FROM WorldMapArea_wotlk wma WHERE wma.mapID = %d AND wma.areatableID > 0 AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) DESC LIMIT 1 ]], map_id, npc_world_x, npc_world_y)
+                        local geo_sql = string.format([[ SELECT wma.areatableID FROM WorldMapArea_wotlk wma WHERE wma.mapID = %d AND wma.areatableID > 0 AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) ORDER BY ( POW(((wma.y_min + wma.y_max)/2 - %f),2) + POW(((wma.x_min + wma.x_max)/2 - %f),2) ) ASC LIMIT 1 ]], map_id, npc_world_x, npc_world_y, npc_world_x, npc_world_y)
                         local query = mysql:execute(geo_sql)
                         if query then
                             local result = {}
@@ -1398,7 +1396,7 @@ end
                 if not IsContinentalZone(display_map_areatable_id) then
                     if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
                         local coords_data = GetCustomCoords(map_id, gobj_world_x, gobj_world_y)
-                        if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
+                        if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 and IsContinentalZone(coords_data[1][3]) then
                             display_map_areatable_id = coords_data[1][3]
                         end
                     end
