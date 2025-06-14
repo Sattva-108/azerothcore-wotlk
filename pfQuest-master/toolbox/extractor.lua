@@ -20,9 +20,9 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_IDS = {12790, 13158, 12974, 2202, 962} -- securing the lines + additional test quest
-local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100, 3652, 3672, 5768, 3419}  -- NPCs из анализа квеста 784 + тесты зон
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_IDS = {12790, 13158, 12974, 2202, 962, 12593} -- securing the lines + additional test quest
+local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100, 3652, 3672, 5768, 3419, 25462, 28357}  -- NPCs из анализа квеста 784 + тесты зон
 local QUEST_784_ITEMS = {5339, 8047}  -- Items для тестирования (quest items, rewards)
 local QUEST_784_OBJECTS = {13891, 126049, 128293}  -- Objects для тестирования (примеры)
 
@@ -1019,7 +1019,7 @@ if config.expansions[expansion_to_process] then
         if core == "acore" then
 
             -- FIXED: Add direct SQL query for continental maps to find zone by coordinates
-            if m == 0 or m == 1 or m == 530 or m == 571 then
+            if m == 0 or m == 1 or m == 530 or m == 571 or m == 609 then
                 local sql_zone_by_coords = string.format([[
                     SELECT wma.areatableID, wma.x_min, wma.x_max, wma.y_min, wma.y_max
                     FROM WorldMapArea_wotlk wma
@@ -1103,7 +1103,7 @@ if config.expansions[expansion_to_process] then
         print("  Loading continental zones cache...")
         local sql_query = [[
             SELECT DISTINCT areatableID FROM WorldMapArea_wotlk
-            WHERE mapID IN (0,1,530,571) AND areatableID > 0
+            WHERE mapID IN (0,1,530,571,609) AND areatableID > 0
         ]]
 
         local cursor = mysql:execute(sql_query)
@@ -1302,7 +1302,7 @@ end
 
                 -- Fallback to geometric calculation if still not continental
                 if not IsContinentalZone(display_zone_for_units_lua) then
-                    if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
+                    if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 or map_id == 609 then
                         local geo_sql = string.format([[ SELECT wma.areatableID FROM WorldMapArea_wotlk wma WHERE wma.mapID = %d AND wma.areatableID > 0 AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max) AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max) ORDER BY ( POW(((wma.y_min + wma.y_max)/2 - %f),2) + POW(((wma.x_min + wma.x_max)/2 - %f),2) ) ASC LIMIT 1 ]], map_id, npc_world_x, npc_world_y, npc_world_x, npc_world_y)
                         local query = mysql:execute(geo_sql)
                         if query then
@@ -1394,7 +1394,7 @@ end
 
                 -- Fallback to geometric calculation if still not continental
                 if not IsContinentalZone(display_map_areatable_id) then
-                    if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
+                    if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 or map_id == 609 then
                         local coords_data = GetCustomCoords(map_id, gobj_world_x, gobj_world_y)
                         if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 and IsContinentalZone(coords_data[1][3]) then
                             display_map_areatable_id = coords_data[1][3]
