@@ -1136,36 +1136,49 @@ if config.expansions[expansion_to_process] then
 
 
 
-    -- Function to check if a zone ID represents a continental zone (not an instance)
+    -- Continental zones cache for performance optimization
+    local continental_zones_cache = {}
+    local continental_zones_loaded = false
+
+    -- Load continental zones cache once at startup
+    function LoadContinentalZonesCache()
+        if continental_zones_loaded then
+            return
+        end
+
+        print("  Loading continental zones cache...")
+        local sql_query = [[
+            SELECT DISTINCT areatableID FROM WorldMapArea_wotlk
+            WHERE mapID IN (0,1,530,571) AND areatableID > 0
+        ]]
+
+        local cursor = mysql:execute(sql_query)
+        if cursor then
+            local result = {}
+            local count = 0
+            while cursor:fetch(result, "a") do
+                local zone_id = tonumber(result.areatableID)
+                if zone_id then
+                    continental_zones_cache[zone_id] = true
+                    count = count + 1
+                end
+            end
+            cursor:close()
+            print("  Loaded " .. count .. " continental zones into cache")
+        end
+
+        continental_zones_loaded = true
+    end
+
+    -- Function to check if a zone ID represents a continental zone (not an instance) - CACHED VERSION
     function IsContinentalZone(zone_id)
         if not zone_id or zone_id == 0 then
             return false
         end
 
-        -- Check if zone has a WorldMapArea entry for continental maps (0, 1, 530, 571)
-        local continental_maps = {0, 1, 530, 571}
-
-        for _, map_id in ipairs(continental_maps) do
-            local sql_check = string.format([[
-                SELECT COUNT(*) as cnt FROM WorldMapArea_wotlk
-                WHERE areatableID = %d AND mapID = %d
-            ]], zone_id, map_id)
-
-            local cursor_check = mysql:execute(sql_check)
-            if cursor_check then
-                local result = {}
-                if cursor_check:fetch(result, "a") then
-                    local count = tonumber(result.cnt) or 0
-                    cursor_check:close()
-                    if count > 0 then
-                        return true -- Found on a continental map
-                    end
-                end
-                cursor_check:close()
-            end
-        end
-
-        return false -- Not found on any continental map
+        -- Use cache for instant lookup
+        LoadContinentalZonesCache()
+        return continental_zones_cache[zone_id] == true
     end
 
     -- Кэш для границ зон из WorldMapArea_wotlk
@@ -1759,7 +1772,7 @@ end
                     local db_zoneId = tonumber(temp_data.zoneId)
                     local db_areaId = tonumber(temp_data.areaId)
 
-                    -- Simple zone processing (same as objects/old units)
+                    -- Use NormalizeDisplayZone for proper zone detection (now with cached IsContinentalZone)
                     local display_zone_for_units_lua = NormalizeDisplayZone(db_zoneId, map_id, npc_world_x, npc_world_y)
 
                     -- Final fallback
@@ -2084,6 +2097,10 @@ end
     -- FINAL MEMORY CLEANUP: Clear all creature cache data
     creature_coords_cache = nil
     all_creature_ids = nil
+    -- Clear continental zones cache as coordinate processing is done
+    continental_zones_cache = nil
+    continental_zones_loaded = false
+    collectgarbage("collect")
     collectgarbage("collect")
     print("  Memory cleanup after units: " .. math.floor(collectgarbage("count")) .. " KB")
   end
