@@ -448,6 +448,7 @@ local customids = {
   ["Acherus: The Ebon Hold"] = 4298,
   ["Plaguelands: The Scarlet Enclave"] = 4298,
   ["The Scarlet Enclave"] = 4298,
+  ["ScarletEnclave"] = 4298,
 }
 
 local map_zone_cache = { }
@@ -455,17 +456,6 @@ function pfMap:GetMapID(cid, mid)
   cid = cid or GetCurrentMapContinent()
   mid = mid or GetCurrentMapZone()
 
-  -- DEBUG: Log map info for Acherus debugging (continent -1 = special map)
-  local mapInfo = GetMapInfo()
-  if cid == -1 or (mapInfo and (string.find(mapInfo, "Acherus") or string.find(mapInfo, "Scarlet") or string.find(mapInfo, "Ebon"))) then
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG]|r GetMapInfo(): " .. (mapInfo or "nil"))
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG]|r Continent: " .. (cid or "nil") .. ", Zone: " .. (mid or "nil"))
-    
-    -- Check if continent/zone are 0 or -1 (special maps)
-    if cid == 0 or mid == 0 or cid == -1 then
-      DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG]|r WARNING: Special map detected (continent=" .. cid .. " or zone=" .. mid .. ")")
-    end
-  end
 
   -- GetMapZones() should always return the same amount
   -- of zones for each continent, so we can cache it to
@@ -483,21 +473,15 @@ function pfMap:GetMapID(cid, mid)
   if cid == 0 or mid == 0 or cid == -1 then
     id = customids[GetMapInfo()]
     
-    -- For Acherus specifically (continent=-1, zone=0, GetMapInfo()=nil)
+    -- For Acherus specifically (continent=-1, zone=0)
     -- We know from .gps that it's Map 609 which should map to zone 4298
     if not id and cid == -1 and mid == 0 then
       id = 4298  -- Hardcoded for Acherus/Ebon Hold
-      DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG]|r Using hardcoded zone 4298 for Acherus")
     end
   else
     id = id or customids[GetMapInfo()]
   end
 
-  -- DEBUG: More logging for Acherus
-  if cid == -1 or (mapInfo and (string.find(mapInfo, "Acherus") or string.find(mapInfo, "Scarlet") or string.find(mapInfo, "Ebon"))) then
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG]|r Zone name from list: " .. (name or "nil"))
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG]|r Final map ID: " .. (id or "nil"))
-  end
 
   return id
 end
@@ -874,20 +858,6 @@ function pfMap:UpdateNodes()
   local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
   local i = 1
 
-  -- DEBUG: Log current map info
-  local mapInfo = GetMapInfo()
-  local currentContinent = GetCurrentMapContinent()
-  if currentContinent == -1 or (mapInfo and (string.find(mapInfo, "Acherus") or string.find(mapInfo, "Scarlet") or string.find(mapInfo, "Ebon"))) then
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG UpdateNodes]|r Current map ID: " .. (map or "nil"))
-    DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG UpdateNodes]|r Available node maps for PFDB:")
-    if pfMap.nodes["PFDB"] then
-      for mapid, _ in pairs(pfMap.nodes["PFDB"]) do
-        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG]|r   Map " .. mapid .. " has nodes")
-      end
-    else
-      DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[DEBUG]|r   No PFDB nodes found")
-    end
-  end
 
   -- reset tracker
   pfQuest.tracker.Reset()
