@@ -12,10 +12,10 @@
 
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
-local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
-local FOCUS_LIMIT = 1           -- Лимит для того что тестируем
+local FOCUS_ON = {"units"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
+local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 1             -- Лимит для всего остального
-local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -1725,7 +1725,7 @@ end
     local creature_coords_cache = {}
 
     if #all_creature_ids > 0 then
-        local chunk_size = 2000  -- Process 2000 creatures at a time for optimal performance
+        local chunk_size = 5000  -- Process 5000 creatures at a time for optimal performance
         local total_chunks = math.ceil(#all_creature_ids / chunk_size)
 
         for chunk = 1, total_chunks do
@@ -1759,29 +1759,10 @@ end
                     local db_zoneId = tonumber(temp_data.zoneId)
                     local db_areaId = tonumber(temp_data.areaId)
 
-                    -- FIXED: Use NormalizeDisplayZone first (same logic as GetCreatureCoords)
+                    -- Simple zone processing (same as objects/old units)
                     local display_zone_for_units_lua = NormalizeDisplayZone(db_zoneId, map_id, npc_world_x, npc_world_y)
 
-                    -- DEBUG: Uncomment for zone debugging
-                    -- if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
-                    --     print(string.format("[BATCH NORMALIZE] NPC %d normalized zone: %d -> %d", creature_id, db_zoneId, display_zone_for_units_lua))
-                    -- end
-
-                    -- Fallback to geometric calculation if still not continental
-                    if not IsContinentalZone(display_zone_for_units_lua) then
-                        if map_id == 0 or map_id == 1 or map_id == 530 or map_id == 571 then
-                            local coords_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
-                            if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
-                                display_zone_for_units_lua = coords_data[1][3]
-                                -- DEBUG: Uncomment for debugging
-                                -- if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
-                                --     print(string.format("[BATCH CALCULATED] NPC %d calculated zone by coords: %d", creature_id, display_zone_for_units_lua))
-                                -- end
-                            end
-                        end
-                    end
-
-                    -- Final fallback (same as GetCreatureCoords)
+                    -- Final fallback
                     if not display_zone_for_units_lua or display_zone_for_units_lua == 0 then
                         display_zone_for_units_lua = db_zoneId
                     end
@@ -1810,13 +1791,30 @@ end
                     zone_y = math.max(0, math.min(100, zone_y))
 
                     local creature_respawn_time = tonumber(temp_data.spawntimesecs) or 0
-                    table.insert(creature_coords_cache[creature_id], {round(zone_x,2), round(zone_y,2), display_zone_for_units_lua, creature_respawn_time})
+
+                    -- DIAGNOSTIC: Check for problematic coordinates
+                    local final_x, final_y = round(zone_x,2), round(zone_y,2)
+                    if (final_x == 0 and final_y == 100) or (final_x == 100 and final_y == 0) or final_x < 0 or final_x > 100 or final_y < 0 or final_y > 100 then
+                        print(string.format("  WARNING: Creature %d got invalid coordinates [%.2f,%.2f] zone=%d original_zone=%d world=[%.2f,%.2f] map=%d",
+                            creature_id, final_x, final_y, display_zone_for_units_lua, db_zoneId, npc_world_x, npc_world_y, map_id))
+                    end
+
+                    table.insert(creature_coords_cache[creature_id], {final_x, final_y, display_zone_for_units_lua, creature_respawn_time})
                 end
             end
             collectgarbage("collect")  -- Memory cleanup between chunks
         end
     end
     print("  Pass 2a complete: Cached coordinates for " .. #all_creature_ids .. " creatures")
+
+    -- DIAGNOSTIC: Check if cache was populated correctly
+    local cache_entries = 0
+    local total_coords = 0
+    for creature_id, coords_list in pairs(creature_coords_cache) do
+        cache_entries = cache_entries + 1
+        total_coords = total_coords + #coords_list
+    end
+    print("  DIAGNOSTIC: creature_coords_cache has " .. cache_entries .. " entries with " .. total_coords .. " total coordinates")
 
     -- MEMORY OPTIMIZATION: Force garbage collection after batch loading
     collectgarbage("collect")
