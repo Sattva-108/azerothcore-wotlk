@@ -1157,10 +1157,6 @@ if config.expansions[expansion_to_process] then
                     local count = tonumber(result.cnt) or 0
                     cursor_check:close()
                     if count > 0 then
-                        -- DEBUG: Show which zones are considered continental
-                        if zone_id == 12 or zone_id == 718 or zone_id == 1337 then
-                            print(string.format("[IsContinentalZone] Zone %d found on map %d - CONTINENTAL", zone_id, map_id))
-                        end
                         return true -- Found on a continental map
                     end
                 end
@@ -1168,10 +1164,6 @@ if config.expansions[expansion_to_process] then
             end
         end
 
-        -- DEBUG: Show which zones are NOT continental
-        if zone_id == 12 or zone_id == 718 or zone_id == 1337 then
-            print(string.format("[IsContinentalZone] Zone %d NOT found on any continental map", zone_id))
-        end
         return false -- Not found on any continental map
     end
 
@@ -1258,10 +1250,10 @@ local continent_zone_cache = {}
 function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
   if not initial_zone then return map_id or 1 end -- Защита от nil
 
-  -- Для отладки конкретного NPC
-  if initial_zone == 1337 or initial_zone == 718 then
-      print(string.format("[NDZ] Normalizing zone %s for map %s at %s,%s", tostring(initial_zone), tostring(map_id), tostring(world_x), tostring(world_y)))
-  end
+  -- DEBUG: Uncomment for troubleshooting specific zones
+  -- if initial_zone == 1337 or initial_zone == 718 then
+  --     print(string.format("[NDZ] Normalizing zone %s for map %s at %s,%s", tostring(initial_zone), tostring(map_id), tostring(world_x), tostring(world_y)))
+  -- end
 
   if IsContinentalZone(initial_zone) then
     return initial_zone
@@ -1271,25 +1263,30 @@ function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
   if world_x and world_y and map_id then
     local c = GetCustomCoords(map_id, world_x, world_y)
     if c and c[1] and c[1][3] and c[1][3] ~= 0 then
-      if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Found geometric zone:", c[1][3]) end
+      -- DEBUG: Uncomment for debugging
+      -- if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Found geometric zone:", c[1][3]) end
       return c[1][3]
     end
-    if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] GetCustomCoords returned empty or invalid") end
+    -- DEBUG: Uncomment for debugging
+    -- if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] GetCustomCoords returned empty or invalid") end
   end
 
   -- Fallback: try parent area lookup (keeping for compatibility)
   local safety, candidate = 0, initial_zone
   while candidate and candidate ~= 0 and safety < 5 do
     candidate = GetParentAreaFromAreaTable(candidate)
-    if initial_zone == 1337 or initial_zone == 718 then print(string.format("[NDZ] Parent step %d: %d -> %d", safety, initial_zone, candidate or 0)) end
+    -- DEBUG: Uncomment for debugging
+    -- if initial_zone == 1337 or initial_zone == 718 then print(string.format("[NDZ] Parent step %d: %d -> %d", safety, initial_zone, candidate or 0)) end
     if candidate and candidate ~= 0 and IsContinentalZone(candidate) then
-      if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Found parent zone:", candidate) end
+      -- DEBUG: Uncomment for debugging
+      -- if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Found parent zone:", candidate) end
       return candidate
     end
     safety = safety + 1
   end
 
-  if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Failed to normalize, returning original:", initial_zone) end
+  -- DEBUG: Uncomment for debugging
+  -- if initial_zone == 1337 or initial_zone == 718 then print("[NDZ] Failed to normalize, returning original:", initial_zone) end
   return initial_zone
 end
     function GetCreatureCoords(id1_template) -- id1_template это creature_template.entry
@@ -1323,9 +1320,10 @@ end
                 -- FIXED: Use NormalizeDisplayZone first, then fallback to geometric calculation
                 local display_zone_for_units_lua = NormalizeDisplayZone(db_zoneId, map_id, npc_world_x, npc_world_y)
 
-                if id1_template == 7057 or id1_template == 100 or id1_template == 3652 or id1_template == 3672 or id1_template == 5768 then
-                    print(string.format("[GC NORMALIZE] NPC %d normalized zone: %d -> %d", id1_template, db_zoneId, display_zone_for_units_lua))
-                end
+                -- DEBUG: Uncomment for zone debugging
+                -- if id1_template == 7057 or id1_template == 100 or id1_template == 3652 or id1_template == 3672 or id1_template == 5768 then
+                --     print(string.format("[GC NORMALIZE] NPC %d normalized zone: %d -> %d", id1_template, db_zoneId, display_zone_for_units_lua))
+                -- end
 
                 -- Fallback to geometric calculation if still not continental
                 if not IsContinentalZone(display_zone_for_units_lua) then
@@ -1336,9 +1334,10 @@ end
                             local result = {}
                             if query:fetch(result, "a") then
                                 display_zone_for_units_lua = tonumber(result.areatableID)
-                                if id1_template == 7057 or id1_template == 100 or id1_template == 3652 or id1_template == 3672 or id1_template == 5768 then
-                                    print(string.format("[GC CALCULATED] NPC %d calculated zone by coords: %d", id1_template, display_zone_for_units_lua))
-                                end
+                                -- DEBUG: Uncomment for debugging
+                                -- if id1_template == 7057 or id1_template == 100 or id1_template == 3652 or id1_template == 3672 or id1_template == 5768 then
+                                --     print(string.format("[GC CALCULATED] NPC %d calculated zone by coords: %d", id1_template, display_zone_for_units_lua))
+                                -- end
                             end
                             query:close()
                         end
@@ -1776,9 +1775,10 @@ end
                     -- FIXED: Use NormalizeDisplayZone first (same logic as GetCreatureCoords)
                     local display_zone_for_units_lua = NormalizeDisplayZone(db_zoneId, map_id, npc_world_x, npc_world_y)
 
-                    if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
-                        print(string.format("[BATCH NORMALIZE] NPC %d normalized zone: %d -> %d", creature_id, db_zoneId, display_zone_for_units_lua))
-                    end
+                    -- DEBUG: Uncomment for zone debugging
+                    -- if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
+                    --     print(string.format("[BATCH NORMALIZE] NPC %d normalized zone: %d -> %d", creature_id, db_zoneId, display_zone_for_units_lua))
+                    -- end
 
                     -- Fallback to geometric calculation if still not continental
                     if not IsContinentalZone(display_zone_for_units_lua) then
@@ -1786,9 +1786,10 @@ end
                             local coords_data = GetCustomCoords(map_id, npc_world_x, npc_world_y)
                             if coords_data and coords_data[1] and coords_data[1][3] and coords_data[1][3] ~= 0 then
                                 display_zone_for_units_lua = coords_data[1][3]
-                                if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
-                                    print(string.format("[BATCH CALCULATED] NPC %d calculated zone by coords: %d", creature_id, display_zone_for_units_lua))
-                                end
+                                -- DEBUG: Uncomment for debugging
+                                -- if creature_id == 7057 or creature_id == 100 or creature_id == 3652 or creature_id == 3672 or creature_id == 5768 then
+                                --     print(string.format("[BATCH CALCULATED] NPC %d calculated zone by coords: %d", creature_id, display_zone_for_units_lua))
+                                -- end
                             end
                         end
                     end
