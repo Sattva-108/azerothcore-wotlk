@@ -20,9 +20,9 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
-local QUEST_784_IDS = {12790, 13158, 12974, 2202, 962, 12593} -- securing the lines + additional test quest
-local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100, 3652, 3672, 5768, 3419, 25462, 28357}  -- NPCs из анализа квеста 784 + тесты зон
+local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_IDS = {12790, 13158, 12974, 2202, 962, 12593, 4811} -- securing the lines + additional test quest
+local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100, 3652, 3672, 5768, 3419, 25462, 28357, 2930}  -- NPCs из анализа квеста 784 + тесты зон
 local QUEST_784_ITEMS = {5339, 8047}  -- Items для тестирования (quest items, rewards)
 local QUEST_784_OBJECTS = {13891, 126049, 128293}  -- Objects для тестирования (примеры)
 
@@ -941,28 +941,35 @@ if config.expansions[expansion_to_process] then
       -- Enable areatrigger coordinates for AzerothCore
       if core == "acore" then
         -- AzerothCore with DBC tables (without pfquest prefix)
+        -- FIXED: X и Y переставлены в areatrigger_wotlk
         local sql = [[
-          SELECT * FROM AreaTrigger_]]..expansion..[[ LEFT JOIN WorldMapArea_]]..expansion..[[
-          ON ( WorldMapArea_]]..expansion..[[.mapID = AreaTrigger_]]..expansion..[[.MapID
-            AND WorldMapArea_]]..expansion..[[.x_min < AreaTrigger_]]..expansion..[[.X
-            AND WorldMapArea_]]..expansion..[[.x_max > AreaTrigger_]]..expansion..[[.X
-            AND WorldMapArea_]]..expansion..[[.y_min < AreaTrigger_]]..expansion..[[.Y
-            AND WorldMapArea_]]..expansion..[[.y_max > AreaTrigger_]]..expansion..[[.Y
-            AND WorldMapArea_]]..expansion..[[.areatableID > 0)
-          WHERE AreaTrigger_]]..expansion..[[.ID = ]] .. id .. [[ ORDER BY areatableID ]]
+          SELECT at.*, wma.areatableID, wma.x_min, wma.x_max, wma.y_min, wma.y_max
+          FROM areatrigger_wotlk at
+          LEFT JOIN WorldMapArea_wotlk wma
+          ON ( wma.mapID = at.MapID
+            AND wma.areatableID > 0
+            AND at.Y BETWEEN wma.x_min AND wma.x_max
+            AND at.X BETWEEN wma.y_min AND wma.y_max )
+          WHERE at.ID = ]] .. id .. [[ ORDER BY wma.areatableID ]]
 
         local query = mysql:execute(sql)
         if query then
           while query:fetch(areatrigger, "a") do
             if debug("areatrigger_coords") then break end
             local zone_id = tonumber(areatrigger.areatableID) or 0
-            local world_x = tonumber(areatrigger.X) or 0
-            local world_y = tonumber(areatrigger.Y) or 0
+            -- FIXED: X и Y переставлены
+            local world_x = tonumber(areatrigger.Y) or 0  -- at.Y = world X
+            local world_y = tonumber(areatrigger.X) or 0  -- at.X = world Y
 
-            if zone_id > 0 then
-              -- Simple coordinate conversion - can be calibrated later
-              local zone_x = math.floor((world_x + 17066) / 340 * 100) / 100
-              local zone_y = math.floor((world_y + 17066) / 340 * 100) / 100
+            local wma_x_min = tonumber(areatrigger.x_min) or 0
+            local wma_x_max = tonumber(areatrigger.x_max) or 0
+            local wma_y_min = tonumber(areatrigger.y_min) or 0
+            local wma_y_max = tonumber(areatrigger.y_max) or 0
+
+            if zone_id > 0 and wma_x_min ~= 0 and wma_x_max ~= 0 and wma_y_min ~= 0 and wma_y_max ~= 0 then
+              -- Правильный расчет координат зоны
+              local zone_x = ((wma_y_max - world_y) / (wma_y_max - wma_y_min)) * 100
+              local zone_y = 100 - ((world_x - wma_x_min) / (wma_x_max - wma_x_min)) * 100
               zone_x = math.max(0, math.min(100, zone_x))
               zone_y = math.max(0, math.min(100, zone_y))
 
@@ -1479,38 +1486,27 @@ end
 
     -- Enable areatrigger for AzerothCore with DBC tables
     if core == "acore" then
-      -- Use basic areatrigger_teleport table from AzerothCore instead of DBC
-      local test_query = mysql:execute('SHOW TABLES LIKE "areatrigger_teleport"')
-      if test_query and test_query:fetch() then
---         print("  Found areatrigger_teleport table, extracting areatriggers...")
-        local areatrigger = {}
-        local query = mysql:execute('SELECT ID, target_map, target_position_x, target_position_y FROM areatrigger_teleport ORDER BY ID')
-        if query then
-          while query:fetch(areatrigger, "a") do
-            if debug("areatrigger") then break end
-            local entry = tonumber(areatrigger.ID)
-            if entry then
-              pfDB["areatrigger"][data][entry] = {}
+      -- Use areatrigger_wotlk to get all triggers
+      local areatrigger_ids_query = mysql:execute("SELECT ID AS id FROM areatrigger_wotlk")
+      if areatrigger_ids_query then
+        local areatrigger_row = {}
+        while areatrigger_ids_query:fetch(areatrigger_row, "a") do
+          if debug("areatrigger") then break end
+          local entry = tonumber(areatrigger_row.id)
+          if entry then
+            pfDB["areatrigger"][data][entry] = {}
+
+            do -- coordinates
               pfDB["areatrigger"][data][entry]["coords"] = {}
-              -- Basic coordinate data without zone conversion
-              local x = tonumber(areatrigger.target_position_x) or 0
-              local y = tonumber(areatrigger.target_position_y) or 0
-              local map = tonumber(areatrigger.target_map) or 0
-              if x ~= 0 and y ~= 0 and map ~= 0 then
-                -- Simple coordinate conversion
-                local zone_x = math.floor((x + 17066) / 340 * 100) / 100
-                local zone_y = math.floor((y + 17066) / 340 * 100) / 100
-                zone_x = math.max(0, math.min(100, zone_x))
-                zone_y = math.max(0, math.min(100, zone_y))
-                table.insert(pfDB["areatrigger"][data][entry]["coords"], { zone_x, zone_y, map, 0 })
+              for id, coords in pairs(GetAreaTriggerCoords(entry)) do
+                local x, y, zone, respawn = unpack(coords)
+                table.insert(pfDB["areatrigger"][data][entry]["coords"], { x, y, zone, respawn })
               end
             end
           end
-        else
-          print("  Warning: Failed to extract areatriggers")
         end
       else
-        print("  Skipping areatrigger extraction (areatrigger_teleport table not found)")
+        print("  Skipping areatrigger extraction (areatrigger_involvedrelation table not found)")
       end
     else
       -- iterate over all areatriggers
