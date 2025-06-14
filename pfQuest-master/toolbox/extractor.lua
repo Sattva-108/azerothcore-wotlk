@@ -383,6 +383,7 @@ function serialize_value(file, value, indent)
         else
           -- Debug: log when we encounter unhandled table structures
           if type(v) == "table" then
+            ---@diagnostic disable-next-line: undefined-global
             print("WARNING: Unhandled table structure in quest " .. (entry or "unknown") .. ", field '" .. tostring(k) .. "' - using empty table fallback")
             -- Optional: print more details about the problematic table
             local table_info = "Table size: " .. tblsize(v) .. ", keys: "
@@ -4594,12 +4595,17 @@ end
 -- ================================================================
 
 -- Zone fallback statistics
-if zone_fallback_count and total_units_processed then
+zone_fallback_count = zone_fallback_count or 0
+total_units_processed = total_units_processed or 0
+
+if total_units_processed > 0 then
   print("================================================================")
   print("Zone Detection Statistics:")
   print("  Total units processed: " .. total_units_processed)
   print("  Zone fallbacks used: " .. zone_fallback_count)
-  print("  Success rate: " .. math.floor(((total_units_processed - zone_fallback_count) / total_units_processed) * 100) .. "%")
+  if total_units_processed > 0 then
+    print("  Success rate: " .. math.floor(((total_units_processed - zone_fallback_count) / total_units_processed) * 100) .. "%")
+  end
   print("================================================================")
 end
 
