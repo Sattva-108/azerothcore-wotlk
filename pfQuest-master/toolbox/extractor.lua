@@ -1027,7 +1027,7 @@ if config.expansions[expansion_to_process] then
                       AND wma.areatableID > 0
                       AND %f BETWEEN LEAST(wma.y_min, wma.y_max) AND GREATEST(wma.y_min, wma.y_max)
                       AND %f BETWEEN LEAST(wma.x_min, wma.x_max) AND GREATEST(wma.x_min, wma.x_max)
-                    ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) ASC
+                    ORDER BY (ABS(wma.x_max - wma.x_min) * ABS(wma.y_max - wma.y_min)) DESC
                     LIMIT 1
                 ]], m, x, y)
 
@@ -1216,6 +1216,16 @@ local continent_zone_cache = {}
 
 function NormalizeDisplayZone(initial_zone, map_id, world_x, world_y)
   if not initial_zone then return map_id or 1 end -- Защита от nil
+
+  -- Special cases: Dungeon antechambers → correct zones
+  if initial_zone == 719 then -- Blackfathom Deeps → Ashenvale
+    return 331
+  elseif initial_zone == 2557 then -- Dire Maul → Feralas
+    return 357
+  elseif initial_zone == 148 then -- Darkshore (if this is causing problems)
+    -- Keep as is for now, but this might need adjustment
+    return initial_zone
+  end
 
   -- DEBUG: Uncomment for troubleshooting specific zones
   -- if initial_zone == 1337 or initial_zone == 718 then
