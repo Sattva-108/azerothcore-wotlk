@@ -2268,24 +2268,39 @@ end
 
       pfDB["objects"][data][entry] = {}
 
-      do -- detect faction
+      do -- detect faction (compatible with multiple cores)
         local fac = ""
         local faction = {}
-        local sql = [[
-          SELECT A, H FROM gameobject_template, pfquest.factiontemplate_wotlk
-          WHERE pfquest.factiontemplate_wotlk.factiontemplateID = gameobject_template.faction
-          AND gameobject_template.entry = ]] .. gameobject_template.entry .. [[
+
+        -- Modern cores (AzerothCore, recent TrinityCore) keep the faction in gameobject_template_addon
+        local sql_addon = [[
+          SELECT f.A, f.H FROM gameobject_template_addon gta
+          JOIN pfquest.factiontemplate_wotlk f ON f.factiontemplateID = gta.faction
+          WHERE gta.entry = ]] .. entry .. [[
         ]]
 
-        local query = mysql:execute(sql)
-        if query then
-          while query:fetch(faction, "a") do
-            if debug("objects_faction") then break end
-            local A, H = faction.A, faction.H
-            if A == "1" and not string.find(fac, "A") then fac = fac .. "A" end
-            if H == "1" and not string.find(fac, "H") then fac = fac .. "H" end
+        -- Legacy cores (CMaNGOS/vMaNGOS) stored the faction directly on gameobject_template
+        local sql_legacy = [[
+          SELECT f.A, f.H FROM gameobject_template gt
+          JOIN pfquest.factiontemplate_wotlk f ON f.factiontemplateID = gt.faction
+          WHERE gt.entry = ]] .. entry .. [[
+        ]]
+
+        local function process_query(sql)
+          local qry = mysql:execute(sql)
+          if qry then
+            while qry:fetch(faction, "a") do
+              if debug("objects_faction") then break end
+              local A, H = faction.A, faction.H
+              if A == "1" and not string.find(fac, "A") then fac = fac .. "A" end
+              if H == "1" and not string.find(fac, "H") then fac = fac .. "H" end
+            end
           end
         end
+
+        -- Try modern schema first; if no faction found, fall back to legacy query.
+        process_query(sql_addon)
+        if fac == "" then process_query(sql_legacy) end
 
         if fac ~= "" then
           pfDB["objects"][data][entry]["fac"] = fac
