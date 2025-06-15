@@ -456,6 +456,16 @@ function pfMap:GetMapID(cid, mid)
   cid = cid or GetCurrentMapContinent()
   mid = mid or GetCurrentMapZone()
 
+  -- Debug для всех инстансов и особых случаев
+  local mapInfo = GetMapInfo()
+  local realZone = GetRealZoneText()
+  local subZone = GetSubZoneText()
+  
+  if cid == 0 or mid == 0 or cid == -1 or 
+     (mapInfo and (string.find(mapInfo, "Utgarde") or string.find(mapInfo, "Acherus") or string.find(mapInfo, "Ebon"))) then
+    print(string.format("🗺️ [MAP DEBUG] cid=%s, mid=%s, mapInfo='%s', realZone='%s', subZone='%s'", 
+      tostring(cid), tostring(mid), tostring(mapInfo), tostring(realZone), tostring(subZone)))
+  end
 
   -- GetMapZones() should always return the same amount
   -- of zones for each continent, so we can cache it to
@@ -473,15 +483,25 @@ function pfMap:GetMapID(cid, mid)
   if cid == 0 or mid == 0 or cid == -1 then
     id = customids[GetMapInfo()]
     
+    if cid == 0 or mid == 0 or cid == -1 then
+      print(string.format("🗺️ [MAP DEBUG] Special map logic - id from customids: %s", tostring(id)))
+    end
+    
     -- For Acherus specifically (continent=-1, zone=0)
     -- We know from .gps that it's Map 609 which should map to zone 4298
-    if not id and cid == -1 and mid == 0 then
+    -- Use mapInfo ID which should be language-independent
+    if not id and cid == -1 and mid == 0 and mapInfo == "ScarletEnclave" then
       id = 4298  -- Hardcoded for Acherus/Ebon Hold
+      print(string.format("🗺️ [MAP DEBUG] Applied Acherus hardcode: id=%s", tostring(id)))
     end
   else
     id = id or customids[GetMapInfo()]
   end
 
+  if cid == 0 or mid == 0 or cid == -1 or 
+     (mapInfo and (string.find(mapInfo, "Utgarde") or string.find(mapInfo, "Acherus") or string.find(mapInfo, "Ebon"))) then
+    print(string.format("🗺️ [MAP DEBUG] Final result: id=%s", tostring(id)))
+  end
 
   return id
 end
