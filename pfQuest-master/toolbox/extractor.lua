@@ -15,7 +15,7 @@
 local FOCUS_ON = {"objects"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
 local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 1             -- Лимит для всего остального
-local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
+local FULL_EXTRACTION = false       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
@@ -153,7 +153,35 @@ if major and minor and tonumber(major) >= 5 and tonumber(minor) >= 2 then
 end
 
 -- Вывод версии для отладки (можно потом убрать)
--- print("Detected Lua version string: " .. lua_version_string)
+-- -------------------------------------------------------------------
+-- Compatibility: guarantee global `bit.band` even on plain Lua 5.1
+-- -------------------------------------------------------------------
+if not _G.bit then
+  local ok, lib = pcall(require, "bit") -- LuaJIT BitOp
+  if ok and lib then
+    _G.bit = lib
+  else
+    ok, lib = pcall(require, "bit32")   -- Lua 5.2 bit32 library
+    if ok and lib then
+      _G.bit = lib
+    else
+      -- Minimal fallback implementing only band
+      _G.bit = {}
+      function _G.bit.band(a, b)
+        local res, mul = 0, 1
+        while a > 0 or b > 0 do
+          if (a % 2 == 1) and (b % 2 == 1) then res = res + mul end
+          a = math.floor(a / 2)
+          b = math.floor(b / 2)
+          mul = mul * 2
+        end
+        return res
+      end
+    end
+  end
+end
+-- -------------------------------------------------------------------
+ -- print("Detected Lua version string: " .. lua_version_string)
 if jit then
 --     print("JIT version: " .. jit.version)
 else
@@ -950,7 +978,7 @@ if config.expansions[expansion_to_process] then
             AND wma.areatableID > 0
             AND at.Y BETWEEN wma.x_min AND wma.x_max
             AND at.X BETWEEN wma.y_min AND wma.y_max )
-          WHERE at.ID = ]] .. id .. [[ 
+          WHERE at.ID = ]] .. id .. [[
           ORDER BY POW(((wma.y_min + wma.y_max)/2 - at.X),2)
                  + POW(((wma.x_min + wma.x_max)/2 - at.Y),2) ASC
           LIMIT 1 ]]
@@ -1147,16 +1175,16 @@ if config.expansions[expansion_to_process] then
 
     -- Кэш для границ зон из WorldMapArea_wotlk
     local zone_map_world_boundaries_cache = {}
-    
+
     -- DungeonMap fallback cache
     local dungeonmap_fallback_cache = {}
-    
+
     function GetDungeonMapBoundariesFallback(target_areatable_id, continent_map_id)
         local cache_key = tostring(target_areatable_id) .. "_" .. tostring(continent_map_id) .. "_dungeon"
         if dungeonmap_fallback_cache[cache_key] then
             return dungeonmap_fallback_cache[cache_key]
         end
-        
+
         -- Try to find DungeonMap entry by MapID (for dungeons/instances)
         local sql = string.format(
             "SELECT MinY, MaxY, MaxX, MinX FROM DungeonMap_wotlk WHERE MapID = %d ORDER BY FloorIndex LIMIT 1",
@@ -1169,7 +1197,7 @@ if config.expansions[expansion_to_process] then
             if row and row.MinY and row.MaxY and row.MaxX and row.MinX then
                 local bounds = {
                     x_left = tonumber(row.MinY),    -- DungeonMap MinY -> WorldX_Left
-                    x_right = tonumber(row.MaxY),   -- DungeonMap MaxY -> WorldX_Right  
+                    x_right = tonumber(row.MaxY),   -- DungeonMap MaxY -> WorldX_Right
                     y_top = tonumber(row.MaxX),     -- DungeonMap MaxX -> WorldY_Top
                     y_bottom = tonumber(row.MinX)   -- DungeonMap MinX -> WorldY_Bottom
                 }
@@ -1177,7 +1205,7 @@ if config.expansions[expansion_to_process] then
                 return bounds
             end
         end
-        
+
         dungeonmap_fallback_cache[cache_key] = false
         return nil
     end
@@ -1204,7 +1232,7 @@ if config.expansions[expansion_to_process] then
             cursor:close()
             if row and row.y_min and row.y_max and row.x_max and row.x_min then
                 -- Check if boundaries are all zeros (0,0,0,0)
-                if tonumber(row.y_min) == 0 and tonumber(row.y_max) == 0 and 
+                if tonumber(row.y_min) == 0 and tonumber(row.y_max) == 0 and
                    tonumber(row.x_max) == 0 and tonumber(row.x_min) == 0 then
                     -- Try DungeonMap fallback for zones with empty boundaries
                     local dungeon_bounds = GetDungeonMapBoundariesFallback(target_areatable_id, continent_map_id)
@@ -1214,7 +1242,7 @@ if config.expansions[expansion_to_process] then
                         return dungeon_bounds
                     end
                 end
-                
+
                 local bounds = {
                     x_left = tonumber(row.y_min),   -- WorldX_Left
                     x_right = tonumber(row.y_max),  -- WorldX_Right
@@ -1225,7 +1253,7 @@ if config.expansions[expansion_to_process] then
                 return bounds
             end
         end
-        
+
         -- Try DungeonMap fallback if WorldMapArea query failed completely
         local dungeon_bounds = GetDungeonMapBoundariesFallback(target_areatable_id, continent_map_id)
         if dungeon_bounds then
@@ -1233,7 +1261,7 @@ if config.expansions[expansion_to_process] then
             print(string.format("🗺️  [DUNGEONMAP FALLBACK] Used DungeonMap boundaries for missing AreaID: %d (MapID: %d)", target_areatable_id, continent_map_id))
             return dungeon_bounds
         end
-        
+
         -- print(string.format("WARNING: Could not fetch WorldMapArea boundaries for AreaTable.ID: %d on MapID: %d", target_areatable_id, continent_map_id))
         zone_map_world_boundaries_cache[cache_key] = false -- Кэшируем неудачу, чтобы не повторять запрос
         return nil
@@ -1813,8 +1841,8 @@ end
                     -- DIAGNOSTIC: Check for problematic coordinates
                     local final_x, final_y = round(zone_x,2), round(zone_y,2)
                     if (final_x == 0 and final_y == 100) or (final_x == 100 and final_y == 0) or final_x < 0 or final_x > 100 or final_y < 0 or final_y > 100 then
-                        print(string.format("  WARNING: Creature %d got invalid coordinates [%.2f,%.2f] zone=%d original_zone=%d world=[%.2f,%.2f] map=%d",
-                            creature_id, final_x, final_y, display_zone_for_units_lua, db_zoneId, npc_world_x, npc_world_y, map_id))
+--                         print(string.format("  WARNING: Creature %d got invalid coordinates [%.2f,%.2f] zone=%d original_zone=%d world=[%.2f,%.2f] map=%d",
+--                             creature_id, final_x, final_y, display_zone_for_units_lua, db_zoneId, npc_world_x, npc_world_y, map_id))
                     end
 
                     table.insert(creature_coords_cache[creature_id], {final_x, final_y, display_zone_for_units_lua, creature_respawn_time})
@@ -2248,7 +2276,83 @@ end
     -- MEMORY OPTIMIZATION: Force garbage collection after batch loading
     collectgarbage("collect")
 
-    -- Pass 2b: Original processing (now optimized with pre-loaded coordinate data)
+    -- Pass 2a2: Batch load faction data for all objects
+    print("  Pass 2a2: Batch loading faction data for objects...")
+    local gameobject_faction_cache = {}
+    
+    if #all_object_ids > 0 then
+        local chunk_size = 1000  -- Process 1000 objects at a time for faction data
+        local total_chunks = math.ceil(#all_object_ids / chunk_size)
+        
+        for chunk = 1, total_chunks do
+            local start_idx = (chunk - 1) * chunk_size + 1
+            local end_idx = math.min(chunk * chunk_size, #all_object_ids)
+            local chunk_ids = {}
+            for i = start_idx, end_idx do
+                table.insert(chunk_ids, all_object_ids[i])
+            end
+            local object_ids_string = table.concat(chunk_ids, ",")
+            
+            print("  Processing faction chunk " .. chunk .. "/" .. total_chunks .. " (" .. #chunk_ids .. " objects)")
+            
+            -- Try modern schema first (gameobject_template_addon)
+            local batch_faction_query = mysql:execute([[
+                SELECT gta.entry, f.A, f.H FROM gameobject_template_addon gta
+                JOIN pfquest.factiontemplate_wotlk f ON f.factiontemplateID = gta.faction
+                WHERE gta.entry IN (]] .. object_ids_string .. [[) AND gta.faction > 0
+            ]])
+            
+            if batch_faction_query then
+                local faction_data = {}
+                while batch_faction_query:fetch(faction_data, "a") do
+                    local object_id = tonumber(faction_data.entry)
+                    local A, H = faction_data.A, faction_data.H
+                    local fac = ""
+                    if A == "1" then fac = fac .. "A" end
+                    if H == "1" then fac = fac .. "H" end
+                    if fac ~= "" then
+                        gameobject_faction_cache[object_id] = fac
+                    end
+                end
+            end
+            
+            -- Fallback to legacy schema for objects without faction
+            local missing_faction_ids = {}
+            for _, object_id in ipairs(chunk_ids) do
+                if not gameobject_faction_cache[object_id] then
+                    table.insert(missing_faction_ids, object_id)
+                end
+            end
+            
+            if #missing_faction_ids > 0 then
+                local missing_ids_string = table.concat(missing_faction_ids, ",")
+                local legacy_faction_query = mysql:execute([[
+                    SELECT gt.entry, f.A, f.H FROM gameobject_template gt
+                    JOIN pfquest.factiontemplate_wotlk f ON f.factiontemplateID = gt.faction
+                    WHERE gt.entry IN (]] .. missing_ids_string .. [[) AND gt.faction > 0
+                ]])
+                
+                if legacy_faction_query then
+                    local faction_data = {}
+                    while legacy_faction_query:fetch(faction_data, "a") do
+                        local object_id = tonumber(faction_data.entry)
+                        local A, H = faction_data.A, faction_data.H
+                        local fac = ""
+                        if A == "1" then fac = fac .. "A" end
+                        if H == "1" then fac = fac .. "H" end
+                        if fac ~= "" then
+                            gameobject_faction_cache[object_id] = fac
+                        end
+                    end
+                end
+            end
+            
+            collectgarbage("collect")  -- Memory cleanup between chunks
+        end
+    end
+    print("  Pass 2a2 complete: Cached faction data for " .. #all_object_ids .. " objects")
+
+    -- Pass 2b: Original processing (now optimized with pre-loaded coordinate and faction data)
     local processed = 0
     local query = mysql:execute('SELECT * FROM gameobject_template' .. where_clause .. ' ORDER BY gameobject_template.entry ASC' .. limit_clause)
     if query then
@@ -2268,40 +2372,8 @@ end
 
       pfDB["objects"][data][entry] = {}
 
-      do -- detect faction (compatible with multiple cores)
-        local fac = ""
-        local faction = {}
-
-        -- Modern cores (AzerothCore, recent TrinityCore) keep the faction in gameobject_template_addon
-        local sql_addon = [[
-          SELECT f.A, f.H FROM gameobject_template_addon gta
-          JOIN pfquest.factiontemplate_wotlk f ON f.factiontemplateID = gta.faction
-          WHERE gta.entry = ]] .. entry .. [[
-        ]]
-
-        -- Legacy cores (CMaNGOS/vMaNGOS) stored the faction directly on gameobject_template
-        local sql_legacy = [[
-          SELECT f.A, f.H FROM gameobject_template gt
-          JOIN pfquest.factiontemplate_wotlk f ON f.factiontemplateID = gt.faction
-          WHERE gt.entry = ]] .. entry .. [[
-        ]]
-
-        local function process_query(sql)
-          local qry = mysql:execute(sql)
-          if qry then
-            while qry:fetch(faction, "a") do
-              if debug("objects_faction") then break end
-              local A, H = faction.A, faction.H
-              if A == "1" and not string.find(fac, "A") then fac = fac .. "A" end
-              if H == "1" and not string.find(fac, "H") then fac = fac .. "H" end
-            end
-          end
-        end
-
-        -- Try modern schema first; if no faction found, fall back to legacy query.
-        process_query(sql_addon)
-        if fac == "" then process_query(sql_legacy) end
-
+      do -- detect faction - USE CACHED DATA
+        local fac = gameobject_faction_cache[entry] or ""
         if fac ~= "" then
           pfDB["objects"][data][entry]["fac"] = fac
         end
@@ -3784,7 +3856,7 @@ end
                     print(string.format("🗺️  [MINIMAP DUNGEONMAP FALLBACK] Used DungeonMap for minimap AreaID: %d (MapID: %d)", tonumber(minimap_size.areatableID), tonumber(minimap_size.mapID)))
                 end
             end
-            
+
             -- Используем math.abs для гарантии положительных размеров для всех зон
             calculated_width = math.abs(world_x_right - world_x_left)
             calculated_height = math.abs(world_y_top - world_y_bottom)
