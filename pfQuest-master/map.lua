@@ -449,6 +449,7 @@ local customids = {
   ["Plaguelands: The Scarlet Enclave"] = 4298,
   ["The Scarlet Enclave"] = 4298,
   ["ScarletEnclave"] = 4298,
+  ["UtgardeKeep"] = 206,
 }
 
 local map_zone_cache = { }
@@ -460,10 +461,10 @@ function pfMap:GetMapID(cid, mid)
   local mapInfo = GetMapInfo()
   local realZone = GetRealZoneText()
   local subZone = GetSubZoneText()
-  
-  if cid == 0 or mid == 0 or cid == -1 or 
+
+  if cid == 0 or mid == 0 or cid == -1 or
      (mapInfo and (string.find(mapInfo, "Utgarde") or string.find(mapInfo, "Acherus") or string.find(mapInfo, "Ebon"))) then
-    print(string.format("🗺️ [MAP DEBUG] cid=%s, mid=%s, mapInfo='%s', realZone='%s', subZone='%s'", 
+    print(string.format("🗺️ [MAP DEBUG] cid=%s, mid=%s, mapInfo='%s', realZone='%s', subZone='%s'",
       tostring(cid), tostring(mid), tostring(mapInfo), tostring(realZone), tostring(subZone)))
   end
 
@@ -478,15 +479,15 @@ function pfMap:GetMapID(cid, mid)
   local list = map_zone_cache[cid]
   local name = list and list[mid]
   local id = pfMap:GetMapIDByName(name)
-  
+
   -- For special maps (continent=0/-1 or zone=0), always try customids first
   if cid == 0 or mid == 0 or cid == -1 then
     id = customids[GetMapInfo()]
-    
+
     if cid == 0 or mid == 0 or cid == -1 then
       print(string.format("🗺️ [MAP DEBUG] Special map logic - id from customids: %s", tostring(id)))
     end
-    
+
     -- For Acherus specifically (continent=-1, zone=0)
     -- We know from .gps that it's Map 609 which should map to zone 4298
     -- Use mapInfo ID which should be language-independent
@@ -498,7 +499,7 @@ function pfMap:GetMapID(cid, mid)
     id = id or customids[GetMapInfo()]
   end
 
-  if cid == 0 or mid == 0 or cid == -1 or 
+  if cid == 0 or mid == 0 or cid == -1 or
      (mapInfo and (string.find(mapInfo, "Utgarde") or string.find(mapInfo, "Acherus") or string.find(mapInfo, "Ebon"))) then
     print(string.format("🗺️ [MAP DEBUG] Final result: id=%s", tostring(id)))
   end
@@ -947,7 +948,7 @@ function pfMap:UpdateMinimap()
     return
   end
 
-  -- check for Underbelly only when in Dalaran
+  -- check for Underbelly only when in Dalaran (lightweight)
   if pfMap.checkUnderbelly then
     if GetCurrentMapDungeonLevel() == 2 then
       -- Hide all minimap nodes when in Underbelly
@@ -1082,11 +1083,11 @@ pfMap:SetScript("OnEvent", function()
     end
   end
 
-  -- Enable/disable Underbelly checking based on whether we're in Dalaran
+  -- Enable/disable floor checking based on current zone
   if event == "PLAYER_ENTERING_WORLD" or event == "ZONE_CHANGED_NEW_AREA" then
     local mapAreaID = GetCurrentMapAreaID()
     if mapAreaID == 505 then
-      pfMap.checkUnderbelly = true
+      pfMap.checkUnderbelly = true -- Keep legacy Dalaran logic
     else
       pfMap.checkUnderbelly = false
       pfMap.playerIsInUnderbelly = false
