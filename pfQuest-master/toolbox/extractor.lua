@@ -2279,11 +2279,11 @@ end
     -- Pass 2a2: Batch load faction data for all objects
     print("  Pass 2a2: Batch loading faction data for objects...")
     local gameobject_faction_cache = {}
-    
+
     if #all_object_ids > 0 then
         local chunk_size = 1000  -- Process 1000 objects at a time for faction data
         local total_chunks = math.ceil(#all_object_ids / chunk_size)
-        
+
         for chunk = 1, total_chunks do
             local start_idx = (chunk - 1) * chunk_size + 1
             local end_idx = math.min(chunk * chunk_size, #all_object_ids)
@@ -2292,16 +2292,16 @@ end
                 table.insert(chunk_ids, all_object_ids[i])
             end
             local object_ids_string = table.concat(chunk_ids, ",")
-            
+
             print("  Processing faction chunk " .. chunk .. "/" .. total_chunks .. " (" .. #chunk_ids .. " objects)")
-            
+
             -- Try modern schema first (gameobject_template_addon)
             local batch_faction_query = mysql:execute([[
                 SELECT gta.entry, f.A, f.H FROM gameobject_template_addon gta
                 JOIN pfquest.factiontemplate_wotlk f ON f.factiontemplateID = gta.faction
                 WHERE gta.entry IN (]] .. object_ids_string .. [[) AND gta.faction > 0
             ]])
-            
+
             if batch_faction_query then
                 local faction_data = {}
                 while batch_faction_query:fetch(faction_data, "a") do
@@ -2315,7 +2315,7 @@ end
                     end
                 end
             end
-            
+
             -- Fallback to legacy schema for objects without faction
             local missing_faction_ids = {}
             for _, object_id in ipairs(chunk_ids) do
@@ -2323,7 +2323,7 @@ end
                     table.insert(missing_faction_ids, object_id)
                 end
             end
-            
+
             if #missing_faction_ids > 0 then
                 local missing_ids_string = table.concat(missing_faction_ids, ",")
                 local legacy_faction_query = mysql:execute([[
@@ -2331,7 +2331,7 @@ end
                     JOIN pfquest.factiontemplate_wotlk f ON f.factiontemplateID = gt.faction
                     WHERE gt.entry IN (]] .. missing_ids_string .. [[) AND gt.faction > 0
                 ]])
-                
+
                 if legacy_faction_query then
                     local faction_data = {}
                     while legacy_faction_query:fetch(faction_data, "a") do
@@ -2346,11 +2346,98 @@ end
                     end
                 end
             end
-            
+
             collectgarbage("collect")  -- Memory cleanup between chunks
         end
     end
     print("  Pass 2a2 complete: Cached faction data for " .. #all_object_ids .. " objects")
+
+    -- Pass 2a3: Quest-based faction inference for objects without direct faction
+    print("  Pass 2a3: Inferring faction from quest requirements...")
+    local objects_without_faction = {}
+
+    -- Collect objects that don't have faction from direct lookup
+    for _, object_id in ipairs(all_object_ids) do
+        if not gameobject_faction_cache[object_id] then
+            table.insert(objects_without_faction, object_id)
+        end
+    end
+
+    if #objects_without_faction > 0 then
+        print("  Found " .. #objects_without_faction .. " objects without direct faction, checking quest requirements...")
+
+        -- Process in chunks to avoid too large SQL queries
+        local quest_chunk_size = 1000
+        local total_quest_chunks = math.ceil(#objects_without_faction / quest_chunk_size)
+
+        for chunk = 1, total_quest_chunks do
+            local start_idx = (chunk - 1) * quest_chunk_size + 1
+            local end_idx = math.min(chunk * quest_chunk_size, #objects_without_faction)
+            local chunk_ids = {}
+            for i = start_idx, end_idx do
+                table.insert(chunk_ids, objects_without_faction[i])
+            end
+            local object_ids_string = table.concat(chunk_ids, ",")
+
+            print("  Processing quest faction chunk " .. chunk .. "/" .. total_quest_chunks .. " (" .. #chunk_ids .. " objects)")
+
+            -- Alliance & Horde race bitmasks (WotLK)
+            local RACE_MASK_ALLIANCE = 1101  -- Human(1) + NightElf(4) + Gnome(64) + Draenei(1024) + Dwarf(8) = 1 + 4 + 8 + 64 + 1024 = 1101
+            local RACE_MASK_HORDE = 690      -- Orc(2) + Undead(16) + Tauren(32) + Troll(128) + BloodElf(512) = 2 + 16 + 32 + 128 + 512 = 690
+
+            -- Use correct primary key column based on core type
+            local quest_pk_column = (core == "acore" and "ID" or "entry")
+
+            local quest_faction_query = mysql:execute([[
+                SELECT ABS(obj_id) AS object_entry,
+                       BIT_OR(AllowableRaces & ]] .. RACE_MASK_ALLIANCE .. [[) AS hasA,
+                       BIT_OR(AllowableRaces & ]] .. RACE_MASK_HORDE .. [[) AS hasH
+                FROM (
+                    SELECT ]] .. quest_pk_column .. [[, RequiredNpcOrGo1 AS obj_id, AllowableRaces FROM quest_template
+                    WHERE RequiredNpcOrGo1 != 0
+                    UNION ALL
+                    SELECT ]] .. quest_pk_column .. [[, RequiredNpcOrGo2 AS obj_id, AllowableRaces FROM quest_template
+                    WHERE RequiredNpcOrGo2 != 0
+                    UNION ALL
+                    SELECT ]] .. quest_pk_column .. [[, RequiredNpcOrGo3 AS obj_id, AllowableRaces FROM quest_template
+                    WHERE RequiredNpcOrGo3 != 0
+                    UNION ALL
+                    SELECT ]] .. quest_pk_column .. [[, RequiredNpcOrGo4 AS obj_id, AllowableRaces FROM quest_template
+                    WHERE RequiredNpcOrGo4 != 0
+                ) q
+                WHERE ABS(obj_id) IN (]] .. object_ids_string .. [[)
+                GROUP BY object_entry
+                HAVING object_entry > 0
+            ]])
+
+            if quest_faction_query then
+                local quest_data = {}
+                while quest_faction_query:fetch(quest_data, "a") do
+                    local object_id = tonumber(quest_data.object_entry)
+                    local hasA = tonumber(quest_data.hasA) or 0
+                    local hasH = tonumber(quest_data.hasH) or 0
+
+                    if object_id and object_id > 0 then
+                        local fac = ""
+                        -- Only assign faction if quests are clearly faction-specific
+                        if hasA > 0 and hasH == 0 then
+                            fac = "A"  -- Alliance only
+                        elseif hasH > 0 and hasA == 0 then
+                            fac = "H"  -- Horde only
+                        end
+                        -- If both or neither, leave empty (neutral/both factions)
+
+                        if fac ~= "" then
+                            gameobject_faction_cache[object_id] = fac
+                        end
+                    end
+                end
+            end
+
+            collectgarbage("collect")  -- Memory cleanup between chunks
+        end
+    end
+    print("  Pass 2a3 complete: Quest-based faction inference finished")
 
     -- Pass 2b: Original processing (now optimized with pre-loaded coordinate and faction data)
     local processed = 0
