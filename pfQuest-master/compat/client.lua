@@ -42,6 +42,17 @@ pfQuestCompat.QuestLogDescriptionTitle = QuestLogDescriptionTitle or QuestInfoDe
 -- wotlk: disable builtin quest progress tooltips
 if client >= 30300 then
   SetCVar("showQuestTrackingTooltips", 0)
+  
+  -- restore showQuestTrackingTooltips on logout
+  local function OnEvent(self, event)
+    if event == "PLAYER_LOGOUT" then
+      SetCVar("showQuestTrackingTooltips", 1)
+    end
+  end
+  
+  local frame = CreateFrame("Frame")
+  frame:RegisterEvent("PLAYER_LOGOUT")
+  frame:SetScript("OnEvent", OnEvent)
 end
 
 -- vanilla+tbc+wotlk: base function to insert quest links to the chat
