@@ -20,7 +20,7 @@ local FULL_EXTRACTION = true       -- true = игнорировать все л�
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
 -- ================================================================
-local QUEST_784_TEST = true        -- true = тестируем только квест 784 и его данные
+local QUEST_784_TEST = false        -- true = тестируем только квест 784 и его данные
 local QUEST_784_IDS = {12790, 13158, 12974, 2202, 962, 12593, 4811} -- securing the lines + additional test quest
 local QUEST_784_NPCS = {29156, 16128, 31080, 30137, 30007, 7057, 100, 3652, 3672, 5768, 3419, 25462, 28357, 2930}  -- NPCs из анализа квеста 784 + тесты зон
 local QUEST_784_ITEMS = {5339, 8047}  -- Items для тестирования (quest items, rewards)
@@ -950,7 +950,10 @@ if config.expansions[expansion_to_process] then
             AND wma.areatableID > 0
             AND at.Y BETWEEN wma.x_min AND wma.x_max
             AND at.X BETWEEN wma.y_min AND wma.y_max )
-          WHERE at.ID = ]] .. id .. [[ ORDER BY wma.areatableID ]]
+          WHERE at.ID = ]] .. id .. [[ 
+          ORDER BY POW(((wma.y_min + wma.y_max)/2 - at.X),2)
+                 + POW(((wma.x_min + wma.x_max)/2 - at.Y),2) ASC
+          LIMIT 1 ]]
 
         local query = mysql:execute(sql)
         if query then
@@ -973,7 +976,7 @@ if config.expansions[expansion_to_process] then
               zone_x = math.max(0, math.min(100, zone_x))
               zone_y = math.max(0, math.min(100, zone_y))
 
-              local coord = { zone_x, zone_y, zone_id, 0 }
+              local coord = { round(zone_y,2), round(zone_x,2), zone_id, 0 }
               table.insert(ret, coord)
             end
           end
