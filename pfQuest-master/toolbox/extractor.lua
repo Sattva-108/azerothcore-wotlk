@@ -2268,10 +2268,25 @@ end
 
       pfDB["objects"][data][entry] = {}
 
-      do -- detect faction - DISABLED due to DBC data issues
-        -- This would require pfquest.FactionTemplate_wotlk table
+      do -- detect faction
         local fac = ""
-        -- Skip faction detection for now
+        local faction = {}
+        local sql = [[
+          SELECT A, H FROM gameobject_template, pfquest.factiontemplate_wotlk
+          WHERE pfquest.factiontemplate_wotlk.factiontemplateID = gameobject_template.faction
+          AND gameobject_template.entry = ]] .. gameobject_template.entry .. [[
+        ]]
+
+        local query = mysql:execute(sql)
+        if query then
+          while query:fetch(faction, "a") do
+            if debug("objects_faction") then break end
+            local A, H = faction.A, faction.H
+            if A == "1" and not string.find(fac, "A") then fac = fac .. "A" end
+            if H == "1" and not string.find(fac, "H") then fac = fac .. "H" end
+          end
+        end
+
         if fac ~= "" then
           pfDB["objects"][data][entry]["fac"] = fac
         end
