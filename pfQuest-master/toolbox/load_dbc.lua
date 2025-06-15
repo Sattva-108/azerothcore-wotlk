@@ -126,6 +126,31 @@ load_dbc_csv("DBC/wotlk/AreaTrigger.dbc.csv", "AreaTrigger_" .. version,
     return "INSERT INTO `AreaTrigger_" .. version .. "` VALUES (" .. id .. ", " .. map .. ", " .. x .. ", " .. y .. ", " .. z .. ", " .. size .. ")"
   end)
 
+-- DungeonMap_wotlk (needed for boundary fallback mechanism)
+load_dbc_csv("DBC/wotlk/DungeonMap.dbc.csv", "DungeonMap_" .. version,
+  "CREATE TABLE `DungeonMap_" .. version .. "` (" ..
+  "`ID` smallint(3) unsigned NOT NULL," ..
+  "`MapID` smallint(3) unsigned NOT NULL," ..
+  "`FloorIndex` smallint(3) unsigned NOT NULL," ..
+  "`MinX` float NOT NULL DEFAULT 0.0," ..
+  "`MaxX` float NOT NULL DEFAULT 0.0," ..
+  "`MinY` float NOT NULL DEFAULT 0.0," ..
+  "`MaxY` float NOT NULL DEFAULT 0.0," ..
+  "`ParentWorldMapID` smallint(3) unsigned NOT NULL," ..
+  "PRIMARY KEY (`ID`)" ..
+  ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='DungeonMap'",
+  function(values)
+    local id = values[1]
+    local mapID = values[2]
+    local floorIndex = values[3]
+    local minX = values[4]:gsub(',', '.')
+    local maxX = values[5]:gsub(',', '.')
+    local minY = values[6]:gsub(',', '.')
+    local maxY = values[7]:gsub(',', '.')
+    local parentWorldMapID = values[8]
+    return "INSERT INTO `DungeonMap_" .. version .. "` VALUES (" .. id .. ", " .. mapID .. ", " .. floorIndex .. ", " .. minX .. ", " .. maxX .. ", " .. minY .. ", " .. maxY .. ", " .. parentWorldMapID .. ")"
+  end)
+
 -- WorldMapArea_wotlk (matching load-client-data.sh structure)
 load_dbc_csv("DBC/wotlk/WorldMapArea.dbc.csv", "WorldMapArea_" .. version,
   "CREATE TABLE `WorldMapArea_" .. version .. "` (" ..

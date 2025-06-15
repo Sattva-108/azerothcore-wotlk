@@ -1147,18 +1147,42 @@ if config.expansions[expansion_to_process] then
 
     -- Кэш для границ зон из WorldMapArea_wotlk
     local zone_map_world_boundaries_cache = {}
-    function GetWorldMapAreaBoundariesForZone(target_areatable_id, continent_map_id)
-        -- Специальная обработка для Даларана - возвращаем эффективные границы немедленно
-        if target_areatable_id == 4395 and continent_map_id == 571 then
-            local dalaran_bounds = {
-                x_left = 5513.33,     -- X_MIN_eff
-                x_right = 6066.67,    -- X_MAX_eff
-                y_top = 1052.51,      -- Y_MAX_eff (большее значение Y в мире)
-                y_bottom = 222.495    -- Y_MIN_eff (меньшее значение Y в мире)
-
-            }
-            return dalaran_bounds
+    
+    -- DungeonMap fallback cache
+    local dungeonmap_fallback_cache = {}
+    
+    function GetDungeonMapBoundariesFallback(target_areatable_id, continent_map_id)
+        local cache_key = tostring(target_areatable_id) .. "_" .. tostring(continent_map_id) .. "_dungeon"
+        if dungeonmap_fallback_cache[cache_key] then
+            return dungeonmap_fallback_cache[cache_key]
         end
+        
+        -- Try to find DungeonMap entry by MapID (for dungeons/instances)
+        local sql = string.format(
+            "SELECT MinY, MaxY, MaxX, MinX FROM DungeonMap_wotlk WHERE MapID = %d ORDER BY FloorIndex LIMIT 1",
+            continent_map_id
+        )
+        local cursor = mysql:execute(sql)
+        if cursor then
+            local row = cursor:fetch({}, "a")
+            cursor:close()
+            if row and row.MinY and row.MaxY and row.MaxX and row.MinX then
+                local bounds = {
+                    x_left = tonumber(row.MinY),    -- DungeonMap MinY -> WorldX_Left
+                    x_right = tonumber(row.MaxY),   -- DungeonMap MaxY -> WorldX_Right  
+                    y_top = tonumber(row.MaxX),     -- DungeonMap MaxX -> WorldY_Top
+                    y_bottom = tonumber(row.MinX)   -- DungeonMap MinX -> WorldY_Bottom
+                }
+                dungeonmap_fallback_cache[cache_key] = bounds
+                return bounds
+            end
+        end
+        
+        dungeonmap_fallback_cache[cache_key] = false
+        return nil
+    end
+
+    function GetWorldMapAreaBoundariesForZone(target_areatable_id, continent_map_id)
 
         local cache_key = tostring(target_areatable_id) .. "_" .. tostring(continent_map_id)
         if zone_map_world_boundaries_cache[cache_key] then
@@ -1179,6 +1203,18 @@ if config.expansions[expansion_to_process] then
             local row = cursor:fetch({}, "a")
             cursor:close()
             if row and row.y_min and row.y_max and row.x_max and row.x_min then
+                -- Check if boundaries are all zeros (0,0,0,0)
+                if tonumber(row.y_min) == 0 and tonumber(row.y_max) == 0 and 
+                   tonumber(row.x_max) == 0 and tonumber(row.x_min) == 0 then
+                    -- Try DungeonMap fallback for zones with empty boundaries
+                    local dungeon_bounds = GetDungeonMapBoundariesFallback(target_areatable_id, continent_map_id)
+                    if dungeon_bounds then
+                        zone_map_world_boundaries_cache[cache_key] = dungeon_bounds
+                        print(string.format("🗺️  [DUNGEONMAP FALLBACK] Used DungeonMap boundaries for AreaID: %d (MapID: %d)", target_areatable_id, continent_map_id))
+                        return dungeon_bounds
+                    end
+                end
+                
                 local bounds = {
                     x_left = tonumber(row.y_min),   -- WorldX_Left
                     x_right = tonumber(row.y_max),  -- WorldX_Right
@@ -1189,6 +1225,15 @@ if config.expansions[expansion_to_process] then
                 return bounds
             end
         end
+        
+        -- Try DungeonMap fallback if WorldMapArea query failed completely
+        local dungeon_bounds = GetDungeonMapBoundariesFallback(target_areatable_id, continent_map_id)
+        if dungeon_bounds then
+            zone_map_world_boundaries_cache[cache_key] = dungeon_bounds
+            print(string.format("🗺️  [DUNGEONMAP FALLBACK] Used DungeonMap boundaries for missing AreaID: %d (MapID: %d)", target_areatable_id, continent_map_id))
+            return dungeon_bounds
+        end
+        
         -- print(string.format("WARNING: Could not fetch WorldMapArea boundaries for AreaTable.ID: %d on MapID: %d", target_areatable_id, continent_map_id))
         zone_map_world_boundaries_cache[cache_key] = false -- Кэшируем неудачу, чтобы не повторять запрос
         return nil
@@ -3698,16 +3743,21 @@ end
 
             local calculated_width, calculated_height
 
-            -- Специальная обработка для Даларана
-            if tonumber(minimap_size.areatableID) == 4395 and tonumber(minimap_size.mapID) == 571 then
-                -- Используем эффективные размеры для Даларана
-                calculated_width = 553.34      -- DALARAN_EFFECTIVE_WIDTH (6066.67 - 5513.33)
-                calculated_height = 830.015    -- DALARAN_EFFECTIVE_HEIGHT (1052.51 - 222.495)
-            else
-                -- Используем math.abs для гарантии положительных размеров для остальных зон
-                calculated_width = math.abs(world_x_right - world_x_left)
-                calculated_height = math.abs(world_y_top - world_y_bottom)
+            -- Check for zero boundaries and use DungeonMap fallback if needed
+            if world_x_left == 0 and world_x_right == 0 and world_y_top == 0 and world_y_bottom == 0 then
+                local dungeon_bounds = GetDungeonMapBoundariesFallback(tonumber(minimap_size.areatableID), tonumber(minimap_size.mapID))
+                if dungeon_bounds then
+                    world_x_left = dungeon_bounds.x_left
+                    world_x_right = dungeon_bounds.x_right
+                    world_y_top = dungeon_bounds.y_top
+                    world_y_bottom = dungeon_bounds.y_bottom
+                    print(string.format("🗺️  [MINIMAP DUNGEONMAP FALLBACK] Used DungeonMap for minimap AreaID: %d (MapID: %d)", tonumber(minimap_size.areatableID), tonumber(minimap_size.mapID)))
+                end
             end
+            
+            -- Используем math.abs для гарантии положительных размеров для всех зон
+            calculated_width = math.abs(world_x_right - world_x_left)
+            calculated_height = math.abs(world_y_top - world_y_bottom)
 
             -- Проверка на нулевые размеры, чтобы избежать деления на ноль где-либо дальше
             if calculated_width == 0 then calculated_width = 1 end -- Минимальная ширина
