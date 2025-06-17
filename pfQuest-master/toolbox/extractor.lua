@@ -14,7 +14,8 @@
 
 local FOCUS_ON = {"objects"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
 local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
-local OTHER_LIMIT = 1             -- Лимит для всего остальногоlocal FULL_EXTRACTION = true       -- true = игнорировать все лимиты
+local OTHER_LIMIT = 1             -- Лимит для всего остального
+local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
 
 -- ================================================================
 -- QUEST 784 DEBUG MODE - легко включить/выключить
