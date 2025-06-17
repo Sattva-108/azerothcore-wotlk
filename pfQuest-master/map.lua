@@ -714,54 +714,20 @@ function pfMap:NodeEnter()
   local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
   tooltip:SetOwner(this, "ANCHOR_LEFT")
   this.spawn = this.spawn or UNKNOWN
-  
-  -- Check if Alt is pressed for cluster tooltip mode
-  if IsAltKeyDown() then
-    pfMap:ShowClusterTooltip(this, tooltip)
-  else
-    -- Original tooltip logic
-    tooltip:SetText(this.spawn..(pfQuest_config.showids == "1" and " |cffcccccc("..this.spawnid..")|r" or ""), .3, 1, .8)
-    tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (this.level or UNKNOWN), .8,.8,.8, 1,1,1)
-    tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (this.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
-    tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (this.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
 
-    for title, meta in pairs(this.node) do
-      pfMap:ShowTooltip(meta, tooltip)
-    end
-
-    -- add tooltip help if setting is enabled
-    if pfQuest_config["tooltiphelp"] == "1" then
-      local text = pfQuest_Loc["Use <Shift>-Click To Remove Nodes"]
-
-      if this.cluster then
-        text = pfQuest_Loc["Hold <Ctrl> To Hide Cluster"]
-      elseif tooltip == GameTooltip then
-        text = pfQuest_Loc["Hold <Ctrl> To Hide Minimap Nodes"]
-      elseif not this.texture then
-        text = pfQuest_Loc["Click Node To Change Color"]
-      elseif this.questid and this.texture and this.layer < 5 then
-        text = pfQuest_Loc["Use <Shift>-Click To Mark Quest As Done"]
-      end
-
-      -- update tooltip and sizes
-      tooltip:AddLine(text, .6, .6, .6)
-      tooltip:Show()
-    end
-  end
+  -- Use cluster tooltip by default
+  pfMap:ShowClusterTooltip(this, tooltip)
 
   pfMap.highlight = pfQuest_config["mouseover"] == "1" and this.title
 end
 
 function pfMap:ShowClusterTooltip(currentNode, tooltip)
-  -- Debug: Add visible indicator that Alt mode is working
-  tooltip:SetText("|cffff0000[DEBUG: Alt-mode active]|r " .. (currentNode.spawn or "Unknown"), 1, 0, 0)
-  
   -- Find all nearby nodes within cluster distance
   local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
-  local clusterRadius = 15 -- Map coordinate units for clustering
+  local clusterRadius = 1 -- Map coordinate units for clustering
   local nearbyNodes = {}
-  local debugInfo = {}
-  
+  local questTitles = {} -- Track quest titles for highlighting
+
   -- Get current node coordinates from its data
   local currentX, currentY = nil, nil
   for title, meta in pairs(currentNode.node) do
@@ -770,39 +736,23 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       break -- Use first found coordinates
     end
   end
-  
-  -- Debug info
-  table.insert(debugInfo, "Current pos: " .. (currentX or "nil") .. ", " .. (currentY or "nil"))
-  table.insert(debugInfo, "Map ID: " .. (map or "nil"))
-  table.insert(debugInfo, "Title: " .. (currentNode.title or "nil"))
-  
+
   -- Get current mouse position for proximity check
   local isOnMinimap = currentNode:GetParent() ~= WorldMapButton
   if isOnMinimap then
-    clusterRadius = 10 -- smaller radius for minimap
-    table.insert(debugInfo, "Minimap mode: radius " .. clusterRadius)
-  else
-    table.insert(debugInfo, "Worldmap mode: radius " .. clusterRadius)
+    clusterRadius = 0,3 -- smaller radius for minimap
   end
-  
+
   -- Search through all active nodes on current map
-  local totalNodes = 0
-  local totalAddons = 0
-  
-  -- Check what addons are available
-  if pfMap.nodes then
+  if pfMap.nodes and currentX and currentY then
     for addonName, addonData in pairs(pfMap.nodes) do
-      totalAddons = totalAddons + 1
-      table.insert(debugInfo, "Found addon: " .. addonName)
-      
       if addonData[map] then
         for coords, coordNodes in pairs(addonData[map]) do
           for title, meta in pairs(coordNodes) do
-            totalNodes = totalNodes + 1
-            if meta.x and meta.y and currentX and currentY then
+            if meta.x and meta.y then
               local nodeX, nodeY = tonumber(meta.x), tonumber(meta.y)
               local distance = math.sqrt((nodeX - currentX)^2 + (nodeY - currentY)^2)
-              
+
               if distance <= clusterRadius then
                 table.insert(nearbyNodes, {
                   spawn = meta.spawn or title,
@@ -811,27 +761,25 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                   respawn = meta.respawn,
                   spawnid = meta.spawnid,
                   distance = distance,
-                  coords = coords,
-                  addon = addonName,
+                  title = title,
                   node = {[title] = meta}
                 })
+
+                -- Track quest titles for highlighting
+                if meta.quest then
+                  questTitles[meta.quest] = true
+                end
               end
             end
           end
         end
       end
     end
-  else
-    table.insert(debugInfo, "pfMap.nodes is nil")
   end
-  
-  table.insert(debugInfo, "Total addons: " .. totalAddons)
-  table.insert(debugInfo, "Total nodes on map: " .. totalNodes)
-  table.insert(debugInfo, "Nearby nodes found: " .. table.getn(nearbyNodes))
-  
+
   -- Sort by distance (closest first)
   table.sort(nearbyNodes, function(a, b) return a.distance < b.distance end)
-  
+
   local nodeCount = table.getn(nearbyNodes)
   if nodeCount == 0 then
     -- Fallback to current node if no nearby nodes found
@@ -842,56 +790,74 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       respawn = currentNode.respawn,
       spawnid = currentNode.spawnid,
       distance = 0,
+      title = currentNode.title,
       node = currentNode.node
     }}
     nodeCount = 1
+
+    -- Add current node's quests to highlight
+    for title, meta in pairs(currentNode.node) do
+      if meta.quest then
+        questTitles[meta.quest] = true
+      end
+    end
   end
-  
-  -- Show debug info
-  for _, info in ipairs(debugInfo) do
-    tooltip:AddLine("|cffcccccc" .. info .. "|r", 0.8, 0.8, 0.8)
-  end
-  
-  tooltip:AddLine(" ") -- spacer
-  
-  -- Set main tooltip header
+
+  -- Set tooltip header
   if nodeCount > 1 then
-    tooltip:AddLine("|cff00ff00[Cluster: " .. nodeCount .. " nearby nodes]|r", 0, 1, 0)
+    tooltip:SetText(currentNode.spawn .. " |cffaaaaaa(+" .. (nodeCount-1) .. " nearby)|r"..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
   else
-    tooltip:AddLine("|cffffff00[Single node]|r", 1, 1, 0)
+    tooltip:SetText(currentNode.spawn..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
   end
-  
+
+  tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (currentNode.level or UNKNOWN), .8,.8,.8, 1,1,1)
+  tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (currentNode.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
+  tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (currentNode.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
+
   -- Show information for each nearby node
   for i, nodeData in ipairs(nearbyNodes) do
     if i > 1 then
       tooltip:AddLine(" ") -- spacer between nodes
+      local distText = string.format(" |cffaaaaaa(%.0f yards)|r", nodeData.distance)
+      tooltip:AddLine("|cff00ff00" .. nodeData.spawn .. "|r" .. distText, .8, 1, .8)
     end
-    
-    if nodeCount > 1 then
-      -- Show node header for clusters
-      local distText = nodeData.distance > 0 and string.format(" |cffaaaaaa(%.1f units)|r", nodeData.distance) or ""
-      tooltip:AddLine("|cff00ff00" .. nodeData.spawn .. "|r" .. distText, 0, 1, 0)
-      if nodeData.coords then
-        tooltip:AddLine("|cffaaaaaa  " .. nodeData.coords .. " (" .. nodeData.addon .. ")|r", 0.7, 0.7, 0.7)
-      end
-    else
-      tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (nodeData.level or UNKNOWN), .8,.8,.8, 1,1,1)
-      tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (nodeData.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
-      tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (nodeData.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
-    end
-    
+
     -- Show quest/item information for this node
     for title, meta in pairs(nodeData.node) do
       pfMap:ShowTooltip(meta, tooltip)
     end
-    
+
     -- Limit display to avoid too large tooltips
-    if i >= 5 then -- Reduced for debug
-      tooltip:AddLine("|cffaaaaaa... and " .. (nodeCount - 5) .. " more nodes|r")
+    if i >= 8 then
+      tooltip:AddLine("|cffaaaaaa... and " .. (nodeCount - 8) .. " more nearby|r")
       break
     end
   end
-  
+
+  -- Set up highlighting for all related quests
+  if pfQuest_config["mouseover"] == "1" then
+    pfMap.clusterHighlights = questTitles
+  end
+
+  -- add tooltip help if setting is enabled
+  if pfQuest_config["tooltiphelp"] == "1" then
+    local text = pfQuest_Loc["Use <Shift>-Click To Remove Nodes"]
+
+    if currentNode.cluster then
+      text = pfQuest_Loc["Hold <Ctrl> To Hide Cluster"]
+    elseif tooltip == GameTooltip then
+      text = pfQuest_Loc["Hold <Ctrl> To Hide Minimap Nodes"]
+    elseif not currentNode.texture then
+      text = pfQuest_Loc["Click Node To Change Color"]
+    elseif currentNode.questid and currentNode.texture and currentNode.layer < 5 then
+      text = pfQuest_Loc["Use <Shift>-Click To Mark Quest As Done"]
+    end
+
+    -- update tooltip and sizes
+    tooltip:AddLine(text, .6, .6, .6)
+    tooltip:Show()
+  end
+
   tooltip:Show()
 end
 
@@ -904,6 +870,7 @@ function pfMap:NodeLeave()
   local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
   tooltip:Hide()
   pfMap.highlight = nil
+  pfMap.clusterHighlights = nil -- Clear cluster highlights
 end
 
 function pfMap:BuildNode(name, parent)
@@ -1106,7 +1073,7 @@ function pfMap:UpdateNodes()
             x = ((x - 20) * 1.2) + 20  -- scale and center adjustment
             y = ((y - 30) * 1.1) + 25  -- scale and center adjustment
           end
-          
+
           x = x / 100 * WorldMapButton:GetWidth()
           y = y / 100 * WorldMapButton:GetHeight()
 
@@ -1208,7 +1175,7 @@ function pfMap:UpdateMinimap()
           x = ((x - 20) * 1.2) + 20  -- scale and center adjustment
           y = ((y - 30) * 1.1) + 25  -- scale and center adjustment
         end
-        
+
         local xPos = ( x - xPlayer) * xDraw
         local yPos = ( y - yPlayer) * yDraw
 
@@ -1308,13 +1275,24 @@ pfMap:SetScript("OnUpdate", function()
     for frame, data in pairs(pfMap.highlightdb) do
       local highlight = pfMap.highlightdb[frame][pfMap.highlight] and true or nil
 
+      -- Check for cluster highlights
+      local clusterHighlight = nil
+      if pfMap.clusterHighlights then
+        for questTitle in pairs(pfMap.clusterHighlights) do
+          if pfMap.highlightdb[frame][questTitle] then
+            clusterHighlight = true
+            break
+          end
+        end
+      end
+
       if hidecluster and frame.cluster then
         -- hide clusters
         transition = frame:Animate(frame.defsize, 0, fps) or transition
-      elseif highlight then
-        -- zoom node
+      elseif highlight or clusterHighlight then
+        -- zoom node (regular highlight or cluster highlight)
         transition = frame:Animate((frame.texture and frame.defsize + 4 or frame.defsize), 1, fps) or transition
-      elseif not highlight and pfMap.highlight then
+      elseif not highlight and not clusterHighlight and (pfMap.highlight or pfMap.clusterHighlights) then
         -- fade node
         transition = frame:Animate(frame.defsize, tonumber(pfQuest_config["nodefade"]) or 0.3, fps) or transition
       elseif frame.texture or frame.cluster then
