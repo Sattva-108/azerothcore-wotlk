@@ -725,7 +725,7 @@ end
 function pfMap:GetQuestSymbol(questTitle)
   local questInLog = false
   local questComplete = false
-  
+
   for qid=1, GetNumQuestLogEntries() do
     local qtitle, _, _, _, _, complete = compat.GetQuestLogTitle(qid)
     if questTitle == qtitle then
@@ -734,7 +734,7 @@ function pfMap:GetQuestSymbol(questTitle)
       break
     end
   end
-  
+
   local symbol
   if questInLog then
     if questComplete then
@@ -745,7 +745,7 @@ function pfMap:GetQuestSymbol(questTitle)
   else
     symbol = "|cff555555[|cffffcc00!|cff555555]|r "  -- Yellow ! for available
   end
-  
+
   return symbol, questInLog, questComplete
 end
 
@@ -774,13 +774,13 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   -- Check if current node is a quest starter/ender
   local isCurrentNodeQuestGiver = false
   for title, meta in pairs(currentNode.node) do
-    if meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or 
+    if meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or
                        meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END") then
       isCurrentNodeQuestGiver = true
       break
     end
   end
-  
+
   -- Only do clustering if current node is a quest giver
   if isCurrentNodeQuestGiver and pfMap.nodes and currentX and currentY then
     for addonName, addonData in pairs(pfMap.nodes) do
@@ -793,9 +793,9 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
               if distance <= clusterRadius then
                 -- Only include nodes that are quest starters/enders
-                local isQuestGiver = meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or 
+                local isQuestGiver = meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or
                                                      meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END")
-                
+
                 if isQuestGiver then
                   table.insert(nearbyNodes, {
                     spawn = meta.spawn or title,
@@ -845,7 +845,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         questTitles[meta.quest] = true
       end
     end
-    
+
     -- If this is not a quest giver, use simple tooltip
     if not isCurrentNodeQuestGiver then
       tooltip:SetText(currentNode.spawn..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
@@ -873,7 +873,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
         tooltip:AddLine(text, .6, .6, .6)
       end
-      
+
       tooltip:Show()
       return  -- Exit early for non-quest NPCs
     end
@@ -888,7 +888,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   end
   local uniqueSpawnCount = 0
   for _ in pairs(uniqueSpawns) do uniqueSpawnCount = uniqueSpawnCount + 1 end
-  
+
   -- Set tooltip header
   if uniqueSpawnCount > 0 then
     tooltip:SetText(currentNode.spawn .. " |cffaaaaaa(+" .. uniqueSpawnCount .. " nearby)|r"..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
@@ -906,9 +906,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
   -- Group nearby nodes by spawn for better organization
   local spawnGroups = {}
-  print("=== PRIORITY DEBUG ===")
-  print("Total nearby nodes:", table.getn(nearbyNodes))
-  
+
   for i, nodeData in ipairs(nearbyNodes) do
     if nodeData.distance > 0 then -- Skip current node
       local spawnName = nodeData.spawn
@@ -922,37 +920,31 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
           isVendor = false
         }
       end
-      
+
       -- Add node and categorize
       for title, meta in pairs(nodeData.node) do
         table.insert(spawnGroups[spawnName].nodes, {title = title, meta = meta})
-        
+
         -- Categorize spawn type for priority
         if meta.QTYPE == "NPC_START" or meta.QTYPE == "OBJECT_START" then
           spawnGroups[spawnName].hasStarter = true
-          print("Found STARTER:", spawnName, "QTYPE:", meta.QTYPE)
         elseif meta.QTYPE == "NPC_END" or meta.QTYPE == "OBJECT_END" then
           spawnGroups[spawnName].hasEnder = true
-          print("Found ENDER:", spawnName, "QTYPE:", meta.QTYPE)
         end
-        
+
         if meta.spawntype and (meta.spawntype == "Vendor" or meta.sellcount) then
           spawnGroups[spawnName].isVendor = true
-          print("Found VENDOR:", spawnName, "spawntype:", meta.spawntype)
         end
-        
-        print("Node:", spawnName, "quest:", meta.quest or "nil", "QTYPE:", meta.QTYPE or "nil")
       end
     end
   end
-  
+
   -- Sort spawns by priority: starters > enders > vendors > others
   local sortedSpawns = {}
   for spawnName, data in pairs(spawnGroups) do
     table.insert(sortedSpawns, data)
-    print("Spawn group:", spawnName, "starter:", data.hasStarter, "ender:", data.hasEnder, "vendor:", data.isVendor, "dist:", data.distance)
   end
-  
+
   table.sort(sortedSpawns, function(a, b)
     -- Priority: quest starters first, then enders, then vendors, then by distance
     if a.hasStarter and not b.hasStarter then return true end
@@ -963,44 +955,70 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     if b.isVendor and not a.isVendor then return true end
     return a.distance < b.distance
   end)
-  
-  print("After sorting:")
-  for i, data in ipairs(sortedSpawns) do
-    print(i .. ":", data.spawn, "starter:", data.hasStarter, "ender:", data.hasEnder, "vendor:", data.isVendor)
+
+  -- Estimate tooltip lines to decide on compact format
+  local estimatedLines = 4 -- Header lines (spawn name, level, type, respawn)
+
+  -- Count lines for current node
+  for title, meta in pairs(currentNode.node) do
+    if meta.quest then
+      estimatedLines = estimatedLines + 2 -- Quest name + average objectives
+    else
+      estimatedLines = estimatedLines + 1 -- Other items
+    end
   end
-  print("=== END PRIORITY DEBUG ===")
-  
-  -- Decide if we need compact format based on number of nearby spawns
-  local totalSpawns = table.getn(sortedSpawns)
-  local useCompactFormat = (totalSpawns > 0) -- Only compact if there are other spawns nearby
-  
+
+  -- Count lines for nearby spawns (full format estimate)
+  for i, spawnData in ipairs(sortedSpawns) do
+    estimatedLines = estimatedLines + 1 -- Spawn header
+    for _, nodeInfo in ipairs(spawnData.nodes) do
+      if nodeInfo.meta.quest then
+        estimatedLines = estimatedLines + 2 -- Quest + objectives
+      else
+        estimatedLines = estimatedLines + 1
+      end
+    end
+  end
+
+  local maxTooltipLines = 20 -- Max comfortable tooltip size
+  local useCompactFormat = (estimatedLines > maxTooltipLines) and (table.getn(sortedSpawns) > 0)
+
+
   -- First show current node's quests (always full format for main node)
   for title, meta in pairs(currentNode.node) do
     pfMap:ShowTooltip(meta, tooltip)
   end
-  
+
   -- Show prioritized spawns with limit
   local maxSpawns = 6 -- Show max 6 different spawns with compact format
   local spawnCount = 0
   local remainingCounts = {starters = 0, enders = 0, vendors = 0, others = 0}
-  
+
   for i, spawnData in ipairs(sortedSpawns) do
     if spawnCount < maxSpawns then
       tooltip:AddLine(" ") -- spacer
       tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
-      
-      -- Show all quests for this spawn in compact format
+
+      -- Show all quests for this spawn
       for _, nodeInfo in ipairs(spawnData.nodes) do
         local meta = nodeInfo.meta
         if meta.quest then
-          local symbol = pfMap:GetQuestSymbol(meta.quest)
-          tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
+          if useCompactFormat then
+            -- Use compact format when tooltip would be too long
+            local symbol = pfMap:GetQuestSymbol(meta.quest)
+            tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
+            print("USING COMPACT for:", meta.quest)
+          else
+            -- Use full format
+            pfMap:ShowTooltip(meta, tooltip)
+            print("USING FULL for:", meta.quest)
+          end
         else
-          -- For non-quest items, show compact info
+          -- For non-quest items, show full info
           pfMap:ShowTooltip(meta, tooltip)
         end
       end
-      
+
       spawnCount = spawnCount + 1
     else
       -- Count remaining spawns by category
@@ -1015,7 +1033,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       end
     end
   end
-  
+
   -- Show summary of remaining spawns
   if spawnCount >= maxSpawns and (remainingCounts.starters + remainingCounts.enders + remainingCounts.vendors + remainingCounts.others) > 0 then
     local summaryParts = {}
@@ -1031,7 +1049,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     if remainingCounts.others > 0 then
       table.insert(summaryParts, remainingCounts.others .. " other" .. (remainingCounts.others > 1 and "s" or ""))
     end
-    
+
     if table.getn(summaryParts) > 0 then
       tooltip:AddLine("|cffaaaaaa... and " .. table.concat(summaryParts, ", ") .. " nearby|r")
     end
