@@ -714,35 +714,185 @@ function pfMap:NodeEnter()
   local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
   tooltip:SetOwner(this, "ANCHOR_LEFT")
   this.spawn = this.spawn or UNKNOWN
-  tooltip:SetText(this.spawn..(pfQuest_config.showids == "1" and " |cffcccccc("..this.spawnid..")|r" or ""), .3, 1, .8)
-  tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (this.level or UNKNOWN), .8,.8,.8, 1,1,1)
-  tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (this.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
-  tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (this.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
+  
+  -- Check if Alt is pressed for cluster tooltip mode
+  if IsAltKeyDown() then
+    pfMap:ShowClusterTooltip(this, tooltip)
+  else
+    -- Original tooltip logic
+    tooltip:SetText(this.spawn..(pfQuest_config.showids == "1" and " |cffcccccc("..this.spawnid..")|r" or ""), .3, 1, .8)
+    tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (this.level or UNKNOWN), .8,.8,.8, 1,1,1)
+    tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (this.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
+    tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (this.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
 
-  for title, meta in pairs(this.node) do
-    pfMap:ShowTooltip(meta, tooltip)
-  end
-
-  -- add tooltip help if setting is enabled
-  if pfQuest_config["tooltiphelp"] == "1" then
-    local text = pfQuest_Loc["Use <Shift>-Click To Remove Nodes"]
-
-    if this.cluster then
-      text = pfQuest_Loc["Hold <Ctrl> To Hide Cluster"]
-    elseif tooltip == GameTooltip then
-      text = pfQuest_Loc["Hold <Ctrl> To Hide Minimap Nodes"]
-    elseif not this.texture then
-      text = pfQuest_Loc["Click Node To Change Color"]
-    elseif this.questid and this.texture and this.layer < 5 then
-      text = pfQuest_Loc["Use <Shift>-Click To Mark Quest As Done"]
+    for title, meta in pairs(this.node) do
+      pfMap:ShowTooltip(meta, tooltip)
     end
 
-    -- update tooltip and sizes
-    tooltip:AddLine(text, .6, .6, .6)
-    tooltip:Show()
+    -- add tooltip help if setting is enabled
+    if pfQuest_config["tooltiphelp"] == "1" then
+      local text = pfQuest_Loc["Use <Shift>-Click To Remove Nodes"]
+
+      if this.cluster then
+        text = pfQuest_Loc["Hold <Ctrl> To Hide Cluster"]
+      elseif tooltip == GameTooltip then
+        text = pfQuest_Loc["Hold <Ctrl> To Hide Minimap Nodes"]
+      elseif not this.texture then
+        text = pfQuest_Loc["Click Node To Change Color"]
+      elseif this.questid and this.texture and this.layer < 5 then
+        text = pfQuest_Loc["Use <Shift>-Click To Mark Quest As Done"]
+      end
+
+      -- update tooltip and sizes
+      tooltip:AddLine(text, .6, .6, .6)
+      tooltip:Show()
+    end
   end
 
   pfMap.highlight = pfQuest_config["mouseover"] == "1" and this.title
+end
+
+function pfMap:ShowClusterTooltip(currentNode, tooltip)
+  -- Debug: Add visible indicator that Alt mode is working
+  tooltip:SetText("|cffff0000[DEBUG: Alt-mode active]|r " .. (currentNode.spawn or "Unknown"), 1, 0, 0)
+  
+  -- Find all nearby nodes within cluster distance
+  local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+  local clusterRadius = 15 -- Map coordinate units for clustering
+  local nearbyNodes = {}
+  local debugInfo = {}
+  
+  -- Get current node coordinates from its data
+  local currentX, currentY = nil, nil
+  for title, meta in pairs(currentNode.node) do
+    if meta.x and meta.y then
+      currentX, currentY = tonumber(meta.x), tonumber(meta.y)
+      break -- Use first found coordinates
+    end
+  end
+  
+  -- Debug info
+  table.insert(debugInfo, "Current pos: " .. (currentX or "nil") .. ", " .. (currentY or "nil"))
+  table.insert(debugInfo, "Map ID: " .. (map or "nil"))
+  table.insert(debugInfo, "Title: " .. (currentNode.title or "nil"))
+  
+  -- Get current mouse position for proximity check
+  local isOnMinimap = currentNode:GetParent() ~= WorldMapButton
+  if isOnMinimap then
+    clusterRadius = 10 -- smaller radius for minimap
+    table.insert(debugInfo, "Minimap mode: radius " .. clusterRadius)
+  else
+    table.insert(debugInfo, "Worldmap mode: radius " .. clusterRadius)
+  end
+  
+  -- Search through all active nodes on current map
+  local totalNodes = 0
+  local totalAddons = 0
+  
+  -- Check what addons are available
+  if pfMap.nodes then
+    for addonName, addonData in pairs(pfMap.nodes) do
+      totalAddons = totalAddons + 1
+      table.insert(debugInfo, "Found addon: " .. addonName)
+      
+      if addonData[map] then
+        for coords, coordNodes in pairs(addonData[map]) do
+          for title, meta in pairs(coordNodes) do
+            totalNodes = totalNodes + 1
+            if meta.x and meta.y and currentX and currentY then
+              local nodeX, nodeY = tonumber(meta.x), tonumber(meta.y)
+              local distance = math.sqrt((nodeX - currentX)^2 + (nodeY - currentY)^2)
+              
+              if distance <= clusterRadius then
+                table.insert(nearbyNodes, {
+                  spawn = meta.spawn or title,
+                  level = meta.level,
+                  spawntype = meta.spawntype,
+                  respawn = meta.respawn,
+                  spawnid = meta.spawnid,
+                  distance = distance,
+                  coords = coords,
+                  addon = addonName,
+                  node = {[title] = meta}
+                })
+              end
+            end
+          end
+        end
+      end
+    end
+  else
+    table.insert(debugInfo, "pfMap.nodes is nil")
+  end
+  
+  table.insert(debugInfo, "Total addons: " .. totalAddons)
+  table.insert(debugInfo, "Total nodes on map: " .. totalNodes)
+  table.insert(debugInfo, "Nearby nodes found: " .. table.getn(nearbyNodes))
+  
+  -- Sort by distance (closest first)
+  table.sort(nearbyNodes, function(a, b) return a.distance < b.distance end)
+  
+  local nodeCount = table.getn(nearbyNodes)
+  if nodeCount == 0 then
+    -- Fallback to current node if no nearby nodes found
+    nearbyNodes = {{
+      spawn = currentNode.spawn,
+      level = currentNode.level,
+      spawntype = currentNode.spawntype,
+      respawn = currentNode.respawn,
+      spawnid = currentNode.spawnid,
+      distance = 0,
+      node = currentNode.node
+    }}
+    nodeCount = 1
+  end
+  
+  -- Show debug info
+  for _, info in ipairs(debugInfo) do
+    tooltip:AddLine("|cffcccccc" .. info .. "|r", 0.8, 0.8, 0.8)
+  end
+  
+  tooltip:AddLine(" ") -- spacer
+  
+  -- Set main tooltip header
+  if nodeCount > 1 then
+    tooltip:AddLine("|cff00ff00[Cluster: " .. nodeCount .. " nearby nodes]|r", 0, 1, 0)
+  else
+    tooltip:AddLine("|cffffff00[Single node]|r", 1, 1, 0)
+  end
+  
+  -- Show information for each nearby node
+  for i, nodeData in ipairs(nearbyNodes) do
+    if i > 1 then
+      tooltip:AddLine(" ") -- spacer between nodes
+    end
+    
+    if nodeCount > 1 then
+      -- Show node header for clusters
+      local distText = nodeData.distance > 0 and string.format(" |cffaaaaaa(%.1f units)|r", nodeData.distance) or ""
+      tooltip:AddLine("|cff00ff00" .. nodeData.spawn .. "|r" .. distText, 0, 1, 0)
+      if nodeData.coords then
+        tooltip:AddLine("|cffaaaaaa  " .. nodeData.coords .. " (" .. nodeData.addon .. ")|r", 0.7, 0.7, 0.7)
+      end
+    else
+      tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (nodeData.level or UNKNOWN), .8,.8,.8, 1,1,1)
+      tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (nodeData.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
+      tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (nodeData.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
+    end
+    
+    -- Show quest/item information for this node
+    for title, meta in pairs(nodeData.node) do
+      pfMap:ShowTooltip(meta, tooltip)
+    end
+    
+    -- Limit display to avoid too large tooltips
+    if i >= 5 then -- Reduced for debug
+      tooltip:AddLine("|cffaaaaaa... and " .. (nodeCount - 5) .. " more nodes|r")
+      break
+    end
+  end
+  
+  tooltip:Show()
 end
 
 function pfMap:NodeLeave()
