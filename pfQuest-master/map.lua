@@ -743,8 +743,18 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     clusterRadius = 0.5 -- smaller radius for minimap
   end
 
-  -- Search through all active nodes on current map
-  if pfMap.nodes and currentX and currentY then
+  -- Check if current node is a quest starter/ender
+  local isCurrentNodeQuestGiver = false
+  for title, meta in pairs(currentNode.node) do
+    if meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or 
+                       meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END") then
+      isCurrentNodeQuestGiver = true
+      break
+    end
+  end
+  
+  -- Only do clustering if current node is a quest giver
+  if isCurrentNodeQuestGiver and pfMap.nodes and currentX and currentY then
     for addonName, addonData in pairs(pfMap.nodes) do
       if addonData[map] then
         for coords, coordNodes in pairs(addonData[map]) do
@@ -754,20 +764,26 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
               local distance = math.sqrt((nodeX - currentX)^2 + (nodeY - currentY)^2)
 
               if distance <= clusterRadius then
-                table.insert(nearbyNodes, {
-                  spawn = meta.spawn or title,
-                  level = meta.level,
-                  spawntype = meta.spawntype,
-                  respawn = meta.respawn,
-                  spawnid = meta.spawnid,
-                  distance = distance,
-                  title = title,
-                  node = {[title] = meta}
-                })
+                -- Only include nodes that are quest starters/enders
+                local isQuestGiver = meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or 
+                                                     meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END")
+                
+                if isQuestGiver then
+                  table.insert(nearbyNodes, {
+                    spawn = meta.spawn or title,
+                    level = meta.level,
+                    spawntype = meta.spawntype,
+                    respawn = meta.respawn,
+                    spawnid = meta.spawnid,
+                    distance = distance,
+                    title = title,
+                    node = {[title] = meta}
+                  })
 
-                -- Track quest titles for highlighting
-                if meta.quest then
-                  questTitles[meta.quest] = true
+                  -- Track quest titles for highlighting
+                  if meta.quest then
+                    questTitles[meta.quest] = true
+                  end
                 end
               end
             end
@@ -800,6 +816,38 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       if meta.quest then
         questTitles[meta.quest] = true
       end
+    end
+    
+    -- If this is not a quest giver, use simple tooltip
+    if not isCurrentNodeQuestGiver then
+      tooltip:SetText(currentNode.spawn..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
+      tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (currentNode.level or UNKNOWN), .8,.8,.8, 1,1,1)
+      tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (currentNode.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
+      tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (currentNode.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
+
+      for title, meta in pairs(currentNode.node) do
+        pfMap:ShowTooltip(meta, tooltip)
+      end
+
+      -- add tooltip help if setting is enabled
+      if pfQuest_config["tooltiphelp"] == "1" then
+        local text = pfQuest_Loc["Use <Shift>-Click To Remove Nodes"]
+
+        if currentNode.cluster then
+          text = pfQuest_Loc["Hold <Ctrl> To Hide Cluster"]
+        elseif tooltip == GameTooltip then
+          text = pfQuest_Loc["Hold <Ctrl> To Hide Minimap Nodes"]
+        elseif not currentNode.texture then
+          text = pfQuest_Loc["Click Node To Change Color"]
+        elseif currentNode.questid and currentNode.texture and currentNode.layer < 5 then
+          text = pfQuest_Loc["Use <Shift>-Click To Mark Quest As Done"]
+        end
+
+        tooltip:AddLine(text, .6, .6, .6)
+      end
+      
+      tooltip:Show()
+      return  -- Exit early for non-quest NPCs
     end
   end
 
