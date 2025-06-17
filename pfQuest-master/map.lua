@@ -881,26 +881,128 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     pfMap:ShowTooltip(meta, tooltip)
   end
 
-  -- Then show other nearby nodes
+  -- Group nearby nodes by spawn for better organization
+  local spawnGroups = {}
+  print("=== PRIORITY DEBUG ===")
+  print("Total nearby nodes:", table.getn(nearbyNodes))
+  
   for i, nodeData in ipairs(nearbyNodes) do
-    if nodeData.distance > 0 then -- Skip current node (distance = 0)
-      -- Only show spawn header if it's different from current and not shown yet
-      if nodeData.spawn ~= currentSpawn and not shownSpawns[nodeData.spawn] then
-        tooltip:AddLine(" ") -- spacer between different spawns
-        tooltip:AddLine("|cff00ff00" .. nodeData.spawn .. "|r", .8, 1, .8)
-        shownSpawns[nodeData.spawn] = true
+    if nodeData.distance > 0 then -- Skip current node
+      local spawnName = nodeData.spawn
+      if not spawnGroups[spawnName] then
+        spawnGroups[spawnName] = {
+          spawn = spawnName,
+          distance = nodeData.distance,
+          nodes = {},
+          hasStarter = false,
+          hasEnder = false,
+          isVendor = false
+        }
       end
-
-      -- Show quest/item information for this node
+      
+      -- Add node and categorize
       for title, meta in pairs(nodeData.node) do
-        pfMap:ShowTooltip(meta, tooltip)
+        table.insert(spawnGroups[spawnName].nodes, {title = title, meta = meta})
+        
+        -- Categorize spawn type for priority
+        if meta.QTYPE == "NPC_START" or meta.QTYPE == "OBJECT_START" then
+          spawnGroups[spawnName].hasStarter = true
+          print("Found STARTER:", spawnName, "QTYPE:", meta.QTYPE)
+        elseif meta.QTYPE == "NPC_END" or meta.QTYPE == "OBJECT_END" then
+          spawnGroups[spawnName].hasEnder = true
+          print("Found ENDER:", spawnName, "QTYPE:", meta.QTYPE)
+        end
+        
+        if meta.spawntype and (meta.spawntype == "Vendor" or meta.sellcount) then
+          spawnGroups[spawnName].isVendor = true
+          print("Found VENDOR:", spawnName, "spawntype:", meta.spawntype)
+        end
+        
+        print("Node:", spawnName, "quest:", meta.quest or "nil", "QTYPE:", meta.QTYPE or "nil")
       end
     end
-
-    -- Limit display to avoid too large tooltips
-    if i >= 8 then
-      tooltip:AddLine("|cffaaaaaa... and " .. (table.getn(nearbyNodes) - 8) .. " more nearby|r")
-      break
+  end
+  
+  -- Sort spawns by priority: starters > enders > vendors > others
+  local sortedSpawns = {}
+  for spawnName, data in pairs(spawnGroups) do
+    table.insert(sortedSpawns, data)
+    print("Spawn group:", spawnName, "starter:", data.hasStarter, "ender:", data.hasEnder, "vendor:", data.isVendor, "dist:", data.distance)
+  end
+  
+  table.sort(sortedSpawns, function(a, b)
+    -- Priority: quest starters first, then enders, then vendors, then by distance
+    if a.hasStarter and not b.hasStarter then return true end
+    if b.hasStarter and not a.hasStarter then return false end
+    if a.hasEnder and not b.hasEnder then return true end
+    if b.hasEnder and not a.hasEnder then return false end
+    if a.isVendor and not b.isVendor then return false end
+    if b.isVendor and not a.isVendor then return true end
+    return a.distance < b.distance
+  end)
+  
+  print("After sorting:")
+  for i, data in ipairs(sortedSpawns) do
+    print(i .. ":", data.spawn, "starter:", data.hasStarter, "ender:", data.hasEnder, "vendor:", data.isVendor)
+  end
+  print("=== END PRIORITY DEBUG ===")
+  
+  -- Show prioritized spawns with limit
+  local maxSpawns = 6 -- Show max 6 different spawns with compact format
+  local spawnCount = 0
+  local remainingCounts = {starters = 0, enders = 0, vendors = 0, others = 0}
+  
+  for i, spawnData in ipairs(sortedSpawns) do
+    if spawnCount < maxSpawns then
+      tooltip:AddLine(" ") -- spacer
+      tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
+      
+      -- Show all quests for this spawn in compact format
+      for _, nodeInfo in ipairs(spawnData.nodes) do
+        local meta = nodeInfo.meta
+        if meta.quest then
+          -- Show just quest name with quest giver symbol
+          local symbol = "|cff555555[|cffffcc00!|cff555555]|r "
+          tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
+        else
+          -- For non-quest items, show compact info
+          pfMap:ShowTooltip(meta, tooltip)
+        end
+      end
+      
+      spawnCount = spawnCount + 1
+    else
+      -- Count remaining spawns by category
+      if spawnData.hasStarter then
+        remainingCounts.starters = remainingCounts.starters + 1
+      elseif spawnData.hasEnder then
+        remainingCounts.enders = remainingCounts.enders + 1
+      elseif spawnData.isVendor then
+        remainingCounts.vendors = remainingCounts.vendors + 1
+      else
+        remainingCounts.others = remainingCounts.others + 1
+      end
+    end
+  end
+  
+  -- Show summary of remaining spawns
+  if spawnCount >= maxSpawns and (remainingCounts.starters + remainingCounts.enders + remainingCounts.vendors + remainingCounts.others) > 0 then
+    local summaryParts = {}
+    if remainingCounts.starters > 0 then
+      table.insert(summaryParts, remainingCounts.starters .. " quest starter" .. (remainingCounts.starters > 1 and "s" or ""))
+    end
+    if remainingCounts.enders > 0 then
+      table.insert(summaryParts, remainingCounts.enders .. " quest ender" .. (remainingCounts.enders > 1 and "s" or ""))
+    end
+    if remainingCounts.vendors > 0 then
+      table.insert(summaryParts, remainingCounts.vendors .. " vendor" .. (remainingCounts.vendors > 1 and "s" or ""))
+    end
+    if remainingCounts.others > 0 then
+      table.insert(summaryParts, remainingCounts.others .. " other" .. (remainingCounts.others > 1 and "s" or ""))
+    end
+    
+    if table.getn(summaryParts) > 0 then
+      tooltip:AddLine("|cffaaaaaa... and " .. table.concat(summaryParts, ", ") .. " nearby|r")
     end
   end
 
