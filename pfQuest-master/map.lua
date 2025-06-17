@@ -328,7 +328,7 @@ function pfMap:ShowTooltip(meta, tooltip)
     end
 
     if not catch then
-      tooltip:AddLine("|cff555555[|cffffcc00!|cff555555]|r " .. meta["quest"], 1, 1, .7)
+      tooltip:AddLine("|cff555555[|cffffcc00!|cff555555]|r " .. meta["quest"], 1, 1, 0)
     end
 
     if not catch_obj then
@@ -876,9 +876,52 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   local currentSpawn = currentNode.spawn
   local shownSpawns = {[currentSpawn] = true}
 
-  -- First show current node's quests (without extra header since we already have main header)
+  -- First show current node's quests in compact format (without extra header since we already have main header)
   for title, meta in pairs(currentNode.node) do
-    pfMap:ShowTooltip(meta, tooltip)
+    if meta.quest then
+      -- Check if quest is in player's quest log
+      local questInLog = false
+      local questComplete = false
+      
+      print("=== QUEST STATUS DEBUG (CURRENT) ===")
+      print("Checking quest:", meta.quest)
+      
+      for qid=1, GetNumQuestLogEntries() do
+        local qtitle, _, _, _, _, complete = compat.GetQuestLogTitle(qid)
+        if meta.quest == qtitle then
+          questInLog = true
+          questComplete = complete
+          print("FOUND in log:", qtitle, "complete:", complete)
+          break
+        end
+      end
+      
+      print("Final status: inLog:", questInLog, "complete:", questComplete)
+      
+      -- Choose symbol and color based on quest status
+      local symbol
+      if questInLog then
+        -- Quest is in log - show ? 
+        if questComplete then
+          symbol = "|cff555555[|cffffcc00?|cff555555]|r "  -- Yellow ? for ready to turn in
+          print("Using: ? YELLOW (complete)")
+        else
+          symbol = "|cff555555[|cff888888?|cff555555]|r "  -- Gray ? for in progress
+          print("Using: ? GRAY (in progress)")
+        end
+      else
+        -- Quest not in log - show ! (yellow for available)
+        symbol = "|cff555555[|cffffcc00!|cff555555]|r "
+        print("Using: ! YELLOW (available)")
+      end
+      print("=== END QUEST DEBUG (CURRENT) ===")
+      
+      -- Title is always yellow
+      tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
+    else
+      -- For non-quest items, show standard tooltip
+      pfMap:ShowTooltip(meta, tooltip)
+    end
   end
 
   -- Group nearby nodes by spawn for better organization
@@ -961,8 +1004,44 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       for _, nodeInfo in ipairs(spawnData.nodes) do
         local meta = nodeInfo.meta
         if meta.quest then
-          -- Show just quest name with quest giver symbol
-          local symbol = "|cff555555[|cffffcc00!|cff555555]|r "
+          -- Check if quest is in player's quest log
+          local questInLog = false
+          local questComplete = false
+          
+          print("=== QUEST STATUS DEBUG ===")
+          print("Checking quest:", meta.quest)
+          
+          for qid=1, GetNumQuestLogEntries() do
+            local qtitle, _, _, _, _, complete = compat.GetQuestLogTitle(qid)
+            if meta.quest == qtitle then
+              questInLog = true
+              questComplete = complete
+              print("FOUND in log:", qtitle, "complete:", complete)
+              break
+            end
+          end
+          
+          print("Final status: inLog:", questInLog, "complete:", questComplete)
+          
+          -- Choose symbol and color based on quest status
+          local symbol
+          if questInLog then
+            -- Quest is in log - show ? 
+            if questComplete then
+              symbol = "|cff555555[|cffffcc00?|cff555555]|r "  -- Yellow ? for ready to turn in
+              print("Using: ? YELLOW (complete)")
+            else
+              symbol = "|cff555555[|cff888888?|cff555555]|r "  -- Gray ? for in progress
+              print("Using: ? GRAY (in progress)")
+            end
+          else
+            -- Quest not in log - show ! (yellow for available)
+            symbol = "|cff555555[|cffffcc00!|cff555555]|r "
+            print("Using: ! YELLOW (available)")
+          end
+          print("=== END QUEST DEBUG ===")
+          
+          -- Title is always yellow
           tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
         else
           -- For non-quest items, show compact info
