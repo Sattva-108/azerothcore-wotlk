@@ -496,7 +496,8 @@ function pfQuest:AddWorldMapIntegration()
   -- Quest Display Selection
   pfQuest.mapButton = CreateFrame("Frame", "pfQuestMapDropdown", WorldMapButton, "UIDropDownMenuTemplate")
   pfQuest.mapButton:ClearAllPoints()
-  pfQuest.mapButton:SetPoint("TOPRIGHT" , 0, -10)
+  local offset = (IsAddOnLoaded("WDM") == 1) and -40 or 0
+  pfQuest.mapButton:SetPoint("TOPRIGHT", offset, -10)
   pfQuest.mapButton:SetScript("OnShow", function()
     pfQuest.mapButton.current = tonumber(pfQuest_config["trackingmethod"])
     pfQuest.mapButton:UpdateMenu()
