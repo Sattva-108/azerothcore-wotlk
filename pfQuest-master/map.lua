@@ -721,6 +721,34 @@ function pfMap:NodeEnter()
   pfMap.highlight = pfQuest_config["mouseover"] == "1" and this.title
 end
 
+-- Helper function to get quest symbol and status
+function pfMap:GetQuestSymbol(questTitle)
+  local questInLog = false
+  local questComplete = false
+  
+  for qid=1, GetNumQuestLogEntries() do
+    local qtitle, _, _, _, _, complete = compat.GetQuestLogTitle(qid)
+    if questTitle == qtitle then
+      questInLog = true
+      questComplete = complete
+      break
+    end
+  end
+  
+  local symbol
+  if questInLog then
+    if questComplete then
+      symbol = "|cff555555[|cffffcc00?|cff555555]|r "  -- Yellow ? for ready to turn in
+    else
+      symbol = "|cff555555[|cff888888?|cff555555]|r "  -- Gray ? for in progress
+    end
+  else
+    symbol = "|cff555555[|cffffcc00!|cff555555]|r "  -- Yellow ! for available
+  end
+  
+  return symbol, questInLog, questComplete
+end
+
 function pfMap:ShowClusterTooltip(currentNode, tooltip)
   -- Find all nearby nodes within cluster distance
   local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
@@ -879,44 +907,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   -- First show current node's quests in compact format (without extra header since we already have main header)
   for title, meta in pairs(currentNode.node) do
     if meta.quest then
-      -- Check if quest is in player's quest log
-      local questInLog = false
-      local questComplete = false
-      
-      print("=== QUEST STATUS DEBUG (CURRENT) ===")
-      print("Checking quest:", meta.quest)
-      
-      for qid=1, GetNumQuestLogEntries() do
-        local qtitle, _, _, _, _, complete = compat.GetQuestLogTitle(qid)
-        if meta.quest == qtitle then
-          questInLog = true
-          questComplete = complete
-          print("FOUND in log:", qtitle, "complete:", complete)
-          break
-        end
-      end
-      
-      print("Final status: inLog:", questInLog, "complete:", questComplete)
-      
-      -- Choose symbol and color based on quest status
-      local symbol
-      if questInLog then
-        -- Quest is in log - show ? 
-        if questComplete then
-          symbol = "|cff555555[|cffffcc00?|cff555555]|r "  -- Yellow ? for ready to turn in
-          print("Using: ? YELLOW (complete)")
-        else
-          symbol = "|cff555555[|cff888888?|cff555555]|r "  -- Gray ? for in progress
-          print("Using: ? GRAY (in progress)")
-        end
-      else
-        -- Quest not in log - show ! (yellow for available)
-        symbol = "|cff555555[|cffffcc00!|cff555555]|r "
-        print("Using: ! YELLOW (available)")
-      end
-      print("=== END QUEST DEBUG (CURRENT) ===")
-      
-      -- Title is always yellow
+      local symbol = pfMap:GetQuestSymbol(meta.quest)
       tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
     else
       -- For non-quest items, show standard tooltip
@@ -1004,44 +995,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       for _, nodeInfo in ipairs(spawnData.nodes) do
         local meta = nodeInfo.meta
         if meta.quest then
-          -- Check if quest is in player's quest log
-          local questInLog = false
-          local questComplete = false
-          
-          print("=== QUEST STATUS DEBUG ===")
-          print("Checking quest:", meta.quest)
-          
-          for qid=1, GetNumQuestLogEntries() do
-            local qtitle, _, _, _, _, complete = compat.GetQuestLogTitle(qid)
-            if meta.quest == qtitle then
-              questInLog = true
-              questComplete = complete
-              print("FOUND in log:", qtitle, "complete:", complete)
-              break
-            end
-          end
-          
-          print("Final status: inLog:", questInLog, "complete:", questComplete)
-          
-          -- Choose symbol and color based on quest status
-          local symbol
-          if questInLog then
-            -- Quest is in log - show ? 
-            if questComplete then
-              symbol = "|cff555555[|cffffcc00?|cff555555]|r "  -- Yellow ? for ready to turn in
-              print("Using: ? YELLOW (complete)")
-            else
-              symbol = "|cff555555[|cff888888?|cff555555]|r "  -- Gray ? for in progress
-              print("Using: ? GRAY (in progress)")
-            end
-          else
-            -- Quest not in log - show ! (yellow for available)
-            symbol = "|cff555555[|cffffcc00!|cff555555]|r "
-            print("Using: ! YELLOW (available)")
-          end
-          print("=== END QUEST DEBUG ===")
-          
-          -- Title is always yellow
+          local symbol = pfMap:GetQuestSymbol(meta.quest)
           tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
         else
           -- For non-quest items, show compact info
