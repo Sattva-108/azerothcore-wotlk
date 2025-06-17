@@ -450,6 +450,29 @@ local customids = {
   ["The Scarlet Enclave"] = 4298,
   ["ScarletEnclave"] = 4298,
   ["UtgardeKeep"] = 206,
+
+  -- 5-ппл
+  ["UtgardePinnacle"] = 1196,
+  ["TheNexus"] = 4265,
+  ["Nexus80"] = 4228,  -- The Oculus
+  ["HallsofStone"] = 4264,
+  ["HallsofLightning"] = 4272,
+  ["AzjolNerub"] = 4277,
+  ["Ahnkahet"] = 4494,
+  ["DrakTharonKeep"] = 4196,
+  ["Gundrak"] = 4416,
+  ["VioletHold"] = 4415,
+  ["CoTStratholme"] = 4100,
+
+  -- рейды
+  ["Naxxramas"] = 3456,
+  ["TheObsidianSanctum"] = 4493,
+  ["Ulduar"] = 4273,
+  ["TheEyeofEternity"] = 4500,
+  ["VaultofArchavon"] = 4603,
+  ["IcecrownCitadel"] = 4812,
+  ["TrialoftheChampion"] = 4723,
+  ["TrialoftheCrusader"] = 4722,
 }
 
 local map_zone_cache = { }
@@ -927,6 +950,13 @@ function pfMap:UpdateNodes()
             pfQuest.tracker.ButtonAdd(title, node)
           end
 
+          -- Coordinate transformation for Utgarde Pinnacle (zone 1196)
+          if map == 1196 then
+            -- Convert from DungeonMap coordinates to WorldMap coordinates
+            x = ((x - 20) * 1.2) + 20  -- scale and center adjustment
+            y = ((y - 30) * 1.1) + 25  -- scale and center adjustment
+          end
+          
           x = x / 100 * WorldMapButton:GetWidth()
           y = y / 100 * WorldMapButton:GetHeight()
 
@@ -1020,6 +1050,15 @@ function pfMap:UpdateMinimap()
           coord_cache[coords] = { x, y }
         end
 
+        -- Coordinate transformation for Utgarde Pinnacle (zone 1196)
+        if mapID == 1196 then
+          -- Convert from DungeonMap coordinates to minimap coordinates
+          -- DungeonMap range: X(-748 to +9), Y(158 to 662)
+          -- Target range: 0-100 for minimap
+          x = ((x - 20) * 1.2) + 20  -- scale and center adjustment
+          y = ((y - 30) * 1.1) + 25  -- scale and center adjustment
+        end
+        
         local xPos = ( x - xPlayer) * xDraw
         local yPos = ( y - yPlayer) * yDraw
 
