@@ -851,9 +851,19 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     end
   end
 
+  -- Count unique spawns for header
+  local uniqueSpawns = {}
+  for i, nodeData in ipairs(nearbyNodes) do
+    if nodeData.distance > 0 then -- Skip current node
+      uniqueSpawns[nodeData.spawn] = true
+    end
+  end
+  local uniqueSpawnCount = 0
+  for _ in pairs(uniqueSpawns) do uniqueSpawnCount = uniqueSpawnCount + 1 end
+  
   -- Set tooltip header
-  if nodeCount > 1 then
-    tooltip:SetText(currentNode.spawn .. " |cffaaaaaa(+" .. (nodeCount-1) .. " nearby)|r"..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
+  if uniqueSpawnCount > 0 then
+    tooltip:SetText(currentNode.spawn .. " |cffaaaaaa(+" .. uniqueSpawnCount .. " nearby)|r"..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
   else
     tooltip:SetText(currentNode.spawn..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
   end
@@ -877,8 +887,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       -- Only show spawn header if it's different from current and not shown yet
       if nodeData.spawn ~= currentSpawn and not shownSpawns[nodeData.spawn] then
         tooltip:AddLine(" ") -- spacer between different spawns
-        local distText = string.format(" |cffaaaaaa(%.1f yards)|r", nodeData.distance)
-        tooltip:AddLine("|cff00ff00" .. nodeData.spawn .. "|r" .. distText, .8, 1, .8)
+        tooltip:AddLine("|cff00ff00" .. nodeData.spawn .. "|r", .8, 1, .8)
         shownSpawns[nodeData.spawn] = true
       end
 
