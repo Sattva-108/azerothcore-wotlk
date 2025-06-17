@@ -281,7 +281,7 @@ function pfMap:ShowTooltip(meta, tooltip)
         local objectives = GetNumQuestLeaderBoards(qid)
         catch = true
 
-        local symbol = ( complete or objectives == 0 ) and "|cff555555[|cffffcc00?|cff555555]|r " or "|cff555555[|cffffcc00!|cff555555]|r "
+        local symbol = complete and "|cff555555[|cffffcc00?|cff555555]|r " or "|cff555555[|cff888888?|cff555555]|r "
         tooltip:AddLine(symbol .. meta["quest"], 1, 1, 0)
 
         if objectives then
@@ -904,17 +904,6 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   local currentSpawn = currentNode.spawn
   local shownSpawns = {[currentSpawn] = true}
 
-  -- First show current node's quests in compact format (without extra header since we already have main header)
-  for title, meta in pairs(currentNode.node) do
-    if meta.quest then
-      local symbol = pfMap:GetQuestSymbol(meta.quest)
-      tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
-    else
-      -- For non-quest items, show standard tooltip
-      pfMap:ShowTooltip(meta, tooltip)
-    end
-  end
-
   -- Group nearby nodes by spawn for better organization
   local spawnGroups = {}
   print("=== PRIORITY DEBUG ===")
@@ -980,6 +969,15 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     print(i .. ":", data.spawn, "starter:", data.hasStarter, "ender:", data.hasEnder, "vendor:", data.isVendor)
   end
   print("=== END PRIORITY DEBUG ===")
+  
+  -- Decide if we need compact format based on number of nearby spawns
+  local totalSpawns = table.getn(sortedSpawns)
+  local useCompactFormat = (totalSpawns > 0) -- Only compact if there are other spawns nearby
+  
+  -- First show current node's quests (always full format for main node)
+  for title, meta in pairs(currentNode.node) do
+    pfMap:ShowTooltip(meta, tooltip)
+  end
   
   -- Show prioritized spawns with limit
   local maxSpawns = 6 -- Show max 6 different spawns with compact format
