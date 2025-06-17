@@ -740,7 +740,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   -- Get current mouse position for proximity check
   local isOnMinimap = currentNode:GetParent() ~= WorldMapButton
   if isOnMinimap then
-    clusterRadius = 0,3 -- smaller radius for minimap
+    clusterRadius = 0.5 -- smaller radius for minimap
   end
 
   -- Search through all active nodes on current map
@@ -814,22 +814,35 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (currentNode.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
   tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (currentNode.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
 
-  -- Show information for each nearby node
-  for i, nodeData in ipairs(nearbyNodes) do
-    if i > 1 then
-      tooltip:AddLine(" ") -- spacer between nodes
-      local distText = string.format(" |cffaaaaaa(%.0f yards)|r", nodeData.distance)
-      tooltip:AddLine("|cff00ff00" .. nodeData.spawn .. "|r" .. distText, .8, 1, .8)
-    end
+  -- Show information for each nearby node but avoid duplicate spawn headers
+  local currentSpawn = currentNode.spawn
+  local shownSpawns = {[currentSpawn] = true}
 
-    -- Show quest/item information for this node
-    for title, meta in pairs(nodeData.node) do
-      pfMap:ShowTooltip(meta, tooltip)
+  -- First show current node's quests (without extra header since we already have main header)
+  for title, meta in pairs(currentNode.node) do
+    pfMap:ShowTooltip(meta, tooltip)
+  end
+
+  -- Then show other nearby nodes
+  for i, nodeData in ipairs(nearbyNodes) do
+    if nodeData.distance > 0 then -- Skip current node (distance = 0)
+      -- Only show spawn header if it's different from current and not shown yet
+      if nodeData.spawn ~= currentSpawn and not shownSpawns[nodeData.spawn] then
+        tooltip:AddLine(" ") -- spacer between different spawns
+        local distText = string.format(" |cffaaaaaa(%.1f yards)|r", nodeData.distance)
+        tooltip:AddLine("|cff00ff00" .. nodeData.spawn .. "|r" .. distText, .8, 1, .8)
+        shownSpawns[nodeData.spawn] = true
+      end
+
+      -- Show quest/item information for this node
+      for title, meta in pairs(nodeData.node) do
+        pfMap:ShowTooltip(meta, tooltip)
+      end
     end
 
     -- Limit display to avoid too large tooltips
     if i >= 8 then
-      tooltip:AddLine("|cffaaaaaa... and " .. (nodeCount - 8) .. " more nearby|r")
+      tooltip:AddLine("|cffaaaaaa... and " .. (table.getn(nearbyNodes) - 8) .. " more nearby|r")
       break
     end
   end
