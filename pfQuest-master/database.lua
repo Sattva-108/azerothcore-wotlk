@@ -1329,17 +1329,17 @@ function pfDatabase:QuestFilter(id, plevel, pclass, prace)
     end
 
     -- hide if none of the pre-quests has been completed
---     if not one_complete then return end
+     if not one_complete then return end
   end
 
   -- hide non-available quests for your race
---   if quests[id]["race"] and not ( bit.band(quests[id]["race"], prace) == prace ) then return end
+   if quests[id]["race"] and not ( bit.band(quests[id]["race"], prace) == prace ) then return end
 
   -- hide non-available quests for your class
---   if quests[id]["class"] and not ( bit.band(quests[id]["class"], pclass) == pclass ) then return end
+   if quests[id]["class"] and not ( bit.band(quests[id]["class"], pclass) == pclass ) then return end
 
   -- hide non-available quests for your profession
---   if quests[id]["skill"] and not pfDatabase:GetPlayerSkill(quests[id]["skill"]) then return end
+   if quests[id]["skill"] and not pfDatabase:GetPlayerSkill(quests[id]["skill"]) then return end
 
   -- hide lowlevel quests
   if quests[id]["lvl"] and quests[id]["lvl"] < plevel - 4 and pfQuest_config["showlowlevel"] == "0" then return end
@@ -1749,6 +1749,9 @@ function pfDatabase:QueryServer()
     return
   end
 
+  -- Show query start message
+  DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: " .. (pfQuest_Loc["Quest query started..."] or "Quest query started..."))
+
   QueryQuestsCompleted()  -- Send the request to the server
 
   local frame = CreateFrame("Frame")  -- Create a new frame
@@ -1761,18 +1764,23 @@ function pfDatabase:QueryServer()
     local completedQuests = GetQuestsCompleted()
 
     if type(completedQuests) == "table" then
+      local questCount = 0
       for questID, _ in pairs(completedQuests) do
         pfQuest_history[questID] = { time(), UnitLevel("player") }
+        questCount = questCount + 1
       end
+
+      -- Show completion message with count
+      DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: |cff33ffcc" .. questCount .. "|cffffffff " .. (pfQuest_Loc["completed quests loaded."] or "completed quests loaded."))
 
       -- Reset all quest markers after processing completed quests
       pfQuest:ResetAll()
     elseif completedQuests == nil then
       -- Handle the case where GetQuestsCompleted() returned nil
-      print("Error: GetQuestsCompleted() returned nil.")
+      DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: Error: GetQuestsCompleted() returned nil.")
     else
       -- Handle the case where GetQuestsCompleted() did not return a valid table
-      print("Error: GetQuestsCompleted() did not return a valid table. Value: ", completedQuests)
+      DEFAULT_CHAT_FRAME:AddMessage("|cff33ffccpf|cffffffffQuest: Error: GetQuestsCompleted() did not return a valid table. Value: " .. tostring(completedQuests))
     end
   end
 
