@@ -712,7 +712,13 @@ function pfMap:NodeEnter()
   end
 
   local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
-  tooltip:SetOwner(this, "ANCHOR_LEFT")
+  
+  -- Smart anchor: use RIGHT if there's space, fallback to LEFT if near edge
+  local mouseX = GetCursorPosition() / UIParent:GetEffectiveScale()
+  local screenWidth = GetScreenWidth()
+  local useRightAnchor = mouseX < (screenWidth * 0.7) -- Use RIGHT if cursor in left 70% of screen
+  
+  tooltip:SetOwner(this, useRightAnchor and "ANCHOR_RIGHT" or "ANCHOR_LEFT")
   this.spawn = this.spawn or UNKNOWN
 
   -- Use cluster tooltip by default
