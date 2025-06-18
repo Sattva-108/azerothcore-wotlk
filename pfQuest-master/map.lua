@@ -1210,9 +1210,9 @@ function pfMap:NodeLeave()
     pfMap.altCycleData = nil
     pfMap.altCycleIndex = 1
     pfMap.altCycleDebounce = 0
-    -- Disable OnUpdate Alt checking
+    -- Disable OnUpdate cycling checking
     pfMap.altCheckEnabled = false
-    pfMap.altPressed = false
+    pfMap.rightPressed = false
   end
 end
 
@@ -1613,32 +1613,34 @@ end)
 local hlstate, shiftstate, transition, hidecluster, fps, resetmap
 
 pfMap:SetScript("OnUpdate", function()
-  -- Alt-cycling check for fullscreen WorldMap support  
+  -- Right-click cycling check (only when tooltip is active)
   if pfMap.altCheckEnabled then
-    local isAltDown = IsAltKeyDown()
+    local isRightDown = IsMouseButtonDown("RightButton")
+    local isCleanClick = not IsShiftKeyDown() and not IsControlKeyDown() and not IsAltKeyDown()
+    local tooltipActive = pfMap.altCycleData and pfMap.altCycleData.currentTooltip and pfMap.altCycleData.currentTooltip:IsShown()
     
-    -- Detect Alt key press transition (not pressed → pressed)
-    if isAltDown and not pfMap.altPressed then
-      pfMap.altPressed = true
+    -- Detect Right-click transition (not pressed → pressed) with clean modifiers and active tooltip
+    if isRightDown and isCleanClick and tooltipActive and not pfMap.rightPressed then
+      pfMap.rightPressed = true
       
-      print("ALT: OnUpdate detected Alt key press")
+      print("RIGHT: Clean right-click detected")
       PlaySound("igMainMenuOptionCheckBoxOn")
       
-      -- Same cycling logic as MODIFIER_STATE_CHANGED
+      -- Same cycling logic
       if pfMap.altCycleData and pfMap.altCycleData.allSpawns and table.getn(pfMap.altCycleData.allSpawns) > 0 then
         pfMap.altCycleIndex = pfMap.altCycleIndex + 1
         if pfMap.altCycleIndex > table.getn(pfMap.altCycleData.allSpawns) then
           pfMap.altCycleIndex = 1
         end
-        print("ALT: OnUpdate cycling to index", pfMap.altCycleIndex)
+        print("RIGHT: Cycling to index", pfMap.altCycleIndex)
         PlaySound("igQuestLogAbandonQuestOk")
         
         if pfMap.altCycleData.currentTooltip then
           pfMap:ShowClusterTooltip(pfMap.altCycleData.currentNode, pfMap.altCycleData.currentTooltip)
         end
       end
-    elseif not isAltDown then
-      pfMap.altPressed = false -- Reset when Alt is released
+    elseif not isRightDown then
+      pfMap.rightPressed = false -- Reset when Right is released
     end
   end
 
