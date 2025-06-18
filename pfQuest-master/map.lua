@@ -894,16 +894,28 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   local uniqueSpawnCount = 0
   for _ in pairs(uniqueSpawns) do uniqueSpawnCount = uniqueSpawnCount + 1 end
 
-  -- Set tooltip header
+  -- Initialize mainSpawnData with current node (will be updated after altCycleData setup)
+  local mainSpawnData = {spawn = currentNode.spawn, node = currentNode.node, isCurrent = true, level = currentNode.level, spawntype = currentNode.spawntype, respawn = currentNode.respawn, spawnid = currentNode.spawnid}
+  local otherSpawns = sortedSpawns
+
+  -- Get current displayed spawn info from mainSpawnData
+  local displaySpawn = mainSpawnData.spawn
+  local displayLevel = mainSpawnData.level or (mainSpawnData.isCurrent and currentNode.level) or UNKNOWN
+  local displayType = mainSpawnData.spawntype or (mainSpawnData.isCurrent and currentNode.spawntype) or UNKNOWN  
+  local displayRespawn = mainSpawnData.respawn or (mainSpawnData.isCurrent and currentNode.respawn) or UNKNOWN
+  local displaySpawnId = mainSpawnData.spawnid or (mainSpawnData.isCurrent and currentNode.spawnid) or ""
+
+  -- Set tooltip header with current main spawn
   if uniqueSpawnCount > 0 then
-    tooltip:SetText(currentNode.spawn .. " |cffaaaaaa(+" .. uniqueSpawnCount .. " nearby)|r"..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
+    local cycleIndicator = (useCompactFormat and pfMap.altCycleData) and " |cffcccccc(" .. pfMap.altCycleIndex .. "/" .. table.getn(pfMap.altCycleData.allSpawns) .. ")|r" or ""
+    tooltip:SetText(displaySpawn .. " |cffaaaaaa(+" .. uniqueSpawnCount .. " nearby)|r" .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
   else
-    tooltip:SetText(currentNode.spawn..(pfQuest_config.showids == "1" and " |cffcccccc("..currentNode.spawnid..")|r" or ""), .3, 1, .8)
+    tooltip:SetText(displaySpawn..(pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
   end
 
-  tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (currentNode.level or UNKNOWN), .8,.8,.8, 1,1,1)
-  tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (currentNode.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
-  tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (currentNode.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
+  tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
+  tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
+  tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", displayRespawn, .8,.8,.8, 1,1,1)
 
   -- Show information for each nearby node but avoid duplicate spawn headers
   local currentSpawn = currentNode.spawn
@@ -990,31 +1002,43 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
   -- Setup Alt-cycling for compacted tooltips
   if useCompactFormat then
-    print("ALT-CYCLE: Setting up for", currentNode.spawn, "with", table.getn(sortedSpawns), "nearby spawns")
     -- Create all spawns list including current node
     local allSpawns = {}
-    table.insert(allSpawns, {spawn = currentNode.spawn, node = currentNode.node, isCurrent = true})
+    table.insert(allSpawns, {
+      spawn = currentNode.spawn, 
+      node = currentNode.node, 
+      isCurrent = true,
+      level = currentNode.level,
+      spawntype = currentNode.spawntype,
+      respawn = currentNode.respawn,
+      spawnid = currentNode.spawnid
+    })
     for _, spawnData in ipairs(sortedSpawns) do
-      table.insert(allSpawns, {spawn = spawnData.spawn, nodes = spawnData.nodes, isCurrent = false})
+      -- Get metadata from first node in the group
+      local firstNode = spawnData.nodes and spawnData.nodes[1]
+      local meta = firstNode and firstNode.meta
+      table.insert(allSpawns, {
+        spawn = spawnData.spawn, 
+        nodes = spawnData.nodes, 
+        isCurrent = false,
+        level = meta and meta.level,
+        spawntype = meta and meta.spawntype, 
+        respawn = meta and meta.respawn,
+        spawnid = meta and meta.spawnid
+      })
     end
     
     -- Initialize or update cycling data
     if not pfMap.altCycleData or pfMap.altCycleData.nodeHash ~= currentNode.spawn then
       pfMap.altCycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
       pfMap.altCycleIndex = 1
-      -- Register modifier state event
-      pfMap:RegisterEvent("MODIFIER_STATE_CHANGED")
-      print("ALT-CYCLE: Registered event, total spawns:", table.getn(allSpawns))
     end
   else
-    print("ALT-CYCLE: Not using compact format, clearing data")
     -- Clear cycling data for non-compacted tooltips
     pfMap.altCycleData = nil
-    pfMap:UnregisterEvent("MODIFIER_STATE_CHANGED")
   end
 
-  -- Determine which spawn to show as main based on alt-cycling
-  local mainSpawnData, otherSpawns
+  -- Update mainSpawnData and otherSpawns based on alt-cycling state
   if useCompactFormat and pfMap.altCycleData then
     mainSpawnData = pfMap.altCycleData.allSpawns[pfMap.altCycleIndex]
     otherSpawns = {}
@@ -1023,9 +1047,26 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         table.insert(otherSpawns, spawnData)
       end
     end
-  else
-    mainSpawnData = {spawn = currentNode.spawn, node = currentNode.node, isCurrent = true}
-    otherSpawns = sortedSpawns
+    
+    -- Update display info for cycling
+    displaySpawn = mainSpawnData.spawn
+    displayLevel = mainSpawnData.level or (mainSpawnData.isCurrent and currentNode.level) or UNKNOWN
+    displayType = mainSpawnData.spawntype or (mainSpawnData.isCurrent and currentNode.spawntype) or UNKNOWN  
+    displayRespawn = mainSpawnData.respawn or (mainSpawnData.isCurrent and currentNode.respawn) or UNKNOWN
+    displaySpawnId = mainSpawnData.spawnid or (mainSpawnData.isCurrent and currentNode.spawnid) or ""
+    
+    -- Update tooltip header for cycling
+    if uniqueSpawnCount > 0 then
+      local cycleIndicator = " |cffcccccc(" .. pfMap.altCycleIndex .. "/" .. table.getn(pfMap.altCycleData.allSpawns) .. ")|r"
+      tooltip:SetText(displaySpawn .. " |cffaaaaaa(+" .. uniqueSpawnCount .. " nearby)|r" .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
+    else
+      tooltip:SetText(displaySpawn..(pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
+    end
+    
+    -- Update header lines
+    tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
+    tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
+    tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", displayRespawn, .8,.8,.8, 1,1,1)
   end
 
   -- Show main spawn's quests (always full format)
@@ -1046,13 +1087,19 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   local spawnCount = 0
   local remainingCounts = {starters = 0, enders = 0, vendors = 0, others = 0}
 
-  for i, spawnData in ipairs(otherSpawns) do
+  for i, spawnData in ipairs(otherSpawns or {}) do
     if spawnCount < maxSpawns then
       tooltip:AddLine(" ") -- spacer
       tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
 
       -- Show all quests for this spawn (always compact in this section)
-      local nodes = spawnData.nodes or (spawnData.node and {{meta = spawnData.node}} or {})
+      local nodes = spawnData.nodes or {}
+      if spawnData.node then
+        -- Convert single node to nodes format
+        for title, meta in pairs(spawnData.node) do
+          table.insert(nodes, {meta = meta})
+        end
+      end
       for _, nodeInfo in ipairs(nodes) do
         local meta = nodeInfo.meta or nodeInfo
         if meta.quest then
@@ -1139,12 +1186,11 @@ function pfMap:NodeLeave()
   pfMap.highlight = nil
   pfMap.clusterHighlights = nil -- Clear cluster highlights
   
-  -- Clear alt-cycling data and unregister event safely
+  -- Clear alt-cycling data
   if pfMap.altCycleData then
     pfMap.altCycleData = nil
     pfMap.altCycleIndex = 1
     pfMap.altCycleDebounce = 0
-    pcall(function() pfMap:UnregisterEvent("MODIFIER_STATE_CHANGED") end)
   end
 end
 
@@ -1509,6 +1555,7 @@ pfMap:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 pfMap:RegisterEvent("MINIMAP_ZONE_CHANGED")
 pfMap:RegisterEvent("WORLD_MAP_UPDATE")
 pfMap:RegisterEvent("PLAYER_ENTERING_WORLD")
+pfMap:RegisterEvent("MODIFIER_STATE_CHANGED")
 pfMap:SetScript("OnEvent", function()
   -- save current zone
   zone = GetCurrentMapZone()
@@ -1531,37 +1578,28 @@ pfMap:SetScript("OnEvent", function()
     end
   end
 
-
   -- update nodes on world map changes
   if event == "WORLD_MAP_UPDATE" and last_zone ~= zone then
-    pfMap.UpdateNodes()
+    -- Clear cluster highlights when changing maps
+    pfMap.clusterHighlights = nil
+    pfMap.highlight = nil
+    pfMap:UpdateNodes()
     last_zone = zone
   end
-end)
 
-local hlstate, shiftstate, transition, hidecluster, fps, resetmap
--- Alt-cycling event handler
-pfMap:SetScript("OnEvent", function()
-  print("ALT-CYCLE: Event received:", event, arg1, arg2)
-  
+  -- Alt-cycling event handler
   if event == "MODIFIER_STATE_CHANGED" and arg1 == "LALT" and arg2 == 1 then
-    print("ALT-CYCLE: Alt key pressed!")
-    
     -- Alt key pressed - cycle to next spawn with debounce
     local currentTime = GetTime()
     if currentTime < pfMap.altCycleDebounce then
-      print("ALT-CYCLE: Debounced, ignoring")
       return -- Ignore rapid presses
     end
     pfMap.altCycleDebounce = currentTime + 0.15 -- 150ms debounce
     
     -- Null checks
     if not pfMap.altCycleData or not pfMap.altCycleData.allSpawns or table.getn(pfMap.altCycleData.allSpawns) == 0 then
-      print("ALT-CYCLE: No cycling data available")
       return
     end
-    
-    print("ALT-CYCLE: Cycling from index", pfMap.altCycleIndex, "to", pfMap.altCycleIndex + 1)
     
     -- Cycle to next spawn
     pfMap.altCycleIndex = pfMap.altCycleIndex + 1
@@ -1572,14 +1610,13 @@ pfMap:SetScript("OnEvent", function()
     -- Refresh tooltip
     local currentFrame = GetMouseFocus()
     if currentFrame and currentFrame.spawn then
-      print("ALT-CYCLE: Refreshing tooltip for", currentFrame.spawn)
       local tooltip = currentFrame:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
       pfMap:ShowClusterTooltip(currentFrame, tooltip)
-    else
-      print("ALT-CYCLE: No valid frame to refresh")
     end
   end
 end)
+
+local hlstate, shiftstate, transition, hidecluster, fps, resetmap
 
 pfMap:SetScript("OnUpdate", function()
 
