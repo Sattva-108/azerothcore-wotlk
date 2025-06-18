@@ -1055,11 +1055,18 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   -- Update mainSpawnData and otherSpawns based on alt-cycling state
   if useCompactFormat and pfMap.altCycleData then
     mainSpawnData = pfMap.altCycleData.allSpawns[pfMap.altCycleIndex]
+    -- Create otherSpawns in cycling order: next items first, then previous items
     otherSpawns = {}
-    for i, spawnData in ipairs(pfMap.altCycleData.allSpawns) do
-      if i ~= pfMap.altCycleIndex then
-        table.insert(otherSpawns, spawnData)
-      end
+    local totalSpawns = table.getn(pfMap.altCycleData.allSpawns)
+    
+    -- Add items after current index (next in cycle)
+    for i = pfMap.altCycleIndex + 1, totalSpawns do
+      table.insert(otherSpawns, pfMap.altCycleData.allSpawns[i])
+    end
+    
+    -- Add items before current index (previous in cycle, now at end)
+    for i = 1, pfMap.altCycleIndex - 1 do
+      table.insert(otherSpawns, pfMap.altCycleData.allSpawns[i])
     end
     
     -- Update display info for cycling
