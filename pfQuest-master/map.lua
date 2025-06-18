@@ -752,7 +752,7 @@ end
 function pfMap:ShowClusterTooltip(currentNode, tooltip)
   -- Find all nearby nodes within cluster distance
   local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
-  local clusterRadius = 1 -- Map coordinate units for clustering
+  local clusterRadius = 1.3 -- Map coordinate units for clustering
   local nearbyNodes = {}
   local questTitles = {} -- Track quest titles for highlighting
 
@@ -980,7 +980,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     end
   end
 
-  local maxTooltipLines = 20 -- Max comfortable tooltip size
+  local maxTooltipLines = 5 -- Max comfortable tooltip size
   local useCompactFormat = (estimatedLines > maxTooltipLines) and (table.getn(sortedSpawns) > 0)
 
 
@@ -1007,11 +1007,9 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             -- Use compact format when tooltip would be too long
             local symbol = pfMap:GetQuestSymbol(meta.quest)
             tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
-            print("USING COMPACT for:", meta.quest)
           else
             -- Use full format
             pfMap:ShowTooltip(meta, tooltip)
-            print("USING FULL for:", meta.quest)
           end
         else
           -- For non-quest items, show full info
