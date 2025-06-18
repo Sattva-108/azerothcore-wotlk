@@ -717,6 +717,12 @@ function pfMap:NodeEnter()
 
   -- Use cluster tooltip by default
   pfMap:ShowClusterTooltip(this, tooltip)
+  
+  -- Save tooltip context for Alt-cycling
+  if pfMap.altCycleData then
+    pfMap.altCycleData.currentNode = this
+    pfMap.altCycleData.currentTooltip = tooltip
+  end
 
   pfMap.highlight = pfQuest_config["mouseover"] == "1" and this.title
 end
@@ -763,6 +769,10 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
   -- Get current node coordinates from its data
   local currentX, currentY = nil, nil
+  if not currentNode.node then
+    print("ERROR: currentNode.node is nil in ShowClusterTooltip")
+    return
+  end
   for title, meta in pairs(currentNode.node) do
     if meta.x and meta.y then
       currentX, currentY = tonumber(meta.x), tonumber(meta.y)
@@ -1589,15 +1599,18 @@ pfMap:SetScript("OnEvent", function()
 
   -- Alt-cycling event handler
   if event == "MODIFIER_STATE_CHANGED" and arg1 == "LALT" and arg2 == 1 then
+    print("ALT: Key detected")
     -- Alt key pressed - cycle to next spawn with debounce
     local currentTime = GetTime()
     if currentTime < pfMap.altCycleDebounce then
+      print("ALT: Debounced")
       return -- Ignore rapid presses
     end
     pfMap.altCycleDebounce = currentTime + 0.15 -- 150ms debounce
     
     -- Null checks
     if not pfMap.altCycleData or not pfMap.altCycleData.allSpawns or table.getn(pfMap.altCycleData.allSpawns) == 0 then
+      print("ALT: No data available")
       return
     end
     
@@ -1606,12 +1619,14 @@ pfMap:SetScript("OnEvent", function()
     if pfMap.altCycleIndex > table.getn(pfMap.altCycleData.allSpawns) then
       pfMap.altCycleIndex = 1
     end
+    print("ALT: Cycling to index", pfMap.altCycleIndex)
     
-    -- Refresh tooltip
-    local currentFrame = GetMouseFocus()
-    if currentFrame and currentFrame.spawn then
-      local tooltip = currentFrame:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
-      pfMap:ShowClusterTooltip(currentFrame, tooltip)
+    -- Refresh tooltip directly using stored data
+    if pfMap.altCycleData and pfMap.altCycleData.currentTooltip then
+      print("ALT: Refreshing tooltip directly")
+      pfMap:ShowClusterTooltip(pfMap.altCycleData.currentNode, pfMap.altCycleData.currentTooltip)
+    else
+      print("ALT: No stored tooltip data")
     end
   end
 end)
