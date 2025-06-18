@@ -1042,6 +1042,8 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     if not pfMap.altCycleData or pfMap.altCycleData.nodeHash ~= currentNode.spawn then
       pfMap.altCycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
       pfMap.altCycleIndex = 1
+      -- Register modifier state event for Alt-cycling
+      pfMap:RegisterEvent("MODIFIER_STATE_CHANGED")
     end
   else
     -- Clear cycling data for non-compacted tooltips
@@ -1201,6 +1203,8 @@ function pfMap:NodeLeave()
     pfMap.altCycleData = nil
     pfMap.altCycleIndex = 1
     pfMap.altCycleDebounce = 0
+    -- Unregister modifier state event
+    pfMap:UnregisterEvent("MODIFIER_STATE_CHANGED")
   end
 end
 
@@ -1565,7 +1569,6 @@ pfMap:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 pfMap:RegisterEvent("MINIMAP_ZONE_CHANGED")
 pfMap:RegisterEvent("WORLD_MAP_UPDATE")
 pfMap:RegisterEvent("PLAYER_ENTERING_WORLD")
-pfMap:RegisterEvent("MODIFIER_STATE_CHANGED")
 pfMap:SetScript("OnEvent", function()
   -- save current zone
   zone = GetCurrentMapZone()
