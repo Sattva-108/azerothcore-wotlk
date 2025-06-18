@@ -712,18 +712,18 @@ function pfMap:NodeEnter()
   end
 
   local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
-  
+
   -- Smart anchor: use RIGHT if there's space, fallback to LEFT if near edge
   local mouseX = GetCursorPosition() / UIParent:GetEffectiveScale()
   local screenWidth = GetScreenWidth()
   local useRightAnchor = mouseX < (screenWidth * 0.7) -- Use RIGHT if cursor in left 70% of screen
-  
+
   tooltip:SetOwner(this, useRightAnchor and "ANCHOR_RIGHT" or "ANCHOR_LEFT")
   this.spawn = this.spawn or UNKNOWN
 
   -- Use cluster tooltip by default
   pfMap:ShowClusterTooltip(this, tooltip)
-  
+
   -- Save tooltip context for Alt-cycling
   if pfMap.altCycleData then
     pfMap.altCycleData.currentNode = this
@@ -917,17 +917,13 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   -- Get current displayed spawn info from mainSpawnData
   local displaySpawn = mainSpawnData.spawn
   local displayLevel = mainSpawnData.level or (mainSpawnData.isCurrent and currentNode.level) or UNKNOWN
-  local displayType = mainSpawnData.spawntype or (mainSpawnData.isCurrent and currentNode.spawntype) or UNKNOWN  
+  local displayType = mainSpawnData.spawntype or (mainSpawnData.isCurrent and currentNode.spawntype) or UNKNOWN
   local displayRespawn = mainSpawnData.respawn or (mainSpawnData.isCurrent and currentNode.respawn) or UNKNOWN
   local displaySpawnId = mainSpawnData.spawnid or (mainSpawnData.isCurrent and currentNode.spawnid) or ""
 
   -- Set tooltip header with current main spawn
-  if uniqueSpawnCount > 0 then
-    local cycleIndicator = (useCompactFormat and pfMap.altCycleData) and " |cffcccccc(" .. pfMap.altCycleIndex .. "/" .. table.getn(pfMap.altCycleData.allSpawns) .. ")|r" or ""
-    tooltip:SetText(displaySpawn .. " |cffaaaaaa(+" .. uniqueSpawnCount .. " nearby)|r" .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
-  else
-    tooltip:SetText(displaySpawn..(pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
-  end
+  local cycleIndicator = (useCompactFormat and pfMap.altCycleData) and " |cffcccccc(" .. pfMap.altCycleIndex .. "/" .. table.getn(pfMap.altCycleData.allSpawns) .. ")|r" or ""
+  tooltip:SetText(displaySpawn .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
 
   tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
   tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
@@ -1021,8 +1017,8 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     -- Create all spawns list including current node
     local allSpawns = {}
     table.insert(allSpawns, {
-      spawn = currentNode.spawn, 
-      node = currentNode.node, 
+      spawn = currentNode.spawn,
+      node = currentNode.node,
       isCurrent = true,
       level = currentNode.level,
       spawntype = currentNode.spawntype,
@@ -1034,16 +1030,16 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       local firstNode = spawnData.nodes and spawnData.nodes[1]
       local meta = firstNode and firstNode.meta
       table.insert(allSpawns, {
-        spawn = spawnData.spawn, 
-        nodes = spawnData.nodes, 
+        spawn = spawnData.spawn,
+        nodes = spawnData.nodes,
         isCurrent = false,
         level = meta and meta.level,
-        spawntype = meta and meta.spawntype, 
+        spawntype = meta and meta.spawntype,
         respawn = meta and meta.respawn,
         spawnid = meta and meta.spawnid
       })
     end
-    
+
     -- Initialize or update cycling data
     if not pfMap.altCycleData or pfMap.altCycleData.nodeHash ~= currentNode.spawn then
       pfMap.altCycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
@@ -1062,32 +1058,28 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     -- Create otherSpawns in cycling order: next items first, then previous items
     otherSpawns = {}
     local totalSpawns = table.getn(pfMap.altCycleData.allSpawns)
-    
+
     -- Add items after current index (next in cycle)
     for i = pfMap.altCycleIndex + 1, totalSpawns do
       table.insert(otherSpawns, pfMap.altCycleData.allSpawns[i])
     end
-    
+
     -- Add items before current index (previous in cycle, now at end)
     for i = 1, pfMap.altCycleIndex - 1 do
       table.insert(otherSpawns, pfMap.altCycleData.allSpawns[i])
     end
-    
+
     -- Update display info for cycling
     displaySpawn = mainSpawnData.spawn
     displayLevel = mainSpawnData.level or (mainSpawnData.isCurrent and currentNode.level) or UNKNOWN
-    displayType = mainSpawnData.spawntype or (mainSpawnData.isCurrent and currentNode.spawntype) or UNKNOWN  
+    displayType = mainSpawnData.spawntype or (mainSpawnData.isCurrent and currentNode.spawntype) or UNKNOWN
     displayRespawn = mainSpawnData.respawn or (mainSpawnData.isCurrent and currentNode.respawn) or UNKNOWN
     displaySpawnId = mainSpawnData.spawnid or (mainSpawnData.isCurrent and currentNode.spawnid) or ""
-    
+
     -- Update tooltip header for cycling
-    if uniqueSpawnCount > 0 then
-      local cycleIndicator = " |cffcccccc(" .. pfMap.altCycleIndex .. "/" .. table.getn(pfMap.altCycleData.allSpawns) .. ")|r"
-      tooltip:SetText(displaySpawn .. " |cffaaaaaa(+" .. uniqueSpawnCount .. " nearby)|r" .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
-    else
-      tooltip:SetText(displaySpawn..(pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
-    end
-    
+    local cycleIndicator = " |cffcccccc(" .. pfMap.altCycleIndex .. "/" .. table.getn(pfMap.altCycleData.allSpawns) .. ")|r"
+    tooltip:SetText(displaySpawn .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
+
     -- Update header lines
     tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
     tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
@@ -1108,7 +1100,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   end
 
   -- Show other spawns in compact format
-  local maxSpawns = 6 -- Show max 6 different spawns with compact format
+  local maxSpawns = 15 -- Show max 15 different spawns with compact format
   local spawnCount = 0
   local remainingCounts = {starters = 0, enders = 0, vendors = 0, others = 0}
 
@@ -1152,25 +1144,11 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     end
   end
 
-  -- Show summary of remaining spawns
-  if spawnCount >= maxSpawns and (remainingCounts.starters + remainingCounts.enders + remainingCounts.vendors + remainingCounts.others) > 0 then
-    local summaryParts = {}
-    if remainingCounts.starters > 0 then
-      table.insert(summaryParts, remainingCounts.starters .. " quest starter" .. (remainingCounts.starters > 1 and "s" or ""))
-    end
-    if remainingCounts.enders > 0 then
-      table.insert(summaryParts, remainingCounts.enders .. " quest ender" .. (remainingCounts.enders > 1 and "s" or ""))
-    end
-    if remainingCounts.vendors > 0 then
-      table.insert(summaryParts, remainingCounts.vendors .. " vendor" .. (remainingCounts.vendors > 1 and "s" or ""))
-    end
-    if remainingCounts.others > 0 then
-      table.insert(summaryParts, remainingCounts.others .. " other" .. (remainingCounts.others > 1 and "s" or ""))
-    end
-
-    if table.getn(summaryParts) > 0 then
-      tooltip:AddLine("|cffaaaaaa... and " .. table.concat(summaryParts, ", ") .. " nearby|r")
-    end
+  -- Show summary of remaining spawns with cycling prompt
+  local totalHidden = remainingCounts.starters + remainingCounts.enders + remainingCounts.vendors + remainingCounts.others
+  if spawnCount >= maxSpawns and totalHidden > 0 then
+    tooltip:AddLine(" ") -- spacer
+    tooltip:AddLine("|cffaaaaaa... +" .. totalHidden .. " more NPCs hidden|r")
   end
 
   -- Set up highlighting for all related quests
@@ -1194,6 +1172,12 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
     -- update tooltip and sizes
     tooltip:AddLine(text, .6, .6, .6)
+    
+    -- Add right-click cycling help for compact tooltips
+    if useCompactFormat and pfMap.altCycleData then
+      tooltip:AddLine("Use <Right>-Click To Cycle Through All " .. table.getn(pfMap.altCycleData.allSpawns) .. " NPCs", .6, .6, .6)
+    end
+    
     tooltip:Show()
   end
 
@@ -1210,7 +1194,7 @@ function pfMap:NodeLeave()
   tooltip:Hide()
   pfMap.highlight = nil
   pfMap.clusterHighlights = nil -- Clear cluster highlights
-  
+
   -- Clear alt-cycling data
   if pfMap.altCycleData then
     pfMap.altCycleData = nil
@@ -1624,14 +1608,14 @@ pfMap:SetScript("OnUpdate", function()
     local isRightDown = IsMouseButtonDown("RightButton")
     local isCleanClick = not IsShiftKeyDown() and not IsControlKeyDown() and not IsAltKeyDown()
     local tooltipActive = pfMap.altCycleData and pfMap.altCycleData.currentTooltip and pfMap.altCycleData.currentTooltip:IsShown()
-    
+
     -- Detect Right-click transition (not pressed → pressed) with clean modifiers and active tooltip
     if isRightDown and isCleanClick and tooltipActive and not pfMap.rightPressed then
       pfMap.rightPressed = true
-      
+
       print("RIGHT: Clean right-click detected")
       PlaySound("igMainMenuOptionCheckBoxOn")
-      
+
       -- Same cycling logic
       if pfMap.altCycleData and pfMap.altCycleData.allSpawns and table.getn(pfMap.altCycleData.allSpawns) > 0 then
         pfMap.altCycleIndex = pfMap.altCycleIndex + 1
@@ -1640,7 +1624,7 @@ pfMap:SetScript("OnUpdate", function()
         end
         print("RIGHT: Cycling to index", pfMap.altCycleIndex)
         PlaySound("igQuestLogAbandonQuestOk")
-        
+
         if pfMap.altCycleData.currentTooltip then
           pfMap:ShowClusterTooltip(pfMap.altCycleData.currentNode, pfMap.altCycleData.currentTooltip)
         end
