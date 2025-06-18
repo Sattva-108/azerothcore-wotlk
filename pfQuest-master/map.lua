@@ -371,7 +371,7 @@ function pfMap:ShowTooltip(meta, tooltip)
     end
   else
     -- handle non-quest objects
-    if meta["item"][1] and meta["itemid"] and not meta["itemlink"] then
+    if meta["item"] and meta["item"][1] and meta["itemid"] and not meta["itemlink"] then
       local _, _, itemQuality = GetItemInfo(meta["itemid"])
       if itemQuality then
         local itemColor = "|c" .. string.format("%02x%02x%02x%02x", 255,
@@ -384,10 +384,10 @@ function pfMap:ShowTooltip(meta, tooltip)
     end
 
     if meta["sellcount"] then
-      local item = meta["itemlink"] or "[" .. meta["item"][1] .. "]"
+      local item = meta["itemlink"] or (meta["item"] and meta["item"][1] and "[" .. meta["item"][1] .. "]") or "[Unknown Item]"
       local sellcount = tonumber(meta["sellcount"]) > 0 and " |cff555555[|cffcccccc" .. meta["sellcount"] .. "x" .. "|cff555555]" or ""
       tooltip:AddLine(pfQuest_Loc["Vendor"] .. ": " .. item .. sellcount, 1,1,1)
-    elseif meta["item"][1] then
+    elseif meta["item"] and meta["item"][1] then
       local item = meta["itemlink"] or "[" .. meta["item"][1] .. "]"
       local r,g,b = pfMap.tooltip:GetColor(tonumber(meta["droprate"]), 100)
       tooltip:AddLine("|cffffffff" .. pfQuest_Loc["Loot"] .. ": " .. item ..  " |cff555555[|r" .. meta["droprate"] .. "%|cff555555]", r,g,b)
@@ -749,6 +749,11 @@ function pfMap:GetQuestSymbol(questTitle)
   return symbol, questInLog, questComplete
 end
 
+-- Global variables for alt-cycling
+pfMap.altCycleData = nil
+pfMap.altCycleIndex = 1
+pfMap.altCycleDebounce = 0 -- Debounce timer for rapid Alt presses
+
 function pfMap:ShowClusterTooltip(currentNode, tooltip)
   -- Find all nearby nodes within cluster distance
   local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
@@ -983,36 +988,79 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   local maxTooltipLines = 5 -- Max comfortable tooltip size
   local useCompactFormat = (estimatedLines > maxTooltipLines) and (table.getn(sortedSpawns) > 0)
 
-
-  -- First show current node's quests (always full format for main node)
-  for title, meta in pairs(currentNode.node) do
-    pfMap:ShowTooltip(meta, tooltip)
+  -- Setup Alt-cycling for compacted tooltips
+  if useCompactFormat then
+    print("ALT-CYCLE: Setting up for", currentNode.spawn, "with", table.getn(sortedSpawns), "nearby spawns")
+    -- Create all spawns list including current node
+    local allSpawns = {}
+    table.insert(allSpawns, {spawn = currentNode.spawn, node = currentNode.node, isCurrent = true})
+    for _, spawnData in ipairs(sortedSpawns) do
+      table.insert(allSpawns, {spawn = spawnData.spawn, nodes = spawnData.nodes, isCurrent = false})
+    end
+    
+    -- Initialize or update cycling data
+    if not pfMap.altCycleData or pfMap.altCycleData.nodeHash ~= currentNode.spawn then
+      pfMap.altCycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
+      pfMap.altCycleIndex = 1
+      -- Register modifier state event
+      pfMap:RegisterEvent("MODIFIER_STATE_CHANGED")
+      print("ALT-CYCLE: Registered event, total spawns:", table.getn(allSpawns))
+    end
+  else
+    print("ALT-CYCLE: Not using compact format, clearing data")
+    -- Clear cycling data for non-compacted tooltips
+    pfMap.altCycleData = nil
+    pfMap:UnregisterEvent("MODIFIER_STATE_CHANGED")
   end
 
-  -- Show prioritized spawns with limit
+  -- Determine which spawn to show as main based on alt-cycling
+  local mainSpawnData, otherSpawns
+  if useCompactFormat and pfMap.altCycleData then
+    mainSpawnData = pfMap.altCycleData.allSpawns[pfMap.altCycleIndex]
+    otherSpawns = {}
+    for i, spawnData in ipairs(pfMap.altCycleData.allSpawns) do
+      if i ~= pfMap.altCycleIndex then
+        table.insert(otherSpawns, spawnData)
+      end
+    end
+  else
+    mainSpawnData = {spawn = currentNode.spawn, node = currentNode.node, isCurrent = true}
+    otherSpawns = sortedSpawns
+  end
+
+  -- Show main spawn's quests (always full format)
+  if mainSpawnData.node then
+    -- Current node format
+    for title, meta in pairs(mainSpawnData.node) do
+      pfMap:ShowTooltip(meta, tooltip)
+    end
+  elseif mainSpawnData.nodes then
+    -- Other spawn format
+    for _, nodeInfo in ipairs(mainSpawnData.nodes) do
+      pfMap:ShowTooltip(nodeInfo.meta, tooltip)
+    end
+  end
+
+  -- Show other spawns in compact format
   local maxSpawns = 6 -- Show max 6 different spawns with compact format
   local spawnCount = 0
   local remainingCounts = {starters = 0, enders = 0, vendors = 0, others = 0}
 
-  for i, spawnData in ipairs(sortedSpawns) do
+  for i, spawnData in ipairs(otherSpawns) do
     if spawnCount < maxSpawns then
       tooltip:AddLine(" ") -- spacer
       tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
 
-      -- Show all quests for this spawn
-      for _, nodeInfo in ipairs(spawnData.nodes) do
-        local meta = nodeInfo.meta
+      -- Show all quests for this spawn (always compact in this section)
+      local nodes = spawnData.nodes or (spawnData.node and {{meta = spawnData.node}} or {})
+      for _, nodeInfo in ipairs(nodes) do
+        local meta = nodeInfo.meta or nodeInfo
         if meta.quest then
-          if useCompactFormat then
-            -- Use compact format when tooltip would be too long
-            local symbol = pfMap:GetQuestSymbol(meta.quest)
-            tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
-          else
-            -- Use full format
-            pfMap:ShowTooltip(meta, tooltip)
-          end
+          -- Always use compact format for other spawns
+          local symbol = pfMap:GetQuestSymbol(meta.quest)
+          tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
         else
-          -- For non-quest items, show full info
+          -- For non-quest items, show compact info
           pfMap:ShowTooltip(meta, tooltip)
         end
       end
@@ -1090,6 +1138,14 @@ function pfMap:NodeLeave()
   tooltip:Hide()
   pfMap.highlight = nil
   pfMap.clusterHighlights = nil -- Clear cluster highlights
+  
+  -- Clear alt-cycling data and unregister event safely
+  if pfMap.altCycleData then
+    pfMap.altCycleData = nil
+    pfMap.altCycleIndex = 1
+    pfMap.altCycleDebounce = 0
+    pcall(function() pfMap:UnregisterEvent("MODIFIER_STATE_CHANGED") end)
+  end
 end
 
 function pfMap:BuildNode(name, parent)
@@ -1484,6 +1540,47 @@ pfMap:SetScript("OnEvent", function()
 end)
 
 local hlstate, shiftstate, transition, hidecluster, fps, resetmap
+-- Alt-cycling event handler
+pfMap:SetScript("OnEvent", function()
+  print("ALT-CYCLE: Event received:", event, arg1, arg2)
+  
+  if event == "MODIFIER_STATE_CHANGED" and arg1 == "LALT" and arg2 == 1 then
+    print("ALT-CYCLE: Alt key pressed!")
+    
+    -- Alt key pressed - cycle to next spawn with debounce
+    local currentTime = GetTime()
+    if currentTime < pfMap.altCycleDebounce then
+      print("ALT-CYCLE: Debounced, ignoring")
+      return -- Ignore rapid presses
+    end
+    pfMap.altCycleDebounce = currentTime + 0.15 -- 150ms debounce
+    
+    -- Null checks
+    if not pfMap.altCycleData or not pfMap.altCycleData.allSpawns or table.getn(pfMap.altCycleData.allSpawns) == 0 then
+      print("ALT-CYCLE: No cycling data available")
+      return
+    end
+    
+    print("ALT-CYCLE: Cycling from index", pfMap.altCycleIndex, "to", pfMap.altCycleIndex + 1)
+    
+    -- Cycle to next spawn
+    pfMap.altCycleIndex = pfMap.altCycleIndex + 1
+    if pfMap.altCycleIndex > table.getn(pfMap.altCycleData.allSpawns) then
+      pfMap.altCycleIndex = 1
+    end
+    
+    -- Refresh tooltip
+    local currentFrame = GetMouseFocus()
+    if currentFrame and currentFrame.spawn then
+      print("ALT-CYCLE: Refreshing tooltip for", currentFrame.spawn)
+      local tooltip = currentFrame:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
+      pfMap:ShowClusterTooltip(currentFrame, tooltip)
+    else
+      print("ALT-CYCLE: No valid frame to refresh")
+    end
+  end
+end)
+
 pfMap:SetScript("OnUpdate", function()
 
   -- handle highlights and animations
