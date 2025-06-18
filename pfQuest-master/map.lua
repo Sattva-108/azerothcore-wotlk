@@ -1042,9 +1042,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     if not pfMap.altCycleData or pfMap.altCycleData.nodeHash ~= currentNode.spawn then
       pfMap.altCycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
       pfMap.altCycleIndex = 1
-      -- Register modifier state event for Alt-cycling
-      pfMap:RegisterEvent("MODIFIER_STATE_CHANGED")
-      -- Also enable OnUpdate for fullscreen WorldMap support
+      -- Enable OnUpdate for Alt-cycling
       pfMap.altCheckEnabled = true
     end
   else
@@ -1212,8 +1210,6 @@ function pfMap:NodeLeave()
     pfMap.altCycleData = nil
     pfMap.altCycleIndex = 1
     pfMap.altCycleDebounce = 0
-    -- Unregister modifier state event
-    pfMap:UnregisterEvent("MODIFIER_STATE_CHANGED")
     -- Disable OnUpdate Alt checking
     pfMap.altCheckEnabled = false
     pfMap.altPressed = false
@@ -1612,71 +1608,36 @@ pfMap:SetScript("OnEvent", function()
     last_zone = zone
   end
 
-  -- Alt-cycling event handler
-  if event == "MODIFIER_STATE_CHANGED" and arg1 == "LALT" and arg2 == 1 then
-    print("ALT: Key detected")
-    PlaySound("igMainMenuOptionCheckBoxOn") -- Sound debug
-    -- Alt key pressed - cycle to next spawn with debounce
-    local currentTime = GetTime()
-    if currentTime < pfMap.altCycleDebounce then
-      print("ALT: Debounced")
-      return -- Ignore rapid presses
-    end
-    pfMap.altCycleDebounce = currentTime + 0.15 -- 150ms debounce
-    
-    -- Null checks
-    if not pfMap.altCycleData or not pfMap.altCycleData.allSpawns or table.getn(pfMap.altCycleData.allSpawns) == 0 then
-      print("ALT: No data available")
-      return
-    end
-    
-    -- Cycle to next spawn
-    pfMap.altCycleIndex = pfMap.altCycleIndex + 1
-    if pfMap.altCycleIndex > table.getn(pfMap.altCycleData.allSpawns) then
-      pfMap.altCycleIndex = 1
-    end
-    print("ALT: Cycling to index", pfMap.altCycleIndex)
-    PlaySound("igQuestLogAbandonQuestOk") -- Success sound
-    
-    -- Refresh tooltip directly using stored data
-    if pfMap.altCycleData and pfMap.altCycleData.currentTooltip then
-      print("ALT: Refreshing tooltip directly")
-      pfMap:ShowClusterTooltip(pfMap.altCycleData.currentNode, pfMap.altCycleData.currentTooltip)
-    else
-      print("ALT: No stored tooltip data")
-    end
-  end
 end)
 
 local hlstate, shiftstate, transition, hidecluster, fps, resetmap
 
 pfMap:SetScript("OnUpdate", function()
-  -- Alt-cycling check for fullscreen WorldMap support
+  -- Alt-cycling check for fullscreen WorldMap support  
   if pfMap.altCheckEnabled then
-    local currentTime = GetTime()
-    if IsAltKeyDown() and currentTime > pfMap.altCycleDebounce then
-      if not pfMap.altPressed then
-        pfMap.altPressed = true
-        pfMap.altCycleDebounce = currentTime + 0.15 -- 150ms debounce
+    local isAltDown = IsAltKeyDown()
+    
+    -- Detect Alt key press transition (not pressed → pressed)
+    if isAltDown and not pfMap.altPressed then
+      pfMap.altPressed = true
+      
+      print("ALT: OnUpdate detected Alt key press")
+      PlaySound("igMainMenuOptionCheckBoxOn")
+      
+      -- Same cycling logic as MODIFIER_STATE_CHANGED
+      if pfMap.altCycleData and pfMap.altCycleData.allSpawns and table.getn(pfMap.altCycleData.allSpawns) > 0 then
+        pfMap.altCycleIndex = pfMap.altCycleIndex + 1
+        if pfMap.altCycleIndex > table.getn(pfMap.altCycleData.allSpawns) then
+          pfMap.altCycleIndex = 1
+        end
+        print("ALT: OnUpdate cycling to index", pfMap.altCycleIndex)
+        PlaySound("igQuestLogAbandonQuestOk")
         
-        print("ALT: OnUpdate detected Alt key")
-        PlaySound("igMainMenuOptionCheckBoxOn")
-        
-        -- Same cycling logic as MODIFIER_STATE_CHANGED
-        if pfMap.altCycleData and pfMap.altCycleData.allSpawns and table.getn(pfMap.altCycleData.allSpawns) > 0 then
-          pfMap.altCycleIndex = pfMap.altCycleIndex + 1
-          if pfMap.altCycleIndex > table.getn(pfMap.altCycleData.allSpawns) then
-            pfMap.altCycleIndex = 1
-          end
-          print("ALT: OnUpdate cycling to index", pfMap.altCycleIndex)
-          PlaySound("igQuestLogAbandonQuestOk")
-          
-          if pfMap.altCycleData.currentTooltip then
-            pfMap:ShowClusterTooltip(pfMap.altCycleData.currentNode, pfMap.altCycleData.currentTooltip)
-          end
+        if pfMap.altCycleData.currentTooltip then
+          pfMap:ShowClusterTooltip(pfMap.altCycleData.currentNode, pfMap.altCycleData.currentTooltip)
         end
       end
-    else
+    elseif not isAltDown then
       pfMap.altPressed = false -- Reset when Alt is released
     end
   end
