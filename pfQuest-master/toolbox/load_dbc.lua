@@ -374,6 +374,42 @@ else
   print("Place Spell.dbc.csv in DBC/wotlk/ folder to enable enhanced itemreq extraction")
 end
 
+-- QuestXP_wotlk (needed for quest experience calculation)
+if file_exists("DBC/wotlk/QuestXP.dbc.csv") then
+  load_dbc_csv("DBC/wotlk/QuestXP.dbc.csv", "questxp_dbc",
+    "CREATE TABLE `questxp_dbc` (" ..
+    "`ID` smallint(3) unsigned NOT NULL," ..
+    "`Difficulty_1` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Difficulty_2` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Difficulty_3` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Difficulty_4` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Difficulty_5` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Difficulty_6` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Difficulty_7` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Difficulty_8` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Difficulty_9` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "`Difficulty_10` int(10) unsigned NOT NULL DEFAULT 0," ..
+    "PRIMARY KEY (`ID`)" ..
+    ") ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED COMMENT='QuestXP'",
+    function(values)
+      local id = values[1]
+      local diff1 = values[2] or "0"
+      local diff2 = values[3] or "0"
+      local diff3 = values[4] or "0"
+      local diff4 = values[5] or "0"
+      local diff5 = values[6] or "0"
+      local diff6 = values[7] or "0"
+      local diff7 = values[8] or "0"
+      local diff8 = values[9] or "0"
+      local diff9 = values[10] or "0"
+      local diff10 = values[11] or "0"
+      return "INSERT INTO `questxp_dbc` VALUES (" .. id .. ", " .. diff1 .. ", " .. diff2 .. ", " .. diff3 .. ", " .. diff4 .. ", " .. diff5 .. ", " .. diff6 .. ", " .. diff7 .. ", " .. diff8 .. ", " .. diff9 .. ", " .. diff10 .. ")"
+    end)
+  print("SUCCESS: questxp_dbc table created with QuestXP.dbc data")
+else
+  print("WARNING: DBC/wotlk/QuestXP.dbc.csv not found - skipping questxp_dbc creation")
+end
+
 mysql:close()
 env:close()
 print("DBC data loading completed!")

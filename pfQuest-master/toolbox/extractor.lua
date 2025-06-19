@@ -12,7 +12,7 @@
 
 -- БЫСТРАЯ НАСТРОЙКА - просто укажи что нужно тестировать и лимиты:
 
-local FOCUS_ON = {"objects"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
+local FOCUS_ON = {"quests"}        -- Что тестируем: {"quests"}, {"units"}, {"items"}, {"objects"}, {"quests", "units"}, etc
 local FOCUS_LIMIT = 30000           -- Лимит для того что тестируем
 local OTHER_LIMIT = 1             -- Лимит для всего остального
 local FULL_EXTRACTION = true       -- true = игнорировать все лимиты
@@ -564,7 +564,7 @@ function is_quest_table(tbl)
   for k, v in pairs(tbl) do
     if k ~= "class" and k ~= "lvl" and k ~= "min" and k ~= "obj" and k ~= "race" and
        k ~= "skill" and k ~= "end" and k ~= "start" and k ~= "pre" and k ~= "chain" and
-       k ~= "event" and k ~= "repeatable" and k ~= "srcitem" then
+       k ~= "event" and k ~= "repeatable" and k ~= "srcitem" and k ~= "xp_diff" then
       return false
     end
   end
@@ -3043,10 +3043,10 @@ end
       limit_clause = (DEBUG_EXTRACTION and not FULL_EXTRACTION) and (' LIMIT ' .. QUEST_LIMIT) or ''
     end
 
-    local query_string = 'SELECT qt.*, qta.AllowableClasses, qta.PrevQuestID as AddonPrevQuestID, qta.NextQuestID as AddonNextQuestID, qta.ExclusiveGroup as AddonExclusiveGroup, qta.RequiredSkillID as AddonRequiredSkillID, qta.RequiredSkillPoints as AddonRequiredSkillPoints FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID' .. where_clause .. ' ORDER BY qt.' .. quest_pk_column .. limit_clause
+    local query_string = 'SELECT qt.*, qta.AllowableClasses, qta.PrevQuestID as AddonPrevQuestID, qta.NextQuestID as AddonNextQuestID, qta.ExclusiveGroup as AddonExclusiveGroup, qta.RequiredSkillID as AddonRequiredSkillID, qta.RequiredSkillPoints as AddonRequiredSkillPoints, qxp.Difficulty_3 as BaseQuestXP FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID LEFT JOIN questxp_dbc qxp ON qt.RewardXPDifficulty = qxp.ID' .. where_clause .. ' ORDER BY qt.' .. quest_pk_column .. limit_clause
 
     -- Count total quests first for progress
-    local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID' .. where_clause .. limit_clause)
+    local count_query = mysql:execute('SELECT COUNT(*) as total FROM quest_template qt LEFT JOIN quest_template_addon qta ON qt.' .. quest_pk_column .. ' = qta.ID LEFT JOIN questxp_dbc qxp ON qt.RewardXPDifficulty = qxp.ID' .. where_clause .. limit_clause)
     local count_result = {}
     count_query:fetch(count_result, "a")
     local total_quests = tonumber(count_result.total) or 0
@@ -3395,6 +3395,12 @@ end
         pfDB["quests"][data][entry]["skill"] = skill
       end
       pfDB["quests"][data][entry]["lvl"] = questlevel ~= 0 and questlevel
+
+      -- Extract quest XP difficulty index (RewardXPDifficulty)
+      local reward_xp_diff = tonumber(current_quest_data.RewardXPDifficulty) or 0
+      if reward_xp_diff > 0 then
+        pfDB["quests"][data][entry]["xp_diff"] = reward_xp_diff
+      end
 
       -- Store AllowableClasses as number (pfQuest expects bit.band operations)
       local allowable_classes_mask = current_quest_data[class_column] and tonumber(current_quest_data[class_column]) or 0
@@ -3900,6 +3906,45 @@ end
     -- ДОБАВЬТЕ:
     collectgarbage("collect")
     print("  Memory cleanup after quests: " .. math.floor(collectgarbage("count")) .. " KB")
+  end
+
+  -- Extract QuestXP data from questxp_dbc table
+  local start_time_questxp = os.clock()
+  do -- questxp
+    print("- loading questxp...")
+
+    pfDB["questxp"] = pfDB["questxp"] or {}
+    pfDB["questxp"][data] = {}
+
+    if core == "acore" then
+      local questxp_query = mysql:execute("SELECT * FROM questxp_dbc ORDER BY ID")
+      if questxp_query then
+        local questxp_row = {}
+        while questxp_query:fetch(questxp_row, "a") do
+          local level = tonumber(questxp_row.ID)
+          if level and level >= 1 and level <= 80 then
+            pfDB["questxp"][data][level] = {
+              tonumber(questxp_row.Difficulty_1) or 0,
+              tonumber(questxp_row.Difficulty_2) or 0,
+              tonumber(questxp_row.Difficulty_3) or 0,
+              tonumber(questxp_row.Difficulty_4) or 0,
+              tonumber(questxp_row.Difficulty_5) or 0,
+              tonumber(questxp_row.Difficulty_6) or 0,
+              tonumber(questxp_row.Difficulty_7) or 0,
+              tonumber(questxp_row.Difficulty_8) or 0,
+              tonumber(questxp_row.Difficulty_9) or 0,
+              tonumber(questxp_row.Difficulty_10) or 0
+            }
+          end
+        end
+        print("  Extracted QuestXP data for " .. table.getn(pfDB["questxp"][data]) .. " quest levels")
+      else
+        print("  WARNING: questxp_dbc table not found - skipping questxp extraction")
+      end
+    end
+
+    local end_time_questxp = os.clock()
+    table.insert(execution_times, {name = "questxp", time = end_time_questxp - start_time_questxp})
   end
 
 
@@ -4675,6 +4720,12 @@ end
   collectgarbage("collect")
   -- print("    Memory after quests: " .. math.floor(collectgarbage("count")) .. " KB")
 
+  print("  Writing questxp...")
+  serialize(output .. string.format("questxp%s.lua", exp), "pfDB[\"questxp\"][\""..data.."\"]", pfDB["questxp"][data])
+  pfDB["questxp"][data] = nil
+  collectgarbage("collect")
+  collectgarbage("collect")
+
   print("  Writing quests-itemreq...")
   serialize(output .. string.format("quests-itemreq%s.lua", exp), "pfDB[\"quests-itemreq\"][\""..data.."\"]", pfDB["quests-itemreq"][data])
   pfDB["quests-itemreq"][data] = nil
@@ -4786,6 +4837,7 @@ end
   ["professions"] = {},
   ["quests"] = {},
   ["quests-itemreq"] = {},
+  ["questxp"] = {},
   ["refloot"] = {},
   ["units"] = {},
   ["zones"] = {},

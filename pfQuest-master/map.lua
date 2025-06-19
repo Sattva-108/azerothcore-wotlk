@@ -200,6 +200,160 @@ pfMap.minimap_indoor = minimap_indoor
 pfMap.minimap_zoom = minimap_zoom
 pfMap.minimap_sizes = minimap_sizes
 
+-- XP Rate Detection System
+pfMap.xpRateDetector = {
+  detectedRate = 1.0,           -- Current detected rate
+  confidence = 0,               -- Confidence level (0-100)
+  samples = {},                 -- Sliding window of rate samples
+  maxSamples = 7,               -- Maximum samples in sliding window
+  minSamples = 1,               -- Minimum samples for rate calculation
+  changeThreshold = 20,         -- Percentage threshold for rate change detection
+  waitingForQuestXP = false,    -- Flag for quest XP tracking
+  currentQuestID = nil,         -- Currently tracked quest
+  
+  -- Add a new XP sample and update rate
+  AddSample = function(self, questID, receivedXP)
+    -- Get base XP from database
+    local baseXP = pfDB and pfDB["quests"] and pfDB["quests"]["data"] and 
+                   pfDB["quests"]["data"][questID] and pfDB["quests"]["data"][questID]["xp"]
+    
+    if not baseXP or baseXP <= 0 or receivedXP <= 0 then
+      return
+    end
+    
+    local newRate = receivedXP / baseXP
+    
+    -- Filter out unreasonable rates
+    if newRate < 0.1 or newRate > 50 then
+      return
+    end
+    
+    -- Check if this might be a rate change
+    if table.getn(self.samples) > 0 then
+      local currentRate = self:GetCurrentRate()
+      local percentDiff = math.abs((newRate - currentRate) / currentRate * 100)
+      
+      if percentDiff > self.changeThreshold then
+        -- Possible rate change - clear old samples
+        self.samples = {}
+        self.confidence = 0
+      end
+    end
+    
+    -- Add new sample
+    table.insert(self.samples, newRate)
+    
+    -- Maintain sliding window
+    if table.getn(self.samples) > self.maxSamples then
+      table.remove(self.samples, 1)
+    end
+    
+    -- Update detected rate and confidence
+    self:UpdateRate()
+  end,
+  
+  -- Update detected rate based on current samples
+  UpdateRate = function(self)
+    local sampleCount = table.getn(self.samples)
+    if sampleCount == 0 then
+      self.detectedRate = 1.0
+      self.confidence = 0
+      return
+    end
+    
+    -- Calculate median for stability
+    local sortedSamples = {}
+    for i, sample in ipairs(self.samples) do
+      table.insert(sortedSamples, sample)
+    end
+    table.sort(sortedSamples)
+    
+    local median
+    if math.mod(sampleCount, 2) == 0 then
+      median = (sortedSamples[sampleCount/2] + sortedSamples[sampleCount/2 + 1]) / 2
+    else
+      median = sortedSamples[math.ceil(sampleCount/2)]
+    end
+    
+    self.detectedRate = median
+    
+    -- Calculate confidence based on sample count and consistency
+    if sampleCount >= 3 then
+      self.confidence = math.min(90, 60 + sampleCount * 5)
+    else
+      self.confidence = 30 + sampleCount * 15
+    end
+    
+    -- Reduce confidence if samples are inconsistent
+    local variance = 0
+    for _, sample in ipairs(self.samples) do
+      variance = variance + (sample - median)^2
+    end
+    variance = variance / sampleCount
+    
+    -- High variance reduces confidence
+    if variance > 0.01 then  -- 10% variance threshold
+      self.confidence = self.confidence * 0.7
+    end
+    
+    self.confidence = math.floor(self.confidence)
+  end,
+  
+  -- Get current rate for calculations
+  GetCurrentRate = function(self)
+    return self.detectedRate
+  end,
+  
+  -- Estimate XP for a quest
+  EstimateQuestXP = function(self, questID)
+    local baseXP = pfDB and pfDB["quests"] and pfDB["quests"]["data"] and 
+                   pfDB["quests"]["data"][questID] and pfDB["quests"]["data"][questID]["xp"]
+    
+    if baseXP and baseXP > 0 then
+      local estimatedXP = math.floor(baseXP * self:GetCurrentRate())
+      return estimatedXP, self.confidence
+    end
+    
+    return nil, 0
+  end,
+  
+  -- Start tracking quest XP
+  StartTracking = function(self, questID)
+    self.waitingForQuestXP = true
+    self.currentQuestID = questID
+    
+    -- Register temporary events
+    pfMap:RegisterEvent("CHAT_MSG_COMBAT_XP_GAIN")
+    pfMap:RegisterEvent("PLAYER_XP_UPDATE")
+    pfMap:RegisterEvent("GOSSIP_CLOSED")
+  end,
+  
+  -- Stop tracking and clean up
+  StopTracking = function(self)
+    self.waitingForQuestXP = false
+    self.currentQuestID = nil
+    
+    -- Unregister temporary events
+    pfMap:UnregisterEvent("CHAT_MSG_COMBAT_XP_GAIN")
+    pfMap:UnregisterEvent("PLAYER_XP_UPDATE")
+    pfMap:UnregisterEvent("GOSSIP_CLOSED")
+  end,
+  
+  -- Parse XP from combat message
+  ParseXPMessage = function(self, message)
+    if not message then return nil end
+    
+    -- Only accept messages without comma (quest XP, not kill XP)
+    if string.find(message, ",") then
+      return nil
+    end
+    
+    -- Parse XP amount from message
+    local xp = string.match(message, "(%d+)")
+    return xp and tonumber(xp) or nil
+  end
+}
+
 pfMap.tooltip = CreateFrame("Frame" , "pfMapTooltip", GameTooltip)
 pfMap.tooltip:SetScript("OnShow", function()
   local focus = GetMouseFocus()
@@ -263,6 +417,30 @@ function pfMap:HexDifficultyColor(level, force)
     local c = pfQuestCompat.GetDifficultyColor(level)
     return string.format("|cff%02x%02x%02x", c.r*255, c.g*255, c.b*255)
   end
+end
+
+-- GetQuestXP: Calculate quest experience based on quest data and detected server rate
+function pfMap:GetQuestXP(questData)
+  if not questData then return 0 end
+  
+  local questLevel = questData.lvl or 1
+  local xpDifficulty = questData.xp_diff or 5  -- Default to difficulty 5 if not set
+  
+  -- Get base XP from questxp lookup table
+  local baseXP = 0
+  if pfDB["questxp"] and pfDB["questxp"]["data"] and pfDB["questxp"]["data"][questLevel] then
+    local xpTable = pfDB["questxp"]["data"][questLevel]
+    -- Convert 0-based database index to 1-based Lua index
+    local luaIndex = xpDifficulty + 1
+    if xpTable and xpTable[luaIndex] then
+      baseXP = xpTable[luaIndex]
+    end
+  end
+  
+  -- Apply estimated server XP rate if available
+  local serverRate = (pfMap.xpRateDetector and pfMap.xpRateDetector:GetCurrentRate()) or 1
+  
+  return math.floor(baseXP * serverRate)
 end
 
 function pfMap:ShowTooltip(meta, tooltip, forceCompact)
@@ -368,6 +546,29 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
         local qlvlstr = pfQuest_Loc["Level"] .. ": " .. pfMap:HexDifficultyColor(meta["qlvl"]) .. meta["qlvl"] .. "|r"
         local qminstr = meta["qmin"] and " / " .. pfQuest_Loc["Required"] .. ": " .. pfMap:HexDifficultyColor(meta["qmin"], true) .. meta["qmin"] .. "|r"  or ""
         tooltip:AddLine("|cffaaaaaa- |r" .. qlvlstr .. qminstr , .8,.8,.8)
+        
+        -- Add quest experience information
+        if meta["questid"] then
+          local questData = pfDB["quests"] and pfDB["quests"]["data"] and pfDB["quests"]["data"][meta["questid"]]
+          if questData then
+            local questXP = pfMap:GetQuestXP(questData)
+            if questXP and questXP > 0 then
+              local xpText = pfQuest_Loc["Experience"] and pfQuest_Loc["Experience"] or "Experience"
+              xpText = xpText .. ": " .. pfMap:HexDifficultyColor(meta["qlvl"]) .. questXP .. "|r"
+              
+              -- Show server rate if detected and not 1x
+              if pfMap.xpRateDetector then
+                local serverRate = pfMap.xpRateDetector:GetCurrentRate()
+                if serverRate and serverRate ~= 1 then
+                  local rateColor = "|cff00ff00"  -- Green for rate indicator
+                  xpText = xpText .. " " .. rateColor .. "(" .. serverRate .. "x)|r"
+                end
+              end
+              
+              tooltip:AddLine("|cffaaaaaa- |r" .. xpText, .8,.8,.8)
+            end
+          end
+        end
       end
     end
   else
@@ -1602,6 +1803,7 @@ pfMap:RegisterEvent("ZONE_CHANGED_NEW_AREA")
 pfMap:RegisterEvent("MINIMAP_ZONE_CHANGED")
 pfMap:RegisterEvent("WORLD_MAP_UPDATE")
 pfMap:RegisterEvent("PLAYER_ENTERING_WORLD")
+pfMap:RegisterEvent("QUEST_COMPLETE")
 pfMap:SetScript("OnEvent", function()
   -- save current zone
   zone = GetCurrentMapZone()
@@ -1631,6 +1833,35 @@ pfMap:SetScript("OnEvent", function()
     pfMap.highlight = nil
     pfMap:UpdateNodes()
     last_zone = zone
+  end
+
+  -- XP Rate Detection Events
+  if event == "QUEST_COMPLETE" then
+    -- Quest completion dialog opened
+    local questID = GetQuestLogSelection()
+    if questID and questID > 0 then
+      local questTitle = GetQuestLogTitle(questID)
+      if questTitle then
+        pfMap.xpRateDetector:StartTracking(questID)
+      end
+    end
+  elseif event == "CHAT_MSG_COMBAT_XP_GAIN" and pfMap.xpRateDetector.waitingForQuestXP then
+    -- Parse XP from combat message
+    local receivedXP = pfMap.xpRateDetector:ParseXPMessage(arg1)
+    if receivedXP and pfMap.xpRateDetector.currentQuestID then
+      -- Add sample and stop tracking
+      pfMap.xpRateDetector:AddSample(pfMap.xpRateDetector.currentQuestID, receivedXP)
+      pfMap.xpRateDetector.waitingForQuestXP = false  -- Mark that we got quest XP
+    end
+  elseif event == "PLAYER_XP_UPDATE" and pfMap.xpRateDetector.currentQuestID then
+    -- Only unregister if we already got quest XP (waitingForQuestXP = false)
+    if not pfMap.xpRateDetector.waitingForQuestXP then
+      pfMap.xpRateDetector:StopTracking()
+    end
+    -- Otherwise ignore (this was kill XP, keep waiting for quest XP)
+  elseif event == "GOSSIP_CLOSED" and pfMap.xpRateDetector.waitingForQuestXP then
+    -- Player closed dialog without completing quest
+    pfMap.xpRateDetector:StopTracking()
   end
 
 end)

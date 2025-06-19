@@ -4,8 +4,8 @@ local compat = pfQuestCompat
 pfDatabase = {}
 
 local loc = GetLocale()
-local dbs = { "items", "quests", "quests-itemreq", "objects", "units", "zones", "professions", "areatrigger", "refloot" }
-local noloc = { items = true, quests = true, objects = true, units = true }
+local dbs = { "items", "quests", "quests-itemreq", "questxp", "objects", "units", "zones", "professions", "areatrigger", "refloot" }
+local noloc = { items = true, quests = true, questxp = true, objects = true, units = true }
 
 pfDB.locales = {
   ["enUS"] = "English",
@@ -130,12 +130,12 @@ end
 local loc_core, loc_update
 for _, exp in pairs({ "-tbc", "-wotlk" }) do
   for _, db in pairs(dbs) do
-    if pfDB[db]["data"..exp] then
+    if pfDB[db] and pfDB[db]["data"] and pfDB[db]["data"..exp] then
       patchtable(pfDB[db]["data"], pfDB[db]["data"..exp])
     end
 
     for loc, _ in pairs(pfDB.locales) do
-      if pfDB[db][loc] and pfDB[db][loc..exp] then
+      if pfDB[db] and pfDB[db][loc] and pfDB[db][loc..exp] then
         loc_update = pfDB[db][loc..exp] or pfDB[db]["enUS"..exp]
         patchtable(pfDB[db][loc], loc_update)
       end
@@ -159,8 +159,10 @@ end
 pfDatabase.dbstring = ""
 for id, db in pairs(dbs) do
   -- assign existing locale
-  pfDB[db]["loc"] = pfDB[db][loc] or pfDB[db]["enUS"] or {}
-  pfDatabase.dbstring = pfDatabase.dbstring .. " |cffcccccc[|cffffffff" .. db .. "|cffcccccc:|cff33ffcc" .. ( pfDB[db][loc] and loc or "enUS" ) .. "|cffcccccc]"
+  if pfDB[db] then
+    pfDB[db]["loc"] = pfDB[db][loc] or pfDB[db]["enUS"] or {}
+    pfDatabase.dbstring = pfDatabase.dbstring .. " |cffcccccc[|cffffffff" .. db .. "|cffcccccc:|cff33ffcc" .. ( pfDB[db][loc] and loc or "enUS" ) .. "|cffcccccc]"
+  end
 end
 
 -- track questitems to maintain object requirements
