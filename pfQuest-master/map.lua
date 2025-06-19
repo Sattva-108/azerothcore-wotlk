@@ -265,7 +265,7 @@ function pfMap:HexDifficultyColor(level, force)
   end
 end
 
-function pfMap:ShowTooltip(meta, tooltip)
+function pfMap:ShowTooltip(meta, tooltip, forceCompact)
   local catch = nil
   local catch_obj = nil
   local tooltip = tooltip or GameTooltip
@@ -361,7 +361,15 @@ function pfMap:ShowTooltip(meta, tooltip)
         local texts = meta["questid"] and pfDB["quests"]["loc"][meta["questid"]] or nil
 
         if texts and texts["O"] and texts["O"] ~= "" then
-          tooltip:AddLine(pfDatabase:FormatQuestText(texts["O"]),1,1,.9,true)
+          local objectiveText = texts["O"]
+          -- Use forceCompact parameter instead of calculating tooltip size mid-build
+          if forceCompact then
+            local cutPos = string.find(objectiveText, "$b$b") or string.find(objectiveText, "$B$B")
+            if cutPos then
+              objectiveText = string.sub(objectiveText, 1, cutPos - 1)
+            end
+          end
+          tooltip:AddLine(pfDatabase:FormatQuestText(objectiveText),1,1,.9,true)
         end
 
         local qlvlstr = pfQuest_Loc["Level"] .. ": " .. pfMap:HexDifficultyColor(meta["qlvl"]) .. meta["qlvl"] .. "|r"
@@ -767,6 +775,30 @@ pfMap.altCycleIndex = 1
 pfMap.altCycleDebounce = 0 -- Debounce timer for rapid Alt presses
 
 function pfMap:ShowClusterTooltip(currentNode, tooltip)
+  -- Early estimation of tooltip size for compact decisions
+  local estimatedChars = 0
+  estimatedChars = estimatedChars + string.len(currentNode.spawn or "")
+  for title, meta in pairs(currentNode.node) do
+    if meta.quest then
+      estimatedChars = estimatedChars + string.len(meta.quest or "")
+    end
+    if meta.spawn then
+      estimatedChars = estimatedChars + string.len(meta.spawn or "")
+    end
+    -- Add quest objectives length (only text before $b$b)
+    if meta.questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][meta.questid] then
+      local questData = pfDB["quests"]["loc"][meta.questid]
+      if questData["O"] then
+        local objectiveText = questData["O"] or ""
+        local cutPos = string.find(objectiveText, "$b$b") or string.find(objectiveText, "$B$B")
+        if cutPos then
+          objectiveText = string.sub(objectiveText, 1, cutPos - 1)
+        end
+        estimatedChars = estimatedChars + string.len(objectiveText)
+      end
+    end
+  end
+  
   -- Find all nearby nodes within cluster distance
   local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
   local clusterRadius = 1.3 -- Map coordinate units for clustering
@@ -985,35 +1017,35 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     return a.distance < b.distance
   end)
 
-  -- Estimate tooltip lines to decide on compact format
-  local estimatedLines = 4 -- Header lines (spawn name, level, type, respawn)
-
-  -- Count lines for current node
-  for title, meta in pairs(currentNode.node) do
-    if meta.quest then
-      estimatedLines = estimatedLines + 2 -- Quest name + average objectives
-    else
-      estimatedLines = estimatedLines + 1 -- Other items
-    end
-  end
-
-  -- Count lines for nearby spawns (full format estimate)
+  -- Add characters from nearby spawns to early estimation
   for i, spawnData in ipairs(sortedSpawns) do
-    estimatedLines = estimatedLines + 1 -- Spawn header
+    estimatedChars = estimatedChars + string.len(spawnData.spawn or "")
     for _, nodeInfo in ipairs(spawnData.nodes) do
       if nodeInfo.meta.quest then
-        estimatedLines = estimatedLines + 2 -- Quest + objectives
-      else
-        estimatedLines = estimatedLines + 1
+        estimatedChars = estimatedChars + string.len(nodeInfo.meta.quest or "")
+      end
+      if nodeInfo.meta.spawn then
+        estimatedChars = estimatedChars + string.len(nodeInfo.meta.spawn or "")
+      end
+      -- Add quest objectives length (only text before $b$b)
+      if nodeInfo.meta.questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][nodeInfo.meta.questid] then
+        local questData = pfDB["quests"]["loc"][nodeInfo.meta.questid]
+        if questData["O"] then
+          local objectiveText = questData["O"] or ""
+          local cutPos = string.find(objectiveText, "$b$b") or string.find(objectiveText, "$B$B")
+          if cutPos then
+            objectiveText = string.sub(objectiveText, 1, cutPos - 1)
+          end
+          estimatedChars = estimatedChars + string.len(objectiveText)
+        end
       end
     end
   end
+  local maxTooltipChars = 2000 -- Max comfortable tooltip character count
+  local useCompactFormat = (estimatedChars > maxTooltipChars)
 
-  local maxTooltipLines = 5 -- Max comfortable tooltip size
-  local useCompactFormat = (estimatedLines > maxTooltipLines) and (table.getn(sortedSpawns) > 0)
-
-  -- Setup Alt-cycling for compacted tooltips
-  if useCompactFormat then
+  -- Setup Alt-cycling for tooltips with multiple spawns
+  if table.getn(sortedSpawns) > 0 then
     -- Create all spawns list including current node
     local allSpawns = {}
     table.insert(allSpawns, {
@@ -1048,12 +1080,12 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       pfMap.altCheckEnabled = true
     end
   else
-    -- Clear cycling data for non-compacted tooltips
+    -- Clear cycling data when no nearby spawns
     pfMap.altCycleData = nil
   end
 
   -- Update mainSpawnData and otherSpawns based on alt-cycling state
-  if useCompactFormat and pfMap.altCycleData then
+  if pfMap.altCycleData then
     mainSpawnData = pfMap.altCycleData.allSpawns[pfMap.altCycleIndex]
     -- Create otherSpawns in cycling order: next items first, then previous items
     otherSpawns = {}
@@ -1084,18 +1116,22 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
     tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
     tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", displayRespawn, .8,.8,.8, 1,1,1)
+  else
+    -- For non-compact format, use sortedSpawns directly
+    otherSpawns = sortedSpawns
   end
 
-  -- Show main spawn's quests (always full format)
+  -- Show main spawn's quests
+  local shouldCompact = (estimatedChars > 200)
   if mainSpawnData.node then
     -- Current node format
     for title, meta in pairs(mainSpawnData.node) do
-      pfMap:ShowTooltip(meta, tooltip)
+      pfMap:ShowTooltip(meta, tooltip, shouldCompact)
     end
   elseif mainSpawnData.nodes then
     -- Other spawn format
     for _, nodeInfo in ipairs(mainSpawnData.nodes) do
-      pfMap:ShowTooltip(nodeInfo.meta, tooltip)
+      pfMap:ShowTooltip(nodeInfo.meta, tooltip, shouldCompact)
     end
   end
 
@@ -1109,7 +1145,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       tooltip:AddLine(" ") -- spacer
       tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
 
-      -- Show all quests for this spawn (always compact in this section)
+      -- Show all quests for this spawn
       local nodes = spawnData.nodes or {}
       if spawnData.node then
         -- Convert single node to nodes format
@@ -1120,12 +1156,17 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       for _, nodeInfo in ipairs(nodes) do
         local meta = nodeInfo.meta or nodeInfo
         if meta.quest then
-          -- Always use compact format for other spawns
-          local symbol = pfMap:GetQuestSymbol(meta.quest)
-          tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
+          if useCompactFormat then
+            -- Use compact format for other spawns in compact mode
+            local symbol = pfMap:GetQuestSymbol(meta.quest)
+            tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
+          else
+            -- Use full format in non-compact mode
+            pfMap:ShowTooltip(meta, tooltip, shouldCompact)
+          end
         else
-          -- For non-quest items, show compact info
-          pfMap:ShowTooltip(meta, tooltip)
+          -- For non-quest items, show full info
+          pfMap:ShowTooltip(meta, tooltip, shouldCompact)
         end
       end
 
@@ -1172,12 +1213,12 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
     -- update tooltip and sizes
     tooltip:AddLine(text, .6, .6, .6)
-    
-    -- Add right-click cycling help for compact tooltips
-    if useCompactFormat and pfMap.altCycleData then
+
+    -- Add right-click cycling help for tooltips with multiple spawns
+    if pfMap.altCycleData then
       tooltip:AddLine("Use <Right>-Click To Cycle Through All " .. table.getn(pfMap.altCycleData.allSpawns) .. " NPCs", .6, .6, .6)
     end
-    
+
     tooltip:Show()
   end
 
@@ -1613,8 +1654,96 @@ pfMap:SetScript("OnUpdate", function()
     if isRightDown and isCleanClick and tooltipActive and not pfMap.rightPressed then
       pfMap.rightPressed = true
 
-      print("RIGHT: Clean right-click detected")
-      PlaySound("igMainMenuOptionCheckBoxOn")
+      -- Calculate total tooltip character count (same as original estimatedChars logic)
+      local charCount = 0
+      local foundB4B = false
+      
+      -- Count chars for all spawns in tooltip (not just current one)
+      for _, spawnData in ipairs(pfMap.altCycleData.allSpawns) do
+        local spawnName = spawnData.spawn or ""
+        charCount = charCount + string.len(spawnName)
+        if string.find(spawnName, "$B$B") or string.find(spawnName, "$b$b") then foundB4B = true end
+        
+        if spawnData.node then
+          for title, meta in pairs(spawnData.node) do
+            if meta.quest then
+              local questText = meta.quest or ""
+              charCount = charCount + string.len(questText)
+              if string.find(questText, "$B$B") or string.find(questText, "$b$b") then foundB4B = true end
+            end
+            if meta.spawn then
+              local metaSpawn = meta.spawn or ""
+              charCount = charCount + string.len(metaSpawn)
+              if string.find(metaSpawn, "$B$B") or string.find(metaSpawn, "$b$b") then foundB4B = true end
+            end
+            -- Check quest objectives text from pfDB
+            if meta.questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][meta.questid] then
+              local questData = pfDB["quests"]["loc"][meta.questid]
+              if questData["O"] then
+                local objectiveText = questData["O"] or ""
+                charCount = charCount + string.len(objectiveText)
+                if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then 
+                  foundB4B = true 
+                  print("Found $b$b in quest objectives for questid:", meta.questid)
+                end
+              end
+            end
+          end
+        elseif spawnData.nodes then
+          for _, nodeInfo in ipairs(spawnData.nodes) do
+            if nodeInfo.meta then
+              if nodeInfo.meta.quest then
+                local questText = nodeInfo.meta.quest or ""
+                charCount = charCount + string.len(questText)
+                if string.find(questText, "$B$B") or string.find(questText, "$b$b") then foundB4B = true end
+              end
+              if nodeInfo.meta.spawn then
+                local metaSpawn = nodeInfo.meta.spawn or ""
+                charCount = charCount + string.len(metaSpawn)
+                if string.find(metaSpawn, "$B$B") or string.find(metaSpawn, "$b$b") then foundB4B = true end
+              end
+              -- Check quest objectives text from pfDB
+              if nodeInfo.meta.questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][nodeInfo.meta.questid] then
+                local questData = pfDB["quests"]["loc"][nodeInfo.meta.questid]
+                if questData["O"] then
+                  local objectiveText = questData["O"] or ""
+                  charCount = charCount + string.len(objectiveText)
+                  if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then 
+                    foundB4B = true 
+                    print("Found $b$b in quest objectives for questid:", nodeInfo.meta.questid)
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+
+      print("Cycling chars:", charCount)
+      if foundB4B then
+        print("Found $B$B or $b$b in tooltip text")
+      end
+      
+      -- Debug: print raw tooltip text
+      print("=== RAW TOOLTIP TEXT ===")
+      local tooltip = pfMap.altCycleData.currentTooltip
+      if tooltip then
+        for i = 1, tooltip:NumLines() do
+          local leftText = getglobal(tooltip:GetName() .. "TextLeft" .. i)
+          local rightText = getglobal(tooltip:GetName() .. "TextRight" .. i)
+          
+          local leftStr = leftText and leftText:GetText() or ""
+          local rightStr = rightText and rightText:GetText() or ""
+          
+          if leftStr ~= "" or rightStr ~= "" then
+            print("Line " .. i .. " L:", leftStr)
+            if rightStr ~= "" then
+              print("Line " .. i .. " R:", rightStr)
+            end
+          end
+        end
+      end
+      print("=== END RAW TOOLTIP ===")
 
       -- Same cycling logic
       if pfMap.altCycleData and pfMap.altCycleData.allSpawns and table.getn(pfMap.altCycleData.allSpawns) > 0 then
@@ -1622,8 +1751,6 @@ pfMap:SetScript("OnUpdate", function()
         if pfMap.altCycleIndex > table.getn(pfMap.altCycleData.allSpawns) then
           pfMap.altCycleIndex = 1
         end
-        print("RIGHT: Cycling to index", pfMap.altCycleIndex)
-        PlaySound("igQuestLogAbandonQuestOk")
 
         if pfMap.altCycleData.currentTooltip then
           pfMap:ShowClusterTooltip(pfMap.altCycleData.currentNode, pfMap.altCycleData.currentTooltip)
