@@ -361,14 +361,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
         local texts = meta["questid"] and pfDB["quests"]["loc"][meta["questid"]] or nil
 
         if texts and texts["O"] and texts["O"] ~= "" then
-          local objectiveText = texts["O"]
-          -- Use forceCompact parameter instead of calculating tooltip size mid-build
-          if forceCompact then
-            local cutPos = string.find(objectiveText, "$b$b") or string.find(objectiveText, "$B$B")
-            if cutPos then
-              objectiveText = string.sub(objectiveText, 1, cutPos - 1)
-            end
-          end
+          local objectiveText = forceCompact and pfMap:truncateAtDoubleB(texts["O"]) or texts["O"]
           tooltip:AddLine(pfDatabase:FormatQuestText(objectiveText),1,1,.9,true)
         end
 
@@ -769,6 +762,29 @@ function pfMap:GetQuestSymbol(questTitle)
   return symbol, questInLog, questComplete
 end
 
+-- Helper function to truncate text after $b$b or $B$B
+function pfMap:truncateAtDoubleB(text)
+  if not text then return "" end
+  local cutPos = string.find(text, "$b$b") or string.find(text, "$B$B")
+  return cutPos and string.sub(text, 1, cutPos - 1) or text
+end
+
+-- Helper function to count characters in truncated text
+function pfMap:countTruncatedChars(text)
+  return string.len(self:truncateAtDoubleB(text))
+end
+
+-- Helper function to add quest objective characters to estimation
+function pfMap:addObjectiveChars(questid, estimatedChars)
+  if questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][questid] then
+    local questData = pfDB["quests"]["loc"][questid]
+    if questData["O"] then
+      return estimatedChars + self:countTruncatedChars(questData["O"])
+    end
+  end
+  return estimatedChars
+end
+
 -- Global variables for alt-cycling
 pfMap.altCycleData = nil
 pfMap.altCycleIndex = 1
@@ -785,18 +801,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     if meta.spawn then
       estimatedChars = estimatedChars + string.len(meta.spawn or "")
     end
-    -- Add quest objectives length (only text before $b$b)
-    if meta.questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][meta.questid] then
-      local questData = pfDB["quests"]["loc"][meta.questid]
-      if questData["O"] then
-        local objectiveText = questData["O"] or ""
-        local cutPos = string.find(objectiveText, "$b$b") or string.find(objectiveText, "$B$B")
-        if cutPos then
-          objectiveText = string.sub(objectiveText, 1, cutPos - 1)
-        end
-        estimatedChars = estimatedChars + string.len(objectiveText)
-      end
-    end
+    estimatedChars = self:addObjectiveChars(meta.questid, estimatedChars)
   end
   
   -- Find all nearby nodes within cluster distance
@@ -1027,18 +1032,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       if nodeInfo.meta.spawn then
         estimatedChars = estimatedChars + string.len(nodeInfo.meta.spawn or "")
       end
-      -- Add quest objectives length (only text before $b$b)
-      if nodeInfo.meta.questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][nodeInfo.meta.questid] then
-        local questData = pfDB["quests"]["loc"][nodeInfo.meta.questid]
-        if questData["O"] then
-          local objectiveText = questData["O"] or ""
-          local cutPos = string.find(objectiveText, "$b$b") or string.find(objectiveText, "$B$B")
-          if cutPos then
-            objectiveText = string.sub(objectiveText, 1, cutPos - 1)
-          end
-          estimatedChars = estimatedChars + string.len(objectiveText)
-        end
-      end
+      estimatedChars = self:addObjectiveChars(nodeInfo.meta.questid, estimatedChars)
     end
   end
   local maxTooltipChars = 2000 -- Max comfortable tooltip character count
@@ -1122,7 +1116,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   end
 
   -- Show main spawn's quests
-  local shouldCompact = (estimatedChars > 200)
+  local shouldCompact = (estimatedChars > 200) -- Trigger compacting when tooltip exceeds 200 chars
   if mainSpawnData.node then
     -- Current node format
     for title, meta in pairs(mainSpawnData.node) do
@@ -1684,7 +1678,6 @@ pfMap:SetScript("OnUpdate", function()
                 charCount = charCount + string.len(objectiveText)
                 if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then 
                   foundB4B = true 
-                  print("Found $b$b in quest objectives for questid:", meta.questid)
                 end
               end
             end
@@ -1710,7 +1703,6 @@ pfMap:SetScript("OnUpdate", function()
                   charCount = charCount + string.len(objectiveText)
                   if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then 
                     foundB4B = true 
-                    print("Found $b$b in quest objectives for questid:", nodeInfo.meta.questid)
                   end
                 end
               end
@@ -1719,31 +1711,6 @@ pfMap:SetScript("OnUpdate", function()
         end
       end
 
-      print("Cycling chars:", charCount)
-      if foundB4B then
-        print("Found $B$B or $b$b in tooltip text")
-      end
-      
-      -- Debug: print raw tooltip text
-      print("=== RAW TOOLTIP TEXT ===")
-      local tooltip = pfMap.altCycleData.currentTooltip
-      if tooltip then
-        for i = 1, tooltip:NumLines() do
-          local leftText = getglobal(tooltip:GetName() .. "TextLeft" .. i)
-          local rightText = getglobal(tooltip:GetName() .. "TextRight" .. i)
-          
-          local leftStr = leftText and leftText:GetText() or ""
-          local rightStr = rightText and rightText:GetText() or ""
-          
-          if leftStr ~= "" or rightStr ~= "" then
-            print("Line " .. i .. " L:", leftStr)
-            if rightStr ~= "" then
-              print("Line " .. i .. " R:", rightStr)
-            end
-          end
-        end
-      end
-      print("=== END RAW TOOLTIP ===")
 
       -- Same cycling logic
       if pfMap.altCycleData and pfMap.altCycleData.allSpawns and table.getn(pfMap.altCycleData.allSpawns) > 0 then
