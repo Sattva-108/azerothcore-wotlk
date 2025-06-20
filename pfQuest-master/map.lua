@@ -210,48 +210,48 @@ pfMap.xpRateDetector = {
   changeThreshold = 20,         -- Percentage threshold for rate change detection
   waitingForQuestXP = false,    -- Flag for quest XP tracking
   currentQuestID = nil,         -- Currently tracked quest
-  
+
   -- Add a new XP sample and update rate
   AddSample = function(self, questID, receivedXP)
     -- Get base XP from database
-    local baseXP = pfDB and pfDB["quests"] and pfDB["quests"]["data"] and 
+    local baseXP = pfDB and pfDB["quests"] and pfDB["quests"]["data"] and
                    pfDB["quests"]["data"][questID] and pfDB["quests"]["data"][questID]["xp"]
-    
+
     if not baseXP or baseXP <= 0 or receivedXP <= 0 then
       return
     end
-    
+
     local newRate = receivedXP / baseXP
-    
+
     -- Filter out unreasonable rates
     if newRate < 0.1 or newRate > 50 then
       return
     end
-    
+
     -- Check if this might be a rate change
     if table.getn(self.samples) > 0 then
       local currentRate = self:GetCurrentRate()
       local percentDiff = math.abs((newRate - currentRate) / currentRate * 100)
-      
+
       if percentDiff > self.changeThreshold then
         -- Possible rate change - clear old samples
         self.samples = {}
         self.confidence = 0
       end
     end
-    
+
     -- Add new sample
     table.insert(self.samples, newRate)
-    
+
     -- Maintain sliding window
     if table.getn(self.samples) > self.maxSamples then
       table.remove(self.samples, 1)
     end
-    
+
     -- Update detected rate and confidence
     self:UpdateRate()
   end,
-  
+
   -- Update detected rate based on current samples
   UpdateRate = function(self)
     local sampleCount = table.getn(self.samples)
@@ -260,94 +260,94 @@ pfMap.xpRateDetector = {
       self.confidence = 0
       return
     end
-    
+
     -- Calculate median for stability
     local sortedSamples = {}
     for i, sample in ipairs(self.samples) do
       table.insert(sortedSamples, sample)
     end
     table.sort(sortedSamples)
-    
+
     local median
     if math.mod(sampleCount, 2) == 0 then
       median = (sortedSamples[sampleCount/2] + sortedSamples[sampleCount/2 + 1]) / 2
     else
       median = sortedSamples[math.ceil(sampleCount/2)]
     end
-    
+
     self.detectedRate = median
-    
+
     -- Calculate confidence based on sample count and consistency
     if sampleCount >= 3 then
       self.confidence = math.min(90, 60 + sampleCount * 5)
     else
       self.confidence = 30 + sampleCount * 15
     end
-    
+
     -- Reduce confidence if samples are inconsistent
     local variance = 0
     for _, sample in ipairs(self.samples) do
       variance = variance + (sample - median)^2
     end
     variance = variance / sampleCount
-    
+
     -- High variance reduces confidence
     if variance > 0.01 then  -- 10% variance threshold
       self.confidence = self.confidence * 0.7
     end
-    
+
     self.confidence = math.floor(self.confidence)
   end,
-  
+
   -- Get current rate for calculations
   GetCurrentRate = function(self)
     return self.detectedRate
   end,
-  
+
   -- Estimate XP for a quest
   EstimateQuestXP = function(self, questID)
-    local baseXP = pfDB and pfDB["quests"] and pfDB["quests"]["data"] and 
+    local baseXP = pfDB and pfDB["quests"] and pfDB["quests"]["data"] and
                    pfDB["quests"]["data"][questID] and pfDB["quests"]["data"][questID]["xp"]
-    
+
     if baseXP and baseXP > 0 then
       local estimatedXP = math.floor(baseXP * self:GetCurrentRate())
       return estimatedXP, self.confidence
     end
-    
+
     return nil, 0
   end,
-  
+
   -- Start tracking quest XP
   StartTracking = function(self, questID)
     self.waitingForQuestXP = true
     self.currentQuestID = questID
-    
+
     -- Register temporary events
     pfMap:RegisterEvent("CHAT_MSG_COMBAT_XP_GAIN")
     pfMap:RegisterEvent("PLAYER_XP_UPDATE")
     pfMap:RegisterEvent("GOSSIP_CLOSED")
   end,
-  
+
   -- Stop tracking and clean up
   StopTracking = function(self)
     self.waitingForQuestXP = false
     self.currentQuestID = nil
-    
+
     -- Unregister temporary events
     pfMap:UnregisterEvent("CHAT_MSG_COMBAT_XP_GAIN")
     pfMap:UnregisterEvent("PLAYER_XP_UPDATE")
     pfMap:UnregisterEvent("GOSSIP_CLOSED")
   end,
-  
+
   -- Parse XP from combat message
   ParseXPMessage = function(self, message)
     if not message then return nil end
-    
+
     -- Only accept messages without comma (quest XP, not kill XP)
     if string.find(message, ",") then
       return nil
     end
-    
+
     -- Parse XP amount from message
     local xp = string.match(message, "(%d+)")
     return xp and tonumber(xp) or nil
@@ -372,9 +372,19 @@ pfMap.tooltip:SetScript("OnShow", function()
   name = string.gsub(name, "|r", "")
 
   if pfMap.tooltips[name] and pfMap.tooltips[name] then
+    -- Calculate total tooltip size first
+    local totalEstimatedChars = 0
+    for title, obj in pairs(pfMap.tooltips[name]) do
+      if obj[zone] and obj[zone]["questid"] then
+        totalEstimatedChars = pfMap:addObjectiveChars(obj[zone]["questid"], totalEstimatedChars)
+      end
+    end
+    local shouldCompact = (totalEstimatedChars > 200)
+    
+    -- Show all tooltips with same compact setting
     for title, obj in pairs(pfMap.tooltips[name]) do
       if obj[zone] then
-        pfMap:ShowTooltip(obj[zone], GameTooltip)
+        pfMap:ShowTooltip(obj[zone], GameTooltip, shouldCompact)
         GameTooltip:Show()
       end
     end
@@ -422,7 +432,7 @@ end
 -- GetQuestXP: Calculate quest experience based on AzerothCore source code
 function pfMap:GetQuestXP(questData)
   if not questData then return 0 end
-  
+
   -- Lightweight max-level check: when the player has reached the current server cap
   -- the WoW client reports UnitXPMax("player") == 0 and hides MainMenuExpBar.
   -- Rely on that API (instead of hard-coding level 80/70/255, etc.) so the logic
@@ -430,12 +440,12 @@ function pfMap:GetQuestXP(questData)
   if UnitXPMax("player") == 0 then
     return 0
   end
-  
+
   local playerLevel = UnitLevel("player") or 1
   -- AzerothCore logic: quest_level = (Level == -1 ? playerLevel : Level)
   local questLevel = (questData.lvl == -1) and playerLevel or (questData.lvl or 1)
   local xpDifficulty = questData.xp_diff or 0  -- Default to difficulty 0 if not set
-  
+
   -- Step 1: Get base XP from questxp lookup table (QuestXP.dbc)
   local baseXP = 0
   if pfDB["questxp"] and pfDB["questxp"]["data"] and pfDB["questxp"]["data"][questLevel] then
@@ -446,15 +456,15 @@ function pfMap:GetQuestXP(questData)
       baseXP = xpTable[luaIndex]
     end
   end
-  
+
   -- Step 2: Apply AzerothCore diffFactor formula
   -- diffFactor = clamp(2 * (questLevel - playerLevel) + 20, 1, 10)
   local diffFactor = 2 * (questLevel - playerLevel) + 20
   diffFactor = math.max(1, math.min(10, diffFactor))
-  
+
   -- Step 3: Calculate XP with diffFactor
   local xp = diffFactor * baseXP / 10
-  
+
   -- Step 4: Apply AzerothCore rounding (stepped rounding)
   if xp <= 100 then
     xp = 5 * math.floor((xp + 2) / 5)
@@ -465,11 +475,11 @@ function pfMap:GetQuestXP(questData)
   else
     xp = 50 * math.floor((xp + 25) / 50)
   end
-  
+
   -- Step 5: Apply server rate (GetQuestRate)
   local serverRate = (pfMap.xpRateDetector and pfMap.xpRateDetector:GetCurrentRate()) or 1
   xp = xp * serverRate
-  
+
   -- Step 6: Final floor (as AzerothCore converts to uint32)
   return math.floor(xp)
 end
@@ -571,13 +581,16 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
 
         if texts and texts["O"] and texts["O"] ~= "" then
           local objectiveText = forceCompact and pfMap:truncateAtDoubleB(texts["O"]) or texts["O"]
-          tooltip:AddLine(pfDatabase:FormatQuestText(objectiveText),1,1,.9,true)
+          local formattedText = pfDatabase:FormatQuestText(objectiveText)
+          
+          
+          tooltip:AddLine(formattedText,1,1,.9,true)
         end
 
         local qlvlstr = pfQuest_Loc["Level"] .. ": " .. pfMap:HexDifficultyColor(meta["qlvl"]) .. meta["qlvl"] .. "|r"
         local qminstr = meta["qmin"] and " / " .. pfQuest_Loc["Required"] .. ": " .. pfMap:HexDifficultyColor(meta["qmin"], true) .. meta["qmin"] .. "|r"  or ""
         tooltip:AddLine("|cffaaaaaa- |r" .. qlvlstr .. qminstr , .8,.8,.8)
-        
+
         -- Add quest experience information
         if meta["questid"] then
           local questData = pfDB["quests"] and pfDB["quests"]["data"] and pfDB["quests"]["data"][meta["questid"]]
@@ -586,7 +599,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
             if questXP and questXP > 0 then
               local xpText = pfQuest_Loc["Experience"] and pfQuest_Loc["Experience"] or "Experience"
               xpText = xpText .. ": " .. pfMap:HexDifficultyColor(meta["qlvl"]) .. questXP .. "|r"
-              
+
               -- Show server rate if detected and not 1x
               if pfMap.xpRateDetector then
                 local serverRate = pfMap.xpRateDetector:GetCurrentRate()
@@ -595,7 +608,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
                   xpText = xpText .. " " .. rateColor .. "(" .. serverRate .. "x)|r"
                 end
               end
-              
+
               tooltip:AddLine("|cffaaaaaa- |r" .. xpText, .8,.8,.8)
             end
           end
@@ -1006,6 +1019,19 @@ function pfMap:countTruncatedChars(text)
   return string.len(self:truncateAtDoubleB(text))
 end
 
+-- Helper function to count visible characters (without color codes)
+function pfMap:countVisibleChars(text)
+  if not text then return 0 end
+  -- Remove all WoW color/formatting codes
+  local visibleText = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "") -- |cffcccccc
+  visibleText = string.gsub(visibleText, "|r", "") -- |r
+  visibleText = string.gsub(visibleText, "|H.-|h", "") -- |Hlinks|h
+  visibleText = string.gsub(visibleText, "|h", "") -- |h
+  visibleText = string.gsub(visibleText, "|T.-|t", "") -- |Ttextures|t
+  visibleText = string.gsub(visibleText, "|K.-|k", "") -- |Kkeys|k
+  return string.len(visibleText)
+end
+
 -- Helper function to add quest objective characters to estimation
 function pfMap:addObjectiveChars(questid, estimatedChars)
   if questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][questid] then
@@ -1035,7 +1061,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     end
     estimatedChars = self:addObjectiveChars(meta.questid, estimatedChars)
   end
-  
+
   -- Find all nearby nodes within cluster distance
   local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
   local clusterRadius = 1.3 -- Map coordinate units for clustering
@@ -1267,7 +1293,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
       estimatedChars = self:addObjectiveChars(nodeInfo.meta.questid, estimatedChars)
     end
   end
-  local maxTooltipChars = 2000 -- Max comfortable tooltip character count
+  local maxTooltipChars = 400 -- Max comfortable tooltip character count
   local useCompactFormat = (estimatedChars > maxTooltipChars)
 
   -- Setup Alt-cycling for tooltips with multiple spawns
@@ -1913,13 +1939,13 @@ pfMap:SetScript("OnUpdate", function()
       -- Calculate total tooltip character count (same as original estimatedChars logic)
       local charCount = 0
       local foundB4B = false
-      
+
       -- Count chars for all spawns in tooltip (not just current one)
       for _, spawnData in ipairs(pfMap.altCycleData.allSpawns) do
         local spawnName = spawnData.spawn or ""
         charCount = charCount + string.len(spawnName)
         if string.find(spawnName, "$B$B") or string.find(spawnName, "$b$b") then foundB4B = true end
-        
+
         if spawnData.node then
           for title, meta in pairs(spawnData.node) do
             if meta.quest then
@@ -1938,8 +1964,8 @@ pfMap:SetScript("OnUpdate", function()
               if questData["O"] then
                 local objectiveText = questData["O"] or ""
                 charCount = charCount + string.len(objectiveText)
-                if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then 
-                  foundB4B = true 
+                if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then
+                  foundB4B = true
                 end
               end
             end
@@ -1963,8 +1989,8 @@ pfMap:SetScript("OnUpdate", function()
                 if questData["O"] then
                   local objectiveText = questData["O"] or ""
                   charCount = charCount + string.len(objectiveText)
-                  if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then 
-                    foundB4B = true 
+                  if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then
+                    foundB4B = true
                   end
                 end
               end
