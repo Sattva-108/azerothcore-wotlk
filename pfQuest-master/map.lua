@@ -926,7 +926,10 @@ function pfMap:NodeClick()
   if IsShiftKeyDown() then
     if this.questid and this.texture and this.layer < 5 then
       -- mark questnode as done
+      print("DEBUG: Marking quest as done - questid:", this.questid, "spawn:", this.spawn or "unknown")
       pfQuest_history[this.questid] = { time(), UnitLevel("player") }
+    else
+      print("DEBUG: Cannot mark quest as done - questid:", this.questid or "nil", "texture:", this.texture or "nil", "layer:", this.layer or "nil")
     end
 
     if this.node and this.title and this.node[this.title] then
@@ -1063,70 +1066,95 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
   end
 
   -- Find all nearby nodes within cluster distance
-  local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
-  local clusterRadius = 1.3 -- Map coordinate units for clustering
-  local nearbyNodes = {}
-  local questTitles = {} -- Track quest titles for highlighting
+  local nearbyNodes, questTitles
+  
+  -- Use FROZEN data during active cycling sessions to maintain stable tooltip content
+  if pfMap.altCycleData and pfMap.altCheckEnabled and pfMap.altCycleData.frozenNearbyNodes then
+    -- Use frozen scan results during cycling
+    nearbyNodes = pfMap.altCycleData.frozenNearbyNodes
+    questTitles = pfMap.altCycleData.frozenQuestTitles
+    print("DEBUG: Using FROZEN nearby data, nodes:", table.getn(nearbyNodes))
+  else
+    -- Initial scan when not cycling - do full nearby node search
+    local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
+    local clusterRadius = 1.3 -- Map coordinate units for clustering
+    nearbyNodes = {}
+    questTitles = {} -- Track quest titles for highlighting
 
-  -- Get current node coordinates from its data
-  local currentX, currentY = nil, nil
-  if not currentNode.node then
-    print("ERROR: currentNode.node is nil in ShowClusterTooltip")
-    return
-  end
-  for title, meta in pairs(currentNode.node) do
-    if meta.x and meta.y then
-      currentX, currentY = tonumber(meta.x), tonumber(meta.y)
-      break -- Use first found coordinates
+    -- Get current node coordinates from its data
+    local currentX, currentY = nil, nil
+    if not currentNode.node then
+      print("ERROR: currentNode.node is nil in ShowClusterTooltip")
+      return
     end
-  end
-
-  -- Get current mouse position for proximity check
-  local isOnMinimap = currentNode:GetParent() ~= WorldMapButton
-  if isOnMinimap then
-    clusterRadius = 0.5 -- smaller radius for minimap
-  end
-
-  -- Check if current node is a quest starter/ender
-  local isCurrentNodeQuestGiver = false
-  for title, meta in pairs(currentNode.node) do
-    if meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or
-                       meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END") then
-      isCurrentNodeQuestGiver = true
-      break
+    for title, meta in pairs(currentNode.node) do
+      if meta.x and meta.y then
+        currentX, currentY = tonumber(meta.x), tonumber(meta.y)
+        break -- Use first found coordinates
+      end
     end
-  end
 
-  -- Only do clustering if current node is a quest giver
-  if isCurrentNodeQuestGiver and pfMap.nodes and currentX and currentY then
-    for addonName, addonData in pairs(pfMap.nodes) do
-      if addonData[map] then
-        for coords, coordNodes in pairs(addonData[map]) do
-          for title, meta in pairs(coordNodes) do
-            if meta.x and meta.y then
-              local nodeX, nodeY = tonumber(meta.x), tonumber(meta.y)
-              local distance = math.sqrt((nodeX - currentX)^2 + (nodeY - currentY)^2)
+    -- Get current mouse position for proximity check
+    local isOnMinimap = currentNode:GetParent() ~= WorldMapButton
+    if isOnMinimap then
+      clusterRadius = 0.5 -- smaller radius for minimap
+    end
 
-              if distance <= clusterRadius then
-                -- Only include nodes that are quest starters/enders
-                local isQuestGiver = meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or
-                                                     meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END")
+    -- Check if current node is a quest starter/ender
+    local isCurrentNodeQuestGiver = false
+    for title, meta in pairs(currentNode.node) do
+      if meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or
+                         meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END") then
+        isCurrentNodeQuestGiver = true
+        break
+      end
+    end
 
-                if isQuestGiver then
-                  table.insert(nearbyNodes, {
-                    spawn = meta.spawn or title,
-                    level = meta.level,
-                    spawntype = meta.spawntype,
-                    respawn = meta.respawn,
-                    spawnid = meta.spawnid,
-                    distance = distance,
-                    title = title,
-                    node = {[title] = meta}
-                  })
+    -- Only do clustering if current node is a quest giver
+    if isCurrentNodeQuestGiver and pfMap.nodes and currentX and currentY then
+      local seenSpawns = {} -- Prevent duplicate spawns in cluster scan
+      
+      for addonName, addonData in pairs(pfMap.nodes) do
+        if addonData[map] then
+          for coords, coordNodes in pairs(addonData[map]) do
+            for title, meta in pairs(coordNodes) do
+              if meta.x and meta.y then
+                local nodeX, nodeY = tonumber(meta.x), tonumber(meta.y)
+                local distance = math.sqrt((nodeX - currentX)^2 + (nodeY - currentY)^2)
 
-                  -- Track quest titles for highlighting
-                  if meta.quest then
-                    questTitles[meta.quest] = true
+                -- Add 10% tolerance to cluster boundaries to reduce edge case sensitivity
+                if distance <= clusterRadius * 1.1 then
+                  -- Only include nodes that are quest starters/enders
+                  local isQuestGiver = meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or
+                                                       meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END")
+
+                  if isQuestGiver then
+                    local spawnKey = (meta.spawn or title) .. ":" .. coords
+                    
+                    -- Skip if already seen this spawn+coords combination
+                    if not seenSpawns[spawnKey] then
+                      seenSpawns[spawnKey] = true
+                      
+                      table.insert(nearbyNodes, {
+                        spawn = meta.spawn or title,
+                        level = meta.level,
+                        spawntype = meta.spawntype,
+                        respawn = meta.respawn,
+                        spawnid = meta.spawnid,
+                        distance = distance,
+                        title = title,
+                        node = {[title] = meta}
+                      })
+
+                      -- Track quest titles for highlighting (use composite keys to prevent collisions)
+                      if meta.quest then
+                        local titleKey = meta.spawn .. ":" .. meta.quest
+                        if questTitles[titleKey] then
+                          print("DEBUG: DUPLICATE TITLE KEY:", titleKey)
+                        end
+                        questTitles[titleKey] = true
+                      end
+                    end
                   end
                 end
               end
@@ -1135,6 +1163,17 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         end
       end
     end
+    
+    -- Store frozen data for cycling sessions (will be used later in cycling data init)
+    print("DEBUG: SCANNED nearby data, nodes:", table.getn(nearbyNodes), "- will be frozen with cycling data")
+    
+    -- DEBUG: Show cluster membership details
+    print("=== CLUSTER MEMBERSHIP DEBUG ===")
+    print("Cluster radius (with tolerance):", clusterRadius * 1.1)
+    for i, nodeData in ipairs(nearbyNodes) do
+      print(string.format("NPC %d: %s (dist: %.2f)", i, nodeData.spawn, nodeData.distance))
+    end
+    print("=================================")
   end
 
   -- Sort by distance (closest first)
@@ -1218,6 +1257,15 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
   -- Set tooltip header with current main spawn
   local cycleIndicator = (useCompactFormat and pfMap.altCycleData) and " |cffcccccc(" .. pfMap.altCycleIndex .. "/" .. table.getn(pfMap.altCycleData.allSpawns) .. ")|r" or ""
+  
+  -- VERIFICATION TEST: Check render consistency
+  if pfMap.altCycleData and pfMap.altCheckEnabled then
+    print(string.format("RENDER CONSISTENCY: %d/%d (Frozen: %s)", 
+          pfMap.altCycleIndex, 
+          table.getn(pfMap.altCycleData.frozenAllSpawns or {}), 
+          tostring(pfMap.altCheckEnabled)))
+  end
+  
   tooltip:SetText(displaySpawn .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
 
   tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
@@ -1263,22 +1311,30 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     end
   end
 
-  -- Sort spawns by priority: starters > enders > vendors > others
-  local sortedSpawns = {}
-  for spawnName, data in pairs(spawnGroups) do
-    table.insert(sortedSpawns, data)
-  end
+  -- Use FROZEN sortedSpawns if cycling active, otherwise create new
+  local sortedSpawns
+  if pfMap.altCycleData and pfMap.altCheckEnabled and pfMap.altCycleData.frozenSortedSpawns then
+    sortedSpawns = pfMap.altCycleData.frozenSortedSpawns
+    print("DEBUG: Using FROZEN sortedSpawns, count:", table.getn(sortedSpawns))
+  else
+    -- Sort spawns by priority: starters > enders > vendors > others
+    sortedSpawns = {}
+    for spawnName, data in pairs(spawnGroups) do
+      table.insert(sortedSpawns, data)
+    end
 
-  table.sort(sortedSpawns, function(a, b)
-    -- Priority: quest starters first, then enders, then vendors, then by distance
-    if a.hasStarter and not b.hasStarter then return true end
-    if b.hasStarter and not a.hasStarter then return false end
-    if a.hasEnder and not b.hasEnder then return true end
-    if b.hasEnder and not a.hasEnder then return false end
-    if a.isVendor and not b.isVendor then return false end
-    if b.isVendor and not a.isVendor then return true end
-    return a.distance < b.distance
-  end)
+    table.sort(sortedSpawns, function(a, b)
+      -- Priority: quest starters first, then enders, then vendors, then by distance
+      if a.hasStarter and not b.hasStarter then return true end
+      if b.hasStarter and not a.hasStarter then return false end
+      if a.hasEnder and not b.hasEnder then return true end
+      if b.hasEnder and not a.hasEnder then return false end
+      if a.isVendor and not b.isVendor then return false end
+      if b.isVendor and not a.isVendor then return true end
+      return a.distance < b.distance
+    end)
+    print("DEBUG: Created NEW sortedSpawns, count:", table.getn(sortedSpawns))
+  end
 
   -- Add characters from nearby spawns to early estimation
   for i, spawnData in ipairs(sortedSpawns) do
@@ -1298,38 +1354,82 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
   -- Setup Alt-cycling for tooltips with multiple spawns
   if table.getn(sortedSpawns) > 0 then
-    -- Create all spawns list including current node
-    local allSpawns = {}
-    table.insert(allSpawns, {
-      spawn = currentNode.spawn,
-      node = currentNode.node,
-      isCurrent = true,
-      level = currentNode.level,
-      spawntype = currentNode.spawntype,
-      respawn = currentNode.respawn,
-      spawnid = currentNode.spawnid
-    })
-    for _, spawnData in ipairs(sortedSpawns) do
-      -- Get metadata from first node in the group
-      local firstNode = spawnData.nodes and spawnData.nodes[1]
-      local meta = firstNode and firstNode.meta
+    -- Use FROZEN allSpawns if cycling active, otherwise create new
+    local allSpawns
+    if pfMap.altCycleData and pfMap.altCheckEnabled and pfMap.altCycleData.frozenAllSpawns then
+      allSpawns = pfMap.altCycleData.frozenAllSpawns
+      print("DEBUG: Using FROZEN allSpawns, count:", table.getn(allSpawns))
+    else
+      -- Create all spawns list including current node
+      allSpawns = {}
       table.insert(allSpawns, {
-        spawn = spawnData.spawn,
-        nodes = spawnData.nodes,
-        isCurrent = false,
-        level = meta and meta.level,
-        spawntype = meta and meta.spawntype,
-        respawn = meta and meta.respawn,
-        spawnid = meta and meta.spawnid
+        spawn = currentNode.spawn,
+        node = currentNode.node,
+        isCurrent = true,
+        level = currentNode.level,
+        spawntype = currentNode.spawntype,
+        respawn = currentNode.respawn,
+        spawnid = currentNode.spawnid
       })
+      for _, spawnData in ipairs(sortedSpawns) do
+        -- Get metadata from first node in the group
+        local firstNode = spawnData.nodes and spawnData.nodes[1]
+        local meta = firstNode and firstNode.meta
+        table.insert(allSpawns, {
+          spawn = spawnData.spawn,
+          nodes = spawnData.nodes,
+          isCurrent = false,
+          level = meta and meta.level,
+          spawntype = meta and meta.spawntype,
+          respawn = meta and meta.respawn,
+          spawnid = meta and meta.spawnid
+        })
+      end
+      print("DEBUG: Created NEW allSpawns, count:", table.getn(allSpawns))
     end
 
     -- Initialize or update cycling data
-    if not pfMap.altCycleData or pfMap.altCycleData.nodeHash ~= currentNode.spawn then
-      pfMap.altCycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
+    -- DON'T recreate data if cycling is already active for this tooltip session
+    if not pfMap.altCycleData then
+      -- Brand new tooltip - initialize everything and freeze ALL render data
+      pfMap.altCycleData = {
+        allSpawns = allSpawns,
+        nodeHash = currentNode.spawn,
+        originalSpawn = currentNode.spawn,  -- Store immutable cluster ID for this session
+        frozenNearbyNodes = nearbyNodes,    -- Freeze scan results
+        frozenQuestTitles = questTitles,    -- Freeze quest highlights  
+        frozenSortedSpawns = sortedSpawns,  -- Freeze sorted spawns
+        frozenAllSpawns = allSpawns         -- Freeze all spawns list
+      }
       pfMap.altCycleIndex = 1
+      print("DEBUG: NEW cycling data initialized with ALL FROZEN render data, index:", pfMap.altCycleIndex, "spawns:", table.getn(allSpawns))
       -- Enable OnUpdate for Alt-cycling
       pfMap.altCheckEnabled = true
+    elseif not pfMap.altCheckEnabled then
+      -- Tooltip reopened - reinitialize for new cluster and freeze ALL new data
+      pfMap.altCycleData = {
+        allSpawns = allSpawns,
+        nodeHash = currentNode.spawn,
+        originalSpawn = currentNode.spawn,  
+        frozenNearbyNodes = nearbyNodes,    -- New frozen scan results
+        frozenQuestTitles = questTitles,    -- New frozen quest highlights
+        frozenSortedSpawns = sortedSpawns,  -- New frozen sorted spawns
+        frozenAllSpawns = allSpawns         -- New frozen all spawns list
+      }
+      pfMap.altCycleIndex = 1
+      print("DEBUG: REINITIALIZED cycling data with ALL new FROZEN render data, index:", pfMap.altCycleIndex, "spawns:", table.getn(allSpawns))
+      pfMap.altCheckEnabled = true
+    else
+      -- Cycling active - preserve ALL existing frozen data, don't recreate anything
+      local oldIndex = pfMap.altCycleIndex
+      -- Use existing allSpawns from frozen data
+      allSpawns = pfMap.altCycleData.frozenAllSpawns or allSpawns
+      pfMap.altCycleData.allSpawns = allSpawns
+      -- Validate index is still in bounds
+      if pfMap.altCycleIndex > table.getn(allSpawns) then
+        pfMap.altCycleIndex = 1
+      end
+      print("DEBUG: KEPT cycling data with ALL preserved FROZEN render data, index:", oldIndex, "->", pfMap.altCycleIndex, "spawns:", table.getn(allSpawns))
     end
   else
     -- Clear cycling data when no nearby spawns
@@ -1484,19 +1584,42 @@ function pfMap:NodeLeave()
   end
 
   local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
+  
+  -- BLOCK tooltip hiding during cycling updates to prevent premature closure
+  if pfMap.suppressLeave then 
+    -- Check if suppression has timed out
+    if pfMap.suppressUntil and GetTime() > pfMap.suppressUntil then
+      pfMap.suppressLeave = nil
+      pfMap.suppressUntil = nil
+      print("DEBUG: Suppression timed out, allowing tooltip hide")
+    else
+      print("DEBUG: Blocked tooltip hide during cycling update")
+      return 
+    end
+  end
+  
+  -- Check if mouse is still over the same frame to prevent premature cleanup
+  if pfMap.altCycleData and GetMouseFocus() == this then
+    print("DEBUG: Mouse still over cycling frame, preserving altCycleData")
+    return
+  end
+  
   tooltip:Hide()
   pfMap.highlight = nil
   pfMap.clusterHighlights = nil -- Clear cluster highlights
 
-  -- Clear alt-cycling data
-  if pfMap.altCycleData then
-    pfMap.altCycleData = nil
-    pfMap.altCycleIndex = 1
-    pfMap.altCycleDebounce = 0
-    -- Disable OnUpdate cycling checking
-    pfMap.altCheckEnabled = false
-    pfMap.rightPressed = false
+  -- Restore original node data (do NOT clear altCycleData here – cleanup happens on tooltip OnHide)
+  if pfMap.altCycleData and pfMap.altCycleData.currentNode and pfMap.altCycleData.originalNode then
+    local currentNode = pfMap.altCycleData.currentNode
+    currentNode.node     = pfMap.altCycleData.originalNode
+    currentNode.spawn    = pfMap.altCycleData.originalSpawn
+    currentNode.level    = pfMap.altCycleData.originalLevel
+    currentNode.spawntype= pfMap.altCycleData.originalSpawntype
+    currentNode.respawn  = pfMap.altCycleData.originalRespawn
+    currentNode.spawnid  = pfMap.altCycleData.originalSpawnid
   end
+
+  -- Do not clear altCycleData here – cleanup now handled by tooltip OnHide hook.
 end
 
 function pfMap:BuildNode(name, parent)
@@ -1926,15 +2049,30 @@ end)
 local hlstate, shiftstate, transition, hidecluster, fps, resetmap
 
 pfMap:SetScript("OnUpdate", function()
+  -- Auto-clear suppression flag after timeout
+  if pfMap.suppressLeave and pfMap.suppressUntil and GetTime() > pfMap.suppressUntil then
+    pfMap.suppressLeave = nil
+    pfMap.suppressUntil = nil
+    print("DEBUG: Auto-cleared suppression flag")
+  end
+  
   -- Right-click cycling check (only when tooltip is active)
   if pfMap.altCheckEnabled then
     local isRightDown = IsMouseButtonDown("RightButton")
     local isCleanClick = not IsShiftKeyDown() and not IsControlKeyDown() and not IsAltKeyDown()
     local tooltipActive = pfMap.altCycleData and pfMap.altCycleData.currentTooltip and pfMap.altCycleData.currentTooltip:IsShown()
 
+    -- DEBUG: Show cycling state (only once per click)
+    if isRightDown and isCleanClick and not pfMap.rightPressed then
+      print("DEBUG: Right click - TooltipActive:", tooltipActive, "Index:", pfMap.altCycleIndex)
+    end
+
     -- Detect Right-click transition (not pressed → pressed) with clean modifiers and active tooltip
-    if isRightDown and isCleanClick and tooltipActive and not pfMap.rightPressed then
+    local now = GetTime()
+    if isRightDown and isCleanClick and tooltipActive and not pfMap.rightPressed and (not pfMap.altCycleDebounce or now - pfMap.altCycleDebounce > 0.25) then
+      pfMap.altCycleDebounce = now
       pfMap.rightPressed = true
+      print("DEBUG: RIGHT CLICK DETECTED - Starting cycling...")
 
       -- Calculate total tooltip character count (same as original estimatedChars logic)
       local charCount = 0
@@ -2002,16 +2140,125 @@ pfMap:SetScript("OnUpdate", function()
 
       -- Same cycling logic
       if pfMap.altCycleData and pfMap.altCycleData.allSpawns and table.getn(pfMap.altCycleData.allSpawns) > 0 then
+        print("DEBUG: Before cycling - index:", pfMap.altCycleIndex, "total:", table.getn(pfMap.altCycleData.allSpawns))
         pfMap.altCycleIndex = pfMap.altCycleIndex + 1
         if pfMap.altCycleIndex > table.getn(pfMap.altCycleData.allSpawns) then
           pfMap.altCycleIndex = 1
         end
+        print("DEBUG: After cycling - new index:", pfMap.altCycleIndex)
 
-        if pfMap.altCycleData.currentTooltip then
-          pfMap:ShowClusterTooltip(pfMap.altCycleData.currentNode, pfMap.altCycleData.currentTooltip)
+        -- Update current node properties for mark quest as done functionality and highlight
+        local currentSpawn = pfMap.altCycleData.allSpawns[pfMap.altCycleIndex]
+        local currentNode = pfMap.altCycleData.currentNode
+        
+        if currentSpawn and currentNode then
+          print("DEBUG: Found currentSpawn:", currentSpawn.spawn, "isCurrent:", currentSpawn.isCurrent)
+          -- Clear current highlight
+          pfMap.highlight = nil
+          
+          -- Save original node data
+          local originalNode = currentNode.node
+          local originalSpawn = currentNode.spawn
+          local originalLevel = currentNode.level
+          local originalSpawntype = currentNode.spawntype
+          local originalRespawn = currentNode.respawn
+          local originalSpawnid = currentNode.spawnid
+          
+          -- Temporarily update current node for tooltip display
+          currentNode.spawn = currentSpawn.spawn
+          currentNode.level = currentSpawn.level
+          currentNode.spawntype = currentSpawn.spawntype  
+          currentNode.respawn = currentSpawn.respawn
+          currentNode.spawnid = currentSpawn.spawnid
+          
+          -- Update node properties from current cycling target
+          if currentSpawn.isCurrent then
+            -- Use original node data - no changes needed to node
+            for title, meta in pairs(originalNode) do
+              if meta.questid then
+                currentNode.questid = meta.questid
+                currentNode.title = title  -- Update title for highlight
+                if pfQuest_config["mouseover"] == "1" then
+                  pfMap.highlight = title  -- Set new highlight
+                end
+                print("DEBUG: Cycling to original node, questid:", meta.questid, "spawn:", currentSpawn.spawn, "title:", title)
+                break
+              end
+            end
+          elseif currentSpawn.node then
+            -- Use cycling target data
+            currentNode.node = currentSpawn.node
+            for title, meta in pairs(currentSpawn.node) do
+              if meta.questid then
+                currentNode.questid = meta.questid
+                currentNode.title = title  -- Update title for highlight
+                if pfQuest_config["mouseover"] == "1" then
+                  pfMap.highlight = title  -- Set new highlight
+                end
+                print("DEBUG: Cycling to spawn:", currentSpawn.spawn, "questid:", meta.questid, "title:", title)
+                break
+              end
+            end
+          elseif currentSpawn.nodes and currentSpawn.nodes[1] and currentSpawn.nodes[1].meta then
+            -- Use first node from nodes array
+            local meta = currentSpawn.nodes[1].meta
+            local nodeTitle = currentSpawn.nodes[1].title or currentSpawn.spawn
+            currentNode.node = {[nodeTitle] = meta}
+            currentNode.questid = meta.questid
+            currentNode.title = nodeTitle  -- Update title for highlight
+            if pfQuest_config["mouseover"] == "1" then
+              pfMap.highlight = nodeTitle  -- Set new highlight
+            end
+            print("DEBUG: Cycling to spawn:", currentSpawn.spawn, "questid:", meta.questid, "from nodes array, title:", nodeTitle)
+          end
+          
+          -- Force update queue to refresh highlights immediately
+          pfMap.queue_update = GetTime()
+          
+          -- Update tooltip with modified current node
+          if pfMap.altCycleData.currentTooltip then
+            print("DEBUG: Updating tooltip...")
+            local tooltip = pfMap.altCycleData.currentTooltip
+            
+            -- SUPPRESS tooltip hide events during update to prevent premature closure
+            pfMap.suppressLeave = true
+            pfMap.suppressUntil = GetTime() + 0.5  -- Keep suppression active for 0.5 seconds
+            print("DEBUG: SUPPRESSION ACTIVE - blocking tooltip hide events for 0.5s")
+            pfMap:ShowClusterTooltip(currentNode, tooltip)
+            print("DEBUG: Tooltip updated, suppression will auto-clear at:", pfMap.suppressUntil)
+            
+            -- Restore tooltip reference if it was cleared
+            if pfMap.altCycleData then
+              pfMap.altCycleData.currentTooltip = tooltip
+              if tooltip:IsShown() then
+                print("DEBUG: Tooltip update completed, still active")
+              else
+                print("DEBUG: WARNING - Tooltip became inactive after update")
+              end
+            else
+              print("DEBUG: ERROR - altCycleData was cleared during ShowClusterTooltip!")
+            end
+          else
+            print("DEBUG: ERROR - No currentTooltip found!")
+          end
+          
+          -- Store cycling info for restoration later
+          pfMap.altCycleData.originalNode = originalNode
+          pfMap.altCycleData.originalSpawn = originalSpawn
+          pfMap.altCycleData.originalLevel = originalLevel
+          pfMap.altCycleData.originalSpawntype = originalSpawntype
+          pfMap.altCycleData.originalRespawn = originalRespawn
+          pfMap.altCycleData.originalSpawnid = originalSpawnid
+        else
+          print("DEBUG: ERROR - Missing currentSpawn or currentNode!")
         end
+      else
+        print("DEBUG: ERROR - No altCycleData.allSpawns or empty!")
       end
     elseif not isRightDown then
+      if pfMap.rightPressed then
+        print("DEBUG: Right button released")
+      end
       pfMap.rightPressed = false -- Reset when Right is released
     end
   end
@@ -2110,5 +2357,19 @@ if compat.client >= 30300 then
         end
       end
     end
+  end
+end
+
+-- Attach cleanup handlers to tooltip hide events
+for _, tip in ipairs({ GameTooltip, WorldMapTooltip }) do
+  if tip and not tip.pfQuestCleanupHooked then
+    tip:HookScript("OnHide", function()
+      -- Clear cycling data only when the tooltip is really gone
+      pfMap.altCycleData   = nil
+      pfMap.altCheckEnabled = false
+      pfMap.rightPressed    = false
+      pfMap.altCycleDebounce = 0
+    end)
+    tip.pfQuestCleanupHooked = true
   end
 end
