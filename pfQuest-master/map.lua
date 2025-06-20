@@ -423,6 +423,14 @@ end
 function pfMap:GetQuestXP(questData)
   if not questData then return 0 end
   
+  -- Lightweight max-level check: when the player has reached the current server cap
+  -- the WoW client reports UnitXPMax("player") == 0 and hides MainMenuExpBar.
+  -- Rely on that API (instead of hard-coding level 80/70/255, etc.) so the logic
+  -- works on servers with custom level caps and even if other addons hide the bar.
+  if UnitXPMax("player") == 0 then
+    return 0
+  end
+  
   local playerLevel = UnitLevel("player") or 1
   -- AzerothCore logic: quest_level = (Level == -1 ? playerLevel : Level)
   local questLevel = (questData.lvl == -1) and playerLevel or (questData.lvl or 1)
