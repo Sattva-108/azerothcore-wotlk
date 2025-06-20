@@ -478,7 +478,8 @@ function pfDatabase:ShowExtendedTooltip(id, tooltip, parent, anchor, offx, offy)
       tooltip:AddLine(" ")
     end
     if data["lvl"] then
-      local questlevel = tonumber(data["lvl"])
+      -- Handle special case where lvl = -1 means quest scales to player level
+      local questlevel = (tonumber(data["lvl"]) == -1) and UnitLevel("player") or tonumber(data["lvl"])
       local color = pfQuestCompat.GetDifficultyColor(questlevel)
       tooltip:AddLine("|cffffffff" .. pfQuest_Loc["Quest Level"] .. ": |r" .. questlevel, color.r, color.g, color.b)
     end
@@ -1024,7 +1025,8 @@ function pfDatabase:SearchQuestID(id, meta, maps)
 
   meta["questid"] = id
   meta["quest"] = pfDB.quests.loc[id] and pfDB.quests.loc[id].T
-  meta["qlvl"] = quests[id]["lvl"]
+  -- Handle special case where lvl = -1 means quest scales to player level
+  meta["qlvl"] = (quests[id]["lvl"] == -1) and UnitLevel("player") or quests[id]["lvl"]
   meta["qmin"] = quests[id]["min"]
 
   -- clear previous unified quest nodes
@@ -1386,7 +1388,8 @@ function pfDatabase:SearchQuests(meta, maps)
       meta["questid"] = id
       meta["texture"] = pfQuestConfig.path.."\\img\\available_c"
 
-      meta["qlvl"] = quests[id]["lvl"]
+      -- Handle special case where lvl = -1 means quest scales to player level
+      meta["qlvl"] = (quests[id]["lvl"] == -1) and plevel or quests[id]["lvl"]
       meta["qmin"] = quests[id]["min"]
 
       meta["vertex"] = { 0, 0, 0 }

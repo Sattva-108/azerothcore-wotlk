@@ -423,9 +423,10 @@ end
 function pfMap:GetQuestXP(questData)
   if not questData then return 0 end
   
-  local questLevel = questData.lvl or 1
-  local xpDifficulty = questData.xp_diff or 0  -- Default to difficulty 0 if not set
   local playerLevel = UnitLevel("player") or 1
+  -- AzerothCore logic: quest_level = (Level == -1 ? playerLevel : Level)
+  local questLevel = (questData.lvl == -1) and playerLevel or (questData.lvl or 1)
+  local xpDifficulty = questData.xp_diff or 0  -- Default to difficulty 0 if not set
   
   -- Step 1: Get base XP from questxp lookup table (QuestXP.dbc)
   local baseXP = 0
