@@ -45,6 +45,28 @@ local function ShowTooltip()
           GameTooltip:AddLine(" ")
         end
       end
+      
+      -- Add quest experience information
+      local questData = pfDB["quests"] and pfDB["quests"]["data"] and pfDB["quests"]["data"][this.node.questid]
+      if questData then
+        local questXP = pfMap:GetQuestXP(questData)
+        if questXP and questXP > 0 then
+          local xpText = pfQuest_Loc["Experience"] and pfQuest_Loc["Experience"] or "Experience"
+          local questLevel = (questData.lvl == -1) and UnitLevel("player") or questData.lvl
+          xpText = xpText .. ": " .. pfMap:HexDifficultyColor(questLevel) .. questXP .. "|r"
+          
+          -- Show server rate if detected and not 1x
+          if pfMap.xpRateDetector then
+            local serverRate = pfMap.xpRateDetector:GetCurrentRate()
+            if serverRate and serverRate ~= 1 then
+              local rateColor = "|cff00ff00"  -- Green for rate indicator
+              xpText = xpText .. " " .. rateColor .. "(" .. serverRate .. "x)|r"
+            end
+          end
+          
+          GameTooltip:AddLine(xpText, .8,.8,.8)
+        end
+      end
     end
 
     GameTooltip:AddLine(this.tooltip, 1,1,1)
