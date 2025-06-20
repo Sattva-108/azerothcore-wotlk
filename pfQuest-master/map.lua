@@ -419,14 +419,15 @@ function pfMap:HexDifficultyColor(level, force)
   end
 end
 
--- GetQuestXP: Calculate quest experience based on quest data and detected server rate
+-- GetQuestXP: Calculate quest experience based on AzerothCore source code
 function pfMap:GetQuestXP(questData)
   if not questData then return 0 end
   
   local questLevel = questData.lvl or 1
-  local xpDifficulty = questData.xp_diff or 5  -- Default to difficulty 5 if not set
+  local xpDifficulty = questData.xp_diff or 0  -- Default to difficulty 0 if not set
+  local playerLevel = UnitLevel("player") or 1
   
-  -- Get base XP from questxp lookup table
+  -- Step 1: Get base XP from questxp lookup table (QuestXP.dbc)
   local baseXP = 0
   if pfDB["questxp"] and pfDB["questxp"]["data"] and pfDB["questxp"]["data"][questLevel] then
     local xpTable = pfDB["questxp"]["data"][questLevel]
@@ -437,10 +438,31 @@ function pfMap:GetQuestXP(questData)
     end
   end
   
-  -- Apply estimated server XP rate if available
-  local serverRate = (pfMap.xpRateDetector and pfMap.xpRateDetector:GetCurrentRate()) or 1
+  -- Step 2: Apply AzerothCore diffFactor formula
+  -- diffFactor = clamp(2 * (questLevel - playerLevel) + 20, 1, 10)
+  local diffFactor = 2 * (questLevel - playerLevel) + 20
+  diffFactor = math.max(1, math.min(10, diffFactor))
   
-  return math.floor(baseXP * serverRate)
+  -- Step 3: Calculate XP with diffFactor
+  local xp = diffFactor * baseXP / 10
+  
+  -- Step 4: Apply AzerothCore rounding (stepped rounding)
+  if xp <= 100 then
+    xp = 5 * math.floor((xp + 2) / 5)
+  elseif xp <= 500 then
+    xp = 10 * math.floor((xp + 5) / 10)
+  elseif xp <= 1000 then
+    xp = 25 * math.floor((xp + 12) / 25)
+  else
+    xp = 50 * math.floor((xp + 25) / 50)
+  end
+  
+  -- Step 5: Apply server rate (GetQuestRate)
+  local serverRate = (pfMap.xpRateDetector and pfMap.xpRateDetector:GetCurrentRate()) or 1
+  xp = xp * serverRate
+  
+  -- Step 6: Final floor (as AzerothCore converts to uint32)
+  return math.floor(xp)
 end
 
 function pfMap:ShowTooltip(meta, tooltip, forceCompact)
