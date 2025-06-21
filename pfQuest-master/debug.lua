@@ -820,7 +820,7 @@ function TableCount(t)
     return count
 end
 
- print(STAR .. " Enhanced pfQuest debug loaded! Use /pfa, /pftest, /pfq <questID>, and /pfr [rareID]")
+ --print(STAR .. " Enhanced pfQuest debug loaded! Use /pfa, /pftest, /pfq <questID>, and /pfr [rareID]")
 
 -- Register slash command for rares testing
 SLASH_PFRARETEST1 = "/pfr"
@@ -2115,12 +2115,12 @@ local function isQuestRelated(entityType, entityId)
     if not pfDB["quests"] or not pfDB["quests"]["data"] then
         return false, {}
     end
-    
+
     local relatedQuests = {}
-    
+
     for questId, quest in pairs(pfDB["quests"]["data"]) do
         local isRelated = false
-        
+
         -- Check quest starters
         if quest.start then
             if entityType == "NPC" and quest.start.U then
@@ -2141,7 +2141,7 @@ local function isQuestRelated(entityType, entityId)
                 end
             end
         end
-        
+
         -- Check quest finishers
         if quest.finish then
             if entityType == "NPC" and quest.finish.U then
@@ -2162,7 +2162,7 @@ local function isQuestRelated(entityType, entityId)
                 end
             end
         end
-        
+
         -- Check quest objectives (for objects mainly)
         if entityType == "Object" and quest.objectives then
             for _, objective in ipairs(quest.objectives) do
@@ -2174,7 +2174,7 @@ local function isQuestRelated(entityType, entityId)
             end
         end
     end
-    
+
     return #relatedQuests > 0, relatedQuests
 end
 
@@ -2199,23 +2199,23 @@ pfcFrame:SetScript("OnUpdate", function(self, elapsed)
         self:Hide()
         return
     end
-    
+
     local batchSize = 50  -- Process 50 entities per frame
     local processed = 0
     local targetX, targetY = pfcSearchState.searchParams.targetX, pfcSearchState.searchParams.targetY
-    
+
     -- Continue from where we left off
     while processed < batchSize and pfcSearchState.currentStep < pfcSearchState.totalSteps do
         pfcSearchState.currentStep = pfcSearchState.currentStep + 1
         processed = processed + 1
-        
+
         local entityData = pfcSearchState.searchParams.entityQueue[pfcSearchState.currentStep]
         if entityData then
             local entityType, entityId, coords = entityData.type, entityData.id, entityData.coords
-            
+
             for _, coord in ipairs(coords) do
                 local x, y, zoneId = coord[1], coord[2], coord[3]
-                
+
                 -- Check zone filter if specified
                 local zoneMatches = true
                 if pfcSearchState.searchParams.zoneFilter then
@@ -2224,40 +2224,40 @@ pfcFrame:SetScript("OnUpdate", function(self, elapsed)
                     if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                         zoneName = pfDB["zones"]["loc"][zoneId]
                     end
-                    
+
                     local zoneFilterLower = string.lower(pfcSearchState.searchParams.zoneFilter)
                     if string.find(string.lower(zoneName), zoneFilterLower) then
                         zoneMatches = true
                     end
                 end
-                
+
                 -- Check for exact 50,50 coordinates (or very close due to rounding)
                 if (x == targetX and y == targetY) and zoneMatches then
                     pfcSearchState.totalFound = pfcSearchState.totalFound + 1
-                    
+
                     -- Check if quest-related
                     local isRelated, relatedQuests = isQuestRelated(entityType, entityId)
-                    
+
                     if isRelated then
                         pfcSearchState.questRelatedFound = pfcSearchState.questRelatedFound + 1
-                        
+
                         local entityName = (entityType == "NPC" and "Unit " or "Object ") .. entityId
                         local locTable = pfDB[entityType == "NPC" and "units" or "objects"]["loc"]
                         if locTable and locTable[entityId] then
                             entityName = locTable[entityId]
                         end
-                        
+
                         local zoneName = "Zone " .. zoneId
                         if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                             zoneName = pfDB["zones"]["loc"][zoneId]
                         end
-                        
+
                         -- Compact quest info
                         local questIds = {}
                         for _, qInfo in ipairs(relatedQuests) do
                             table.insert(questIds, qInfo.questId)
                         end
-                        
+
                         table.insert(pfcSearchState.results, {
                             type = entityType,
                             id = entityId,
@@ -2275,7 +2275,7 @@ pfcFrame:SetScript("OnUpdate", function(self, elapsed)
             end
         end
     end
-    
+
     -- Show progress every 10% or if found quest-related items
     local progress = math.floor((pfcSearchState.currentStep / pfcSearchState.totalSteps) * 100)
     local lastProgress = pfcSearchState.lastProgress or 0
@@ -2284,7 +2284,7 @@ pfcFrame:SetScript("OnUpdate", function(self, elapsed)
         pfcSearchState.lastProgress = progress
         pfcSearchState.lastQuestFound = pfcSearchState.questRelatedFound
     end
-    
+
     -- Continue or finish
     if pfcSearchState.currentStep >= pfcSearchState.totalSteps then
         -- Search complete - show results
@@ -2302,33 +2302,33 @@ function pfcShowResults()
     local questRelatedFound = pfcSearchState.questRelatedFound
     local targetX, targetY = pfcSearchState.searchParams.targetX, pfcSearchState.searchParams.targetY
     local zoneFilter = pfcSearchState.searchParams.zoneFilter
-    
+
     -- Sort by distance
     table.sort(results, function(a, b) return a.distance < b.distance end)
-    
+
     print("")
     if zoneFilter then
         print(TRIANGLE .. " |cffFFD700Summary in '" .. zoneFilter .. "':|r " .. totalFound .. " with exact 50,50, |cff00FF00" .. questRelatedFound .. " quest-related|r")
     else
         print(TRIANGLE .. " |cffFFD700Summary:|r " .. totalFound .. " with exact 50,50, |cff00FF00" .. questRelatedFound .. " quest-related|r")
     end
-    
+
     if #results > 0 then
         print(STAR .. " |cff00BFFFQuest-Related with EXACT 50,50:|r")
-        
+
         local maxResults = 15
         for i = 1, math.min(maxResults, #results) do
             local r = results[i]
             local typeColor = r.type == "NPC" and "|cffFFFF00" or "|cff00FFFF"
             local questList = "[" .. table.concat(r.questIds, ",") .. "]"
-            print(string.format("   %s%s %d|r: %s |cff888888@%s (%.1f,%.1f) d:%.1f|r %s", 
+            print(string.format("   %s%s %d|r: %s |cff888888@%s (%.1f,%.1f) d:%.1f|r %s",
                 typeColor, r.type, r.id, r.name, r.zoneName, r.x, r.y, r.distance, questList))
         end
-        
+
         if #results > maxResults then
             print("   |cff888888... and " .. (#results - maxResults) .. " more|r")
         end
-        
+
         -- Compact zone summary
         print("")
         print(CIRCE .. " |cff00BFFFZone Summary:|r")
@@ -2344,9 +2344,9 @@ function pfcShowResults()
             end
             zoneGroups[r.zoneId].quests = zoneGroups[r.zoneId].quests + r.questCount
         end
-        
+
         for zoneId, data in pairs(zoneGroups) do
-            print(string.format("   |cffFFD700%s|r: %dN/%dO affecting %d quests", 
+            print(string.format("   |cffFFD700%s|r: %dN/%dO affecting %d quests",
                 data.name, data.npcs, data.objects, data.quests))
         end
     else
@@ -2366,7 +2366,7 @@ SlashCmdList["PFC"] = function(msg)
         print(SKULL .. " pfDB not loaded! Make sure pfQuest addon is running.")
         return
     end
-    
+
     if pfcSearchState.isSearching then
         print(SKULL .. " Search already in progress! Please wait...")
         return
@@ -2374,11 +2374,11 @@ SlashCmdList["PFC"] = function(msg)
 
     -- Parse the message - can be: "Azure", "Stormwind", etc.
     local zoneFilter = nil
-    
+
     if msg and msg ~= "" and string.match(msg, "%S") then
         zoneFilter = msg
     end
-    
+
     if zoneFilter then
         print("|cff00FF00=== pfQuest EXACT 50,50 Search in Zone ===|r")
         print(DIAMOND .. " |cffFFD700Searching EXACT (50,50) coordinates in zones matching '" .. zoneFilter .. "'|r")
@@ -2386,9 +2386,9 @@ SlashCmdList["PFC"] = function(msg)
         print("|cff00FF00=== pfQuest EXACT 50,50 Coordinate Search ===|r")
         print(DIAMOND .. " |cffFFD700Searching quest-related entities with EXACT (50,50) coordinates|r")
     end
-    
+
     local targetX, targetY = 50, 50
-    
+
     -- Reset search state
     pfcSearchState = {
         isSearching = true,
@@ -2404,10 +2404,10 @@ SlashCmdList["PFC"] = function(msg)
             entityQueue = {}
         }
     }
-    
+
     -- Build entity queue for lazy processing
     local entityQueue = pfcSearchState.searchParams.entityQueue
-    
+
     -- Add NPCs to queue
     if pfDB["units"] and pfDB["units"]["data"] then
         for unitId, unit in pairs(pfDB["units"]["data"]) do
@@ -2420,7 +2420,7 @@ SlashCmdList["PFC"] = function(msg)
             end
         end
     end
-    
+
     -- Add Objects to queue
     if pfDB["objects"] and pfDB["objects"]["data"] then
         for objectId, object in pairs(pfDB["objects"]["data"]) do
@@ -2433,28 +2433,28 @@ SlashCmdList["PFC"] = function(msg)
             end
         end
     end
-    
+
     pfcSearchState.totalSteps = #entityQueue
-    
+
     if pfcSearchState.totalSteps == 0 then
         print(SKULL .. " No entities found in database!")
         pfcSearchState.isSearching = false
         return
     end
-    
+
     print("   |cff888888Processing " .. pfcSearchState.totalSteps .. " entities...|r")
-    
+
     -- Start lazy processing with OnUpdate
     pfcSearchState.lastProgress = 0
     pfcSearchState.lastQuestFound = 0
     pfcFrame:Show()
 end
 
-print("|cff00FF00pfQuest Debug Commands:|r")
-print("|cff00BFFF/pfi [search]|r - Search quests with item requirements")
-print("|cff00BFFF/pfr [search]|r - Search rare creatures")
-print("|cff00BFFF/pfc [zone]|r - Find EXACT 50,50 coordinates globally or in specific zone")
-print("|cff00BFFF/pfbrowser|r - Open visual debug browser")
-print("|cff00BFFF/pftest|r - Test working quests")
-print("|cff00BFFF/pfq <ID>|r - Show specific quest")
+--print("|cff00FF00pfQuest Debug Commands:|r")
+--print("|cff00BFFF/pfi [search]|r - Search quests with item requirements")
+--print("|cff00BFFF/pfr [search]|r - Search rare creatures")
+--print("|cff00BFFF/pfc [zone]|r - Find EXACT 50,50 coordinates globally or in specific zone")
+--print("|cff00BFFF/pfbrowser|r - Open visual debug browser")
+--print("|cff00BFFF/pftest|r - Test working quests")
+--print("|cff00BFFF/pfq <ID>|r - Show specific quest")
 

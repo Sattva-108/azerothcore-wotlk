@@ -468,8 +468,320 @@ local debugCategories = {
             
             return results, summary
         end
+    },
+    ["coords00"] = {
+        name = "0,0 Corner",
+        icon = "Interface\\Icons\\INV_Misc_Map_02",
+        description = "Find entities with corner (0,0) coordinates",
+        searchFunction = function(searchTerm)
+            return searchCoordinatePattern(0, 0, "corner (0,0)", searchTerm)
+        end
+    },
+    ["coords100100"] = {
+        name = "100,100 Corner",
+        icon = "Interface\\Icons\\INV_Misc_Map_02",
+        description = "Find entities with corner (100,100) coordinates",
+        searchFunction = function(searchTerm)
+            return searchCoordinatePattern(100, 100, "corner (100,100)", searchTerm)
+        end
+    },
+    ["coords0100"] = {
+        name = "0,100 Corner",
+        icon = "Interface\\Icons\\INV_Misc_Map_02",
+        description = "Find entities with corner (0,100) coordinates",
+        searchFunction = function(searchTerm)
+            return searchCoordinatePattern(0, 100, "corner (0,100)", searchTerm)
+        end
+    },
+    ["coords1000"] = {
+        name = "100,0 Corner",
+        icon = "Interface\\Icons\\INV_Misc_Map_02",
+        description = "Find entities with corner (100,0) coordinates",
+        searchFunction = function(searchTerm)
+            return searchCoordinatePattern(100, 0, "corner (100,0)", searchTerm)
+        end
+    },
+    ["coordsnocoords"] = {
+        name = "No Coordinates",
+        icon = "Interface\\Icons\\INV_Misc_QuestionMark",
+        description = "Find quest-related NPCs without coordinates",
+        searchFunction = function(searchTerm)
+            return searchEntitiesWithoutCoordinates(searchTerm)
+        end
     }
 }
+
+-- Generic coordinate pattern search function
+function searchCoordinatePattern(targetX, targetY, patternName, searchTerm)
+    if not pfDB then
+        return {}, "pfDB not loaded"
+    end
+
+    local results = {}
+    local zoneFilter = searchTerm and string.lower(searchTerm) or nil
+
+    -- Pre-build quest relationship maps for faster lookup
+    local npcQuestMap = {}
+    local objectQuestMap = {}
+    
+    if pfDB["quests"] and pfDB["quests"]["data"] then
+        for questId, quest in pairs(pfDB["quests"]["data"]) do
+            -- Build NPC quest map
+            if quest.start and quest.start.U then
+                for _, unitId in ipairs(quest.start.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+            if quest.finish and quest.finish.U then
+                for _, unitId in ipairs(quest.finish.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+            
+            -- Build Object quest map
+            if quest.start and quest.start.O then
+                for _, objectId in ipairs(quest.start.O) do
+                    local id = tonumber(objectId)
+                    if not objectQuestMap[id] then objectQuestMap[id] = {} end
+                    table.insert(objectQuestMap[id], questId)
+                end
+            end
+            if quest.finish and quest.finish.O then
+                for _, objectId in ipairs(quest.finish.O) do
+                    local id = tonumber(objectId)
+                    if not objectQuestMap[id] then objectQuestMap[id] = {} end
+                    table.insert(objectQuestMap[id], questId)
+                end
+            end
+        end
+    end
+
+    -- Fast quest lookup function
+    local function isQuestRelated(entityType, entityId)
+        local id = tonumber(entityId)
+        local questMap = entityType == "NPC" and npcQuestMap or objectQuestMap
+        local relatedQuests = questMap[id] or {}
+        return #relatedQuests > 0, relatedQuests
+    end
+
+    -- Search through NPCs
+    if pfDB["units"] and pfDB["units"]["data"] then
+        for unitId, unit in pairs(pfDB["units"]["data"]) do
+            if unit.coords then
+                for _, coord in ipairs(unit.coords) do
+                    local x, y, zoneId = coord[1], coord[2], coord[3]
+                    
+                    -- Check zone filter if specified
+                    local zoneMatches = true
+                    if zoneFilter then
+                        zoneMatches = false
+                        local zoneName = "Zone " .. zoneId
+                        if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                            zoneName = pfDB["zones"]["loc"][zoneId]
+                        end
+                        
+                        if string.find(string.lower(zoneName), zoneFilter) then
+                            zoneMatches = true
+                        end
+                    end
+                    
+                    -- Check for target coordinates
+                    if (x == targetX and y == targetY) and zoneMatches then
+                        local isRelated, relatedQuests = isQuestRelated("NPC", unitId)
+                        
+                        if isRelated then
+                            local unitName = "Unit " .. unitId
+                            if pfDB["units"]["loc"] and pfDB["units"]["loc"][unitId] then
+                                unitName = pfDB["units"]["loc"][unitId]
+                            end
+                            
+                            local zoneName = "Zone " .. zoneId
+                            if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                                zoneName = pfDB["zones"]["loc"][zoneId]
+                            end
+                            
+                            table.insert(results, {
+                                type = "NPC",
+                                id = unitId,
+                                name = unitName,
+                                zoneName = zoneName,
+                                zoneId = zoneId,
+                                x = x,
+                                y = y,
+                                questIds = relatedQuests,
+                                questCount = #relatedQuests,
+                                level = 1 -- For sorting
+                            })
+                        end
+                        break -- Only count once per NPC
+                    end
+                end
+            end
+        end
+    end
+
+    -- Search through Objects
+    if pfDB["objects"] and pfDB["objects"]["data"] then
+        for objectId, object in pairs(pfDB["objects"]["data"]) do
+            if object.coords then
+                for _, coord in ipairs(object.coords) do
+                    local x, y, zoneId = coord[1], coord[2], coord[3]
+                    
+                    -- Check zone filter if specified
+                    local zoneMatches = true
+                    if zoneFilter then
+                        zoneMatches = false
+                        local zoneName = "Zone " .. zoneId
+                        if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                            zoneName = pfDB["zones"]["loc"][zoneId]
+                        end
+                        
+                        if string.find(string.lower(zoneName), zoneFilter) then
+                            zoneMatches = true
+                        end
+                    end
+                    
+                    -- Check for target coordinates
+                    if (x == targetX and y == targetY) and zoneMatches then
+                        local isRelated, relatedQuests = isQuestRelated("Object", objectId)
+                        
+                        if isRelated then
+                            local objectName = "Object " .. objectId
+                            if pfDB["objects"]["loc"] and pfDB["objects"]["loc"][objectId] then
+                                objectName = pfDB["objects"]["loc"][objectId]
+                            end
+                            
+                            local zoneName = "Zone " .. zoneId
+                            if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                                zoneName = pfDB["zones"]["loc"][zoneId]
+                            end
+                            
+                            table.insert(results, {
+                                type = "Object",
+                                id = objectId,
+                                name = objectName,
+                                zoneName = zoneName,
+                                zoneId = zoneId,
+                                x = x,
+                                y = y,
+                                questIds = relatedQuests,
+                                questCount = #relatedQuests,
+                                level = 1 -- For sorting
+                            })
+                        end
+                        break -- Only count once per Object
+                    end
+                end
+            end
+        end
+    end
+
+    -- Sort by zone name, then by type, then by name
+    table.sort(results, function(a, b)
+        if a.zoneName ~= b.zoneName then
+            return a.zoneName < b.zoneName
+        end
+        if a.type ~= b.type then
+            return a.type < b.type
+        end
+        return a.name < b.name
+    end)
+
+    local summary = "Found " .. #results .. " quest-related entities with " .. patternName .. " coordinates"
+    if zoneFilter then
+        summary = summary .. " in zones matching '" .. searchTerm .. "'"
+    end
+    
+    return results, summary
+end
+
+-- Search for entities without coordinates
+function searchEntitiesWithoutCoordinates(searchTerm)
+    if not pfDB then
+        return {}, "pfDB not loaded"
+    end
+
+    local results = {}
+    local nameFilter = searchTerm and string.lower(searchTerm) or nil
+
+    -- Pre-build quest relationship maps for faster lookup
+    local npcQuestMap = {}
+    
+    if pfDB["quests"] and pfDB["quests"]["data"] then
+        for questId, quest in pairs(pfDB["quests"]["data"]) do
+            -- Build NPC quest map (only NPCs, objects usually have coordinates)
+            if quest.start and quest.start.U then
+                for _, unitId in ipairs(quest.start.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+            if quest.finish and quest.finish.U then
+                for _, unitId in ipairs(quest.finish.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+        end
+    end
+
+    -- Search through NPCs without coordinates
+    if pfDB["units"] and pfDB["units"]["data"] then
+        for unitId, unit in pairs(pfDB["units"]["data"]) do
+            -- Only consider NPCs that don't have coordinates OR have empty coordinates
+            if not unit.coords or #unit.coords == 0 then
+                -- Check if this NPC is quest-related
+                local relatedQuests = npcQuestMap[tonumber(unitId)] or {}
+                
+                if #relatedQuests > 0 then
+                    local unitName = "Unit " .. unitId
+                    if pfDB["units"]["loc"] and pfDB["units"]["loc"][unitId] then
+                        unitName = pfDB["units"]["loc"][unitId]
+                    end
+                    
+                    -- Apply name filter if specified
+                    local nameMatches = true
+                    if nameFilter then
+                        nameMatches = string.find(string.lower(unitName), nameFilter) ~= nil
+                    end
+                    
+                    if nameMatches then
+                        table.insert(results, {
+                            type = "NPC",
+                            id = unitId,
+                            name = unitName,
+                            zoneName = "No Location",
+                            zoneId = 0,
+                            x = 0,
+                            y = 0,
+                            questIds = relatedQuests,
+                            questCount = #relatedQuests,
+                            level = 1 -- For sorting
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    -- Sort by name
+    table.sort(results, function(a, b)
+        return a.name < b.name
+    end)
+
+    local summary = "Found " .. #results .. " quest-related NPCs without coordinates"
+    if nameFilter then
+        summary = summary .. " matching '" .. searchTerm .. "'"
+    end
+    
+    return results, summary
+end
 
 -- Colors
 local COLORS = {
@@ -489,8 +801,8 @@ local function CreateDebugBrowser()
 
     -- Main frame
     pfDebugBrowser = CreateFrame("Frame", "pfDebugBrowser", UIParent)
-    pfDebugBrowser:SetWidth(600)
-    pfDebugBrowser:SetHeight(500)
+    pfDebugBrowser:SetWidth(700)
+    pfDebugBrowser:SetHeight(600)
     pfDebugBrowser:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     pfDebugBrowser:SetFrameStrata("DIALOG")
     pfDebugBrowser:SetToplevel(true)
@@ -534,14 +846,14 @@ local function CreateDebugBrowser()
 
     -- Category buttons panel
     pfDebugBrowser.categoryPanel = CreateFrame("Frame", nil, pfDebugBrowser)
-    pfDebugBrowser.categoryPanel:SetWidth(150)
-    pfDebugBrowser.categoryPanel:SetHeight(400)
+    pfDebugBrowser.categoryPanel:SetWidth(170)
+    pfDebugBrowser.categoryPanel:SetHeight(500)
     pfDebugBrowser.categoryPanel:SetPoint("TOPLEFT", pfDebugBrowser, "TOPLEFT", 15, -50)
 
     -- Search panel
     pfDebugBrowser.searchPanel = CreateFrame("Frame", nil, pfDebugBrowser)
-    pfDebugBrowser.searchPanel:SetWidth(400)
-    pfDebugBrowser.searchPanel:SetHeight(400)
+    pfDebugBrowser.searchPanel:SetWidth(480)
+    pfDebugBrowser.searchPanel:SetHeight(500)
     pfDebugBrowser.searchPanel:SetPoint("TOPRIGHT", pfDebugBrowser, "TOPRIGHT", -15, -50)
 
     -- Search input
@@ -635,8 +947,8 @@ function CreateCategoryButtons()
 
     for categoryId, category in pairs(debugCategories) do
         local btn = CreateFrame("Button", nil, pfDebugBrowser.categoryPanel)
-        btn:SetWidth(140)
-        btn:SetHeight(60)
+        btn:SetWidth(160)
+        btn:SetHeight(45)
         btn:SetPoint("TOPLEFT", pfDebugBrowser.categoryPanel, "TOPLEFT", 0, yOffset)
 
         -- Button background
@@ -651,22 +963,22 @@ function CreateCategoryButtons()
 
         -- Icon
         btn.icon = btn:CreateTexture(nil, "ARTWORK")
-        btn.icon:SetWidth(24)
-        btn.icon:SetHeight(24)
-        btn.icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 8, -8)
+        btn.icon:SetWidth(20)
+        btn.icon:SetHeight(20)
+        btn.icon:SetPoint("TOPLEFT", btn, "TOPLEFT", 6, -6)
         btn.icon:SetTexture(category.icon)
 
         -- Name
         btn.name = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-        btn.name:SetPoint("TOPLEFT", btn.icon, "TOPRIGHT", 5, 0)
-        btn.name:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -5, -8)
+        btn.name:SetPoint("TOPLEFT", btn.icon, "TOPRIGHT", 4, 0)
+        btn.name:SetPoint("TOPRIGHT", btn, "TOPRIGHT", -5, -6)
         btn.name:SetText(COLORS.SUBHEADER .. category.name .. "|r")
         btn.name:SetJustifyH("LEFT")
 
         -- Description
         btn.desc = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        btn.desc:SetPoint("TOPLEFT", btn.name, "BOTTOMLEFT", 0, -3)
-        btn.desc:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -5, 5)
+        btn.desc:SetPoint("TOPLEFT", btn.name, "BOTTOMLEFT", 0, -2)
+        btn.desc:SetPoint("BOTTOMRIGHT", btn, "BOTTOMRIGHT", -5, 4)
         btn.desc:SetText(COLORS.GRAY .. category.description .. "|r")
         btn.desc:SetJustifyH("LEFT")
         btn.desc:SetJustifyV("TOP")
@@ -688,7 +1000,7 @@ function CreateCategoryButtons()
         end)
 
         pfDebugBrowser.categoryButtons[categoryId] = btn
-        yOffset = yOffset - 70
+        yOffset = yOffset - 50
     end
 
     -- Select first category by default
@@ -750,6 +1062,21 @@ function PerformSearch(searchTerm)
             DisplayRareResults(results, extra, searchTerm)
         elseif activeCategory == "working" then
             DisplayWorkingQuestResults(results)
+        elseif activeCategory == "coords00" or activeCategory == "coords100100" or 
+               activeCategory == "coords0100" or activeCategory == "coords1000" or 
+               activeCategory == "coordsnocoords" then
+            -- Handle coordinate pattern searches
+            if searchTerm and searchTerm ~= "" then
+                -- Show detailed results for zone/name search
+                DisplayCoordsResults(results, extra, searchTerm)
+            else
+                -- Show grouped results for global search (except for no coords)
+                if activeCategory == "coordsnocoords" then
+                    DisplayCoordsResults(results, extra, searchTerm)
+                else
+                    DisplayCoordsGroupedResults(results)
+                end
+            end
         else
             pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "Search not implemented for this category|r")
         end
