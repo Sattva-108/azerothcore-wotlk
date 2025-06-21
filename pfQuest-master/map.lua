@@ -1025,6 +1025,7 @@ function pfMap:NodeClick()
         end
 
         pfQuest.updateQuestGivers = true
+        pfQuest.updateQuestLog = true   -- Форс-обновление журналa, чтобы подхватить новые квесты
     elseif this.texture and pfQuest.route and
         (( pfQuest_config["routecluster"] == "1" and this.layer >= 9 ) or
             ( pfQuest_config["routeender"] == "1" and this.layer == 4) or
@@ -1566,16 +1567,31 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
     -- Show main spawn's quests
     local shouldCompact = (estimatedChars > 200) -- Trigger compacting when tooltip exceeds 200 chars
-    if mainSpawnData.node then
-        -- Current node format
-        for title, meta in pairs(mainSpawnData.node) do
-            pfMap:ShowTooltip(meta, tooltip, shouldCompact)
+    
+    -- === Show ALL quests for main spawn (объединяем и убираем дубликаты) ===
+    local mainNodes = {}
+
+    -- из массива nodes (если он есть)
+    if mainSpawnData.nodes and type(mainSpawnData.nodes) == "table" then
+        for _, n in ipairs(mainSpawnData.nodes) do
+            table.insert(mainNodes, n)
         end
-    elseif mainSpawnData.nodes then
-        -- Other spawn format
-        for _, nodeInfo in ipairs(mainSpawnData.nodes) do
-            pfMap:ShowTooltip(nodeInfo.meta, tooltip, shouldCompact)
+    end
+
+    -- из node-таблицы
+    if mainSpawnData.node and type(mainSpawnData.node) == "table" then
+        for _title, meta in pairs(mainSpawnData.node) do
+            local dup = false
+            for _, n in ipairs(mainNodes) do
+                if n.meta == meta then dup = true break end
+            end
+            if not dup then table.insert(mainNodes, { meta = meta }) end
         end
+    end
+
+    -- теперь показываем
+    for _, n in ipairs(mainNodes) do
+        pfMap:ShowTooltip(n.meta or n, tooltip, shouldCompact)
     end
 
     -- Show other spawns in compact format
