@@ -925,13 +925,13 @@ end
 function pfMap:NodeClick()
     if IsShiftKeyDown() then
         local questidToMark = nil
-        
+
         -- DETAILED DEBUG: Check cycling state at click time
         print("=== MARK AS DONE DEBUG ===")
         print("pfMap.activeQuestId:", pfMap.activeQuestId)
         print("pfMap.activeSpawnName:", pfMap.activeSpawnName)
         print("pfMap.cycleData exists:", pfMap.cycleData ~= nil)
-        
+
         -- PRIORITY 1: Use stored activeQuestId (most reliable)
         if pfMap.activeQuestId then
             questidToMark = pfMap.activeQuestId
@@ -946,7 +946,7 @@ function pfMap:NodeClick()
                     print("DEBUG: activeSpawn full structure check:")
                     print("  activeSpawn.questid:", activeSpawn.questid)
                     print("  activeSpawn.spawnid:", activeSpawn.spawnid)
-                    
+
                     -- Try activeSpawn.questid first (direct field)
                     if activeSpawn.questid then
                         questidToMark = activeSpawn.questid
@@ -962,20 +962,20 @@ function pfMap:NodeClick()
                             end
                         end
                     end
-                    
+
                     if not questidToMark then
                         print("DEBUG: No questid found for", activeSpawn.spawn, "- this NPC may not have quests")
                     end
                 end
             end
         end
-        
+
         -- Fallback to original logic if no cycling or no questid found
         if not questidToMark and this.questid and this.texture and this.layer < 5 then
             questidToMark = this.questid
             print("Mark as Done: Using original questid", questidToMark, "from", this.spawn)
         end
-        
+
         -- Mark questnode as done if we have a questid
         if questidToMark then
             pfQuest_history[questidToMark] = { time(), UnitLevel("player") }
@@ -988,6 +988,40 @@ function pfMap:NodeClick()
         if this.node and this.title and this.node[this.title] then
             -- delete node from map
             pfMap:DeleteNode(this.node[this.title].addon, this.title)
+
+            -- clear cached cluster so that tooltip refresh reflects removal
+            pfMap.clusterCache = nil
+
+            -- Удалить все остальные координаты этого же questid
+            if questidToMark then
+                for addon, addonData in pairs(pfMap.nodes) do
+                    for mapId, mapData in pairs(addonData) do
+                        for coord, coordNodes in pairs(mapData) do
+                            for t, meta in pairs(coordNodes) do
+                                if meta.questid == questidToMark then
+                                    pfMap.nodes[addon][mapId][coord][t] = nil
+                                    if IsEmpty(pfMap.nodes[addon][mapId][coord]) then
+                                        pfMap.nodes[addon][mapId][coord] = nil
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- force immediate map refresh so current frame data updates
+            pfMap.queue_update = GetTime()
+            
+            -- Сбросить все данные циклинга и скрыть текущий tooltip,
+            -- чтобы при следующем OnEnter построилось заново уже без удалённого квеста
+            pfMap.cycleData      = nil
+            pfMap.cycleIndex     = 1
+            pfMap.activeQuestId  = nil
+            pfMap.activeSpawnName= nil
+
+            local tt = (this:GetParent() == WorldMapButton) and WorldMapTooltip or GameTooltip
+            if tt and tt:IsShown() then tt:Hide() end
         end
 
         pfQuest.updateQuestGivers = true
@@ -1137,7 +1171,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     -- Use cluster cache or scan nearby nodes
     local nearbyNodes, questTitles
     local cacheKey = currentNode.spawn .. "_" .. tostring(currentNode.x) .. "_" .. tostring(currentNode.y)
-    
+
     if pfMap.clusterCache and pfMap.clusterCache.key == cacheKey then
         -- Use cached data to prevent tooltip flickering
         nearbyNodes = pfMap.clusterCache.nearbyNodes
@@ -1219,7 +1253,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                 end
             end
         end
-        
+
         -- Cache the results
         pfMap.clusterCache = {
             key = cacheKey,
@@ -1409,7 +1443,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                 end
             end
         end
-        
+
         table.insert(allSpawns, {
             spawn = currentNode.spawn,
             node = currentNode.node,
@@ -1425,13 +1459,13 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             -- Get metadata from first node in the group
             local firstNode = spawnData.nodes and spawnData.nodes[1]
             local meta = firstNode and firstNode.meta
-            
+
             -- Create proper node structure for cycling
             local nodeStructure = nil
             if firstNode and firstNode.title and meta then
                 nodeStructure = {[firstNode.title] = meta}
             end
-            
+
             table.insert(allSpawns, {
                 spawn = spawnData.spawn,
                 nodes = spawnData.nodes,
@@ -1454,16 +1488,16 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         end
         table.sort(clusterSpawns) -- Sort to ensure consistent hash
         local clusterHash = table.concat(clusterSpawns, "|")
-        
+
         -- Initialize simple cycling data ONLY if this is a different cluster
         local isSameCluster = pfMap.currentClusterHash == clusterHash
-        
+
         if not pfMap.cycleData or not isSameCluster then
             print("Cycling: Creating NEW cycle data for cluster:", clusterHash)
             pfMap.cycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
             pfMap.cycleIndex = 1
             pfMap.currentClusterHash = clusterHash
-            
+
             -- Initialize activeQuestId for the first spawn
             pfMap.activeQuestId = nil
             pfMap.activeSpawnName = nil
@@ -1483,7 +1517,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                     end
                 end
             end
-            
+
             print("Cycling: Initialized with", table.getn(allSpawns), "spawns")
         else
             print("Cycling: REUSING cycle data for same cluster")
@@ -1671,21 +1705,21 @@ function pfMap:NodeLeave()
     if pfMap.clearTimer then
         pfMap.clearTimer = nil
     end
-    
+
     pfMap.clearTimer = CreateFrame("Frame")
     pfMap.clearTimer:SetScript("OnUpdate", function()
         -- Check if mouse is still over any frame that could be part of the cluster
         local stillActive = false
-        
+
         -- Check if any tooltip is still shown or mouse is over map areas
-        if (GameTooltip:IsShown() and MouseIsOver(GameTooltip)) or 
+        if (GameTooltip:IsShown() and MouseIsOver(GameTooltip)) or
            (WorldMapTooltip:IsShown() and MouseIsOver(WorldMapTooltip)) or
            MouseIsOver(WorldMapButton) or MouseIsOver(pfMap.drawlayer) then
             stillActive = true
         end
-        
+
         if not stillActive then
-            print("NodeLeave: Clearing cycle data after timeout")
+            --print("NodeLeave: Clearing cycle data after timeout")
             pfMap.cycleData = nil
             pfMap.cycleIndex = 1
             pfMap.rightPressed = false
@@ -1693,7 +1727,7 @@ function pfMap:NodeLeave()
             pfMap.activeSpawnName = nil
             pfMap.clusterCache = nil
             pfMap.currentClusterHash = nil
-            
+
             -- Remove this timer
             if pfMap.clearTimer then
                 pfMap.clearTimer:SetScript("OnUpdate", nil)
@@ -2092,7 +2126,7 @@ pfMap:SetScript("OnEvent", function()
         -- Clear cluster highlights when changing maps
         pfMap.clusterHighlights = nil
         pfMap.highlight = nil
-        
+
         -- Clear cycling data and cache when changing maps
         pfMap.cycleData = nil
         pfMap.cycleIndex = 1
@@ -2106,7 +2140,7 @@ pfMap:SetScript("OnEvent", function()
             pfMap.clearTimer = nil
         end
         print("Map Change: Cleared all cycling data and cache")
-        
+
         pfMap:UpdateNodes()
         last_zone = zone
     end
@@ -2148,21 +2182,21 @@ pfMap:SetScript("OnUpdate", function()
     -- Simple right-click cycling
     if pfMap.cycleData and pfMap.cycleData.currentTooltip and pfMap.cycleData.currentTooltip:IsShown() then
         local isRightDown = IsMouseButtonDown("RightButton")
-        
+
         -- Detect right-click press
         if isRightDown and not pfMap.rightPressed then
             pfMap.rightPressed = true
-            
+
             -- Cycle to next spawn
             if pfMap.cycleData.allSpawns and table.getn(pfMap.cycleData.allSpawns) > 1 then
                 pfMap.cycleIndex = pfMap.cycleIndex + 1
                 if pfMap.cycleIndex > table.getn(pfMap.cycleData.allSpawns) then
                     pfMap.cycleIndex = 1
                 end
-                
+
                 local activeSpawn = pfMap.cycleData.allSpawns[pfMap.cycleIndex]
                 print("Cycling: Switched to", activeSpawn.spawn, "(" .. pfMap.cycleIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")")
-                
+
                 -- Store active spawn's questid for Mark as Done functionality
                 pfMap.activeQuestId = nil
                 pfMap.activeSpawnName = activeSpawn.spawn
@@ -2179,10 +2213,10 @@ pfMap:SetScript("OnUpdate", function()
                         end
                     end
                 end
-                
+
                 -- Update tooltip and highlight
                 pfMap:ShowClusterTooltip(pfMap.cycleData.currentNode, pfMap.cycleData.currentTooltip)
-                
+
                 -- Update highlight for new active NPC
                 if activeSpawn and activeSpawn.title and pfQuest_config["mouseover"] == "1" then
                     pfMap.highlight = activeSpawn.title
