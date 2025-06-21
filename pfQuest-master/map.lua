@@ -970,10 +970,10 @@ function pfMap:NodeEnter()
     -- Use cluster tooltip by default
     pfMap:ShowClusterTooltip(this, tooltip)
 
-    -- Save tooltip context for Alt-cycling
-    if pfMap.altCycleData then
-        pfMap.altCycleData.currentNode = this
-        pfMap.altCycleData.currentTooltip = tooltip
+    -- Save tooltip context for cycling
+    if pfMap.cycleData then
+        pfMap.cycleData.currentNode = this
+        pfMap.cycleData.currentTooltip = tooltip
     end
 
     pfMap.highlight = pfQuest_config["mouseover"] == "1" and this.title
@@ -1043,10 +1043,10 @@ function pfMap:addObjectiveChars(questid, estimatedChars)
     return estimatedChars
 end
 
--- Global variables for alt-cycling
-pfMap.altCycleData = nil
-pfMap.altCycleIndex = 1
-pfMap.altCycleDebounce = 0 -- Debounce timer for rapid Alt presses
+-- Global variables for simple cycling
+pfMap.cycleData = nil
+pfMap.cycleIndex = 1
+pfMap.rightPressed = false
 
 function pfMap:ShowClusterTooltip(currentNode, tooltip)
     -- Early estimation of tooltip size for compact decisions
@@ -1216,9 +1216,15 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     local displayRespawn = mainSpawnData.respawn or (mainSpawnData.isCurrent and currentNode.respawn) or UNKNOWN
     local displaySpawnId = mainSpawnData.spawnid or (mainSpawnData.isCurrent and currentNode.spawnid) or ""
 
-    -- Set tooltip header with current main spawn
-    local cycleIndicator = (useCompactFormat and pfMap.altCycleData) and " |cffcccccc(" .. pfMap.altCycleIndex .. "/" .. table.getn(pfMap.altCycleData.allSpawns) .. ")|r" or ""
-    tooltip:SetText(displaySpawn .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
+    -- Set tooltip header with current main spawn (highlight if active in cycle)
+    local cycleIndicator = ""
+    local headerColor = {.3, 1, .8} -- default color
+    if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
+        cycleIndicator = " |cffcccccc(" .. pfMap.cycleIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")|r"
+        -- Highlight active spawn in bright green
+        headerColor = {.2, 1, .2}
+    end
+    tooltip:SetText(displaySpawn .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), headerColor[1], headerColor[2], headerColor[3])
 
     tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
     tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
@@ -1324,33 +1330,32 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             })
         end
 
-        -- Initialize or update cycling data
-        if not pfMap.altCycleData or pfMap.altCycleData.nodeHash ~= currentNode.spawn then
-            pfMap.altCycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
-            pfMap.altCycleIndex = 1
-            -- Enable OnUpdate for Alt-cycling
-            pfMap.altCheckEnabled = true
+        -- Initialize simple cycling data
+        if not pfMap.cycleData or pfMap.cycleData.nodeHash ~= currentNode.spawn then
+            pfMap.cycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
+            pfMap.cycleIndex = 1
+            print("Cycling: Initialized for", currentNode.spawn, "with", table.getn(allSpawns), "spawns")
         end
     else
         -- Clear cycling data when no nearby spawns
-        pfMap.altCycleData = nil
+        pfMap.cycleData = nil
     end
 
-    -- Update mainSpawnData and otherSpawns based on alt-cycling state
-    if pfMap.altCycleData then
-        mainSpawnData = pfMap.altCycleData.allSpawns[pfMap.altCycleIndex]
+    -- Update mainSpawnData based on cycling state
+    if pfMap.cycleData then
+        mainSpawnData = pfMap.cycleData.allSpawns[pfMap.cycleIndex]
         -- Create otherSpawns in cycling order: next items first, then previous items
         otherSpawns = {}
-        local totalSpawns = table.getn(pfMap.altCycleData.allSpawns)
+        local totalSpawns = table.getn(pfMap.cycleData.allSpawns)
 
         -- Add items after current index (next in cycle)
-        for i = pfMap.altCycleIndex + 1, totalSpawns do
-            table.insert(otherSpawns, pfMap.altCycleData.allSpawns[i])
+        for i = pfMap.cycleIndex + 1, totalSpawns do
+            table.insert(otherSpawns, pfMap.cycleData.allSpawns[i])
         end
 
         -- Add items before current index (previous in cycle, now at end)
-        for i = 1, pfMap.altCycleIndex - 1 do
-            table.insert(otherSpawns, pfMap.altCycleData.allSpawns[i])
+        for i = 1, pfMap.cycleIndex - 1 do
+            table.insert(otherSpawns, pfMap.cycleData.allSpawns[i])
         end
 
         -- Update display info for cycling
@@ -1361,7 +1366,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         displaySpawnId = mainSpawnData.spawnid or (mainSpawnData.isCurrent and currentNode.spawnid) or ""
 
         -- Update tooltip header for cycling
-        local cycleIndicator = " |cffcccccc(" .. pfMap.altCycleIndex .. "/" .. table.getn(pfMap.altCycleData.allSpawns) .. ")|r"
+        local cycleIndicator = " |cffcccccc(" .. pfMap.cycleIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")|r"
         tooltip:SetText(displaySpawn .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
 
         -- Update header lines
@@ -1488,13 +1493,10 @@ function pfMap:NodeLeave()
     pfMap.highlight = nil
     pfMap.clusterHighlights = nil -- Clear cluster highlights
 
-    -- Clear alt-cycling data
-    if pfMap.altCycleData then
-        pfMap.altCycleData = nil
-        pfMap.altCycleIndex = 1
-        pfMap.altCycleDebounce = 0
-        -- Disable OnUpdate cycling checking
-        pfMap.altCheckEnabled = false
+    -- Clear cycling data
+    if pfMap.cycleData then
+        pfMap.cycleData = nil
+        pfMap.cycleIndex = 1
         pfMap.rightPressed = false
     end
 end
@@ -1926,93 +1928,35 @@ end)
 local hlstate, shiftstate, transition, hidecluster, fps, resetmap
 
 pfMap:SetScript("OnUpdate", function()
-    -- Right-click cycling check (only when tooltip is active)
-    if pfMap.altCheckEnabled then
+    -- Simple right-click cycling
+    if pfMap.cycleData and pfMap.cycleData.currentTooltip and pfMap.cycleData.currentTooltip:IsShown() then
         local isRightDown = IsMouseButtonDown("RightButton")
-        local isCleanClick = not IsShiftKeyDown() and not IsControlKeyDown() and not IsAltKeyDown()
-        local tooltipActive = pfMap.altCycleData and pfMap.altCycleData.currentTooltip and pfMap.altCycleData.currentTooltip:IsShown()
-
-        -- Detect Right-click transition (not pressed → pressed) with clean modifiers and active tooltip
-        if isRightDown and isCleanClick and tooltipActive and not pfMap.rightPressed then
+        
+        -- Detect right-click press
+        if isRightDown and not pfMap.rightPressed then
             pfMap.rightPressed = true
-
-            -- Calculate total tooltip character count (same as original estimatedChars logic)
-            local charCount = 0
-            local foundB4B = false
-
-            -- Count chars for all spawns in tooltip (not just current one)
-            for _, spawnData in ipairs(pfMap.altCycleData.allSpawns) do
-                local spawnName = spawnData.spawn or ""
-                charCount = charCount + string.len(spawnName)
-                if string.find(spawnName, "$B$B") or string.find(spawnName, "$b$b") then foundB4B = true end
-
-                if spawnData.node then
-                    for title, meta in pairs(spawnData.node) do
-                        if meta.quest then
-                            local questText = meta.quest or ""
-                            charCount = charCount + string.len(questText)
-                            if string.find(questText, "$B$B") or string.find(questText, "$b$b") then foundB4B = true end
-                        end
-                        if meta.spawn then
-                            local metaSpawn = meta.spawn or ""
-                            charCount = charCount + string.len(metaSpawn)
-                            if string.find(metaSpawn, "$B$B") or string.find(metaSpawn, "$b$b") then foundB4B = true end
-                        end
-                        -- Check quest objectives text from pfDB
-                        if meta.questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][meta.questid] then
-                            local questData = pfDB["quests"]["loc"][meta.questid]
-                            if questData["O"] then
-                                local objectiveText = questData["O"] or ""
-                                charCount = charCount + string.len(objectiveText)
-                                if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then
-                                    foundB4B = true
-                                end
-                            end
-                        end
-                    end
-                elseif spawnData.nodes then
-                    for _, nodeInfo in ipairs(spawnData.nodes) do
-                        if nodeInfo.meta then
-                            if nodeInfo.meta.quest then
-                                local questText = nodeInfo.meta.quest or ""
-                                charCount = charCount + string.len(questText)
-                                if string.find(questText, "$B$B") or string.find(questText, "$b$b") then foundB4B = true end
-                            end
-                            if nodeInfo.meta.spawn then
-                                local metaSpawn = nodeInfo.meta.spawn or ""
-                                charCount = charCount + string.len(metaSpawn)
-                                if string.find(metaSpawn, "$B$B") or string.find(metaSpawn, "$b$b") then foundB4B = true end
-                            end
-                            -- Check quest objectives text from pfDB
-                            if nodeInfo.meta.questid and pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][nodeInfo.meta.questid] then
-                                local questData = pfDB["quests"]["loc"][nodeInfo.meta.questid]
-                                if questData["O"] then
-                                    local objectiveText = questData["O"] or ""
-                                    charCount = charCount + string.len(objectiveText)
-                                    if string.find(objectiveText, "$B$B") or string.find(objectiveText, "$b$b") then
-                                        foundB4B = true
-                                    end
-                                end
-                            end
-                        end
-                    end
+            
+            -- Cycle to next spawn
+            if pfMap.cycleData.allSpawns and table.getn(pfMap.cycleData.allSpawns) > 1 then
+                pfMap.cycleIndex = pfMap.cycleIndex + 1
+                if pfMap.cycleIndex > table.getn(pfMap.cycleData.allSpawns) then
+                    pfMap.cycleIndex = 1
                 end
-            end
-
-
-            -- Same cycling logic
-            if pfMap.altCycleData and pfMap.altCycleData.allSpawns and table.getn(pfMap.altCycleData.allSpawns) > 0 then
-                pfMap.altCycleIndex = pfMap.altCycleIndex + 1
-                if pfMap.altCycleIndex > table.getn(pfMap.altCycleData.allSpawns) then
-                    pfMap.altCycleIndex = 1
-                end
-
-                if pfMap.altCycleData.currentTooltip then
-                    pfMap:ShowClusterTooltip(pfMap.altCycleData.currentNode, pfMap.altCycleData.currentTooltip)
+                
+                local activeSpawn = pfMap.cycleData.allSpawns[pfMap.cycleIndex]
+                print("Cycling: Switched to", activeSpawn.spawn, "(" .. pfMap.cycleIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")")
+                
+                -- Update tooltip and highlight
+                pfMap:ShowClusterTooltip(pfMap.cycleData.currentNode, pfMap.cycleData.currentTooltip)
+                
+                -- Update highlight for new active NPC
+                if activeSpawn and activeSpawn.title and pfQuest_config["mouseover"] == "1" then
+                    pfMap.highlight = activeSpawn.title
+                    pfMap.queue_update = GetTime()
                 end
             end
         elseif not isRightDown then
-            pfMap.rightPressed = false -- Reset when Right is released
+            pfMap.rightPressed = false
         end
     end
 
