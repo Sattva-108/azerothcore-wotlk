@@ -948,17 +948,19 @@ function pfMap:NodeClick()
                     print("  activeSpawn.spawnid:", activeSpawn.spawnid)
 
                     -- Try activeSpawn.questid first (direct field)
-                    if activeSpawn.questid then
+                    if activeSpawn.questid and not pfQuest_history[activeSpawn.questid] then
                         questidToMark = activeSpawn.questid
                         print("Mark as Done: Using activeSpawn.questid", questidToMark, "from", activeSpawn.spawn, "(direct field)")
                     elseif activeSpawn.node then
                         print("  Searching in activeSpawn.node:")
                         for title, meta in pairs(activeSpawn.node) do
                             print("    title:", title, "questid:", meta.questid, "QTYPE:", meta.QTYPE)
-                            if meta.questid then
+                            if meta.questid and not pfQuest_history[meta.questid] then
                                 questidToMark = meta.questid
                                 print("Mark as Done: Using node questid", questidToMark, "from active spawn", activeSpawn.spawn)
                                 break
+                            elseif meta.questid and pfQuest_history[meta.questid] then
+                                print("    Skipping questid", meta.questid, "- already completed")
                             end
                         end
                     end
@@ -972,22 +974,75 @@ function pfMap:NodeClick()
 
         -- Fallback to original logic if no cycling or no questid found
         if not questidToMark and this.questid and this.texture and this.layer < 5 then
-            questidToMark = this.questid
-            print("Mark as Done: Using original questid", questidToMark, "from", this.spawn)
+            -- Check if this quest is already completed before using it
+            if not pfQuest_history[this.questid] then
+                questidToMark = this.questid
+                print("Mark as Done: Using original questid", questidToMark, "from", this.spawn)
+            else
+                print("Mark as Done: Skipping questid", this.questid, "from", this.spawn, "- already completed")
+            end
         end
 
         -- Mark questnode as done if we have a questid
+        local shouldDeleteNode = false
         if questidToMark then
-            pfQuest_history[questidToMark] = { time(), UnitLevel("player") }
-            print("Successfully marked quest", questidToMark, "as done")
+            if pfQuest_history[questidToMark] then
+                print("Quest", questidToMark, "is already marked as done - but will still remove node")
+                shouldDeleteNode = true
+            else
+                pfQuest_history[questidToMark] = { time(), UnitLevel("player") }
+                print("Successfully marked quest", questidToMark, "as done")
+                
+                -- Удалить квест из pfQuest.questlog чтобы он перестал считаться активным
+                pfQuest.questlog[questidToMark] = nil
+                
+                -- Удалить квест из очереди pfQuest.queue
+                for idx, entry in pairs(pfQuest.queue) do
+                    if entry[2] == questidToMark then
+                        pfQuest.queue[idx] = nil
+                    end
+                end
+                
+                -- Принудительно обновить доступные квесты для этого NPC
+                pfQuest.updateQuestGivers = true
+                pfQuest.updateQuestLog = true
+                
+                -- Очистить кэш кластеров чтобы принудительно пересканировать этого NPC
+                pfMap.clusterCache = nil
+                
+                -- Принудительно обновить карту сейчас же
+                pfMap.queue_update = GetTime()
+                
+                -- Полностью очистить все кэши чтобы принудительно пересканировать доступные квесты
+                pfMap.unifiedcache = {}
+                for k,v in pairs(similar_nodes) do
+                    if v and v.questid == questidToMark then
+                        similar_nodes[k] = nil
+                    end
+                end
+                
+                shouldDeleteNode = true
+            end
         else
             print("ERROR: No questid found to mark as done!")
+            -- Если не можем найти квест для пометки, всё равно удаляем узел
+            -- чтобы не зависать визуально на уже выполненных квестах
+            if this.node and this.title and this.node[this.title] then
+                print("Force removing visual node since all quests appear completed")
+                shouldDeleteNode = true
+            end
         end
         print("===========================")
 
-        if this.node and this.title and this.node[this.title] then
+        if shouldDeleteNode and this.node and this.title and this.node[this.title] then
             -- delete node from map
             pfMap:DeleteNode(this.node[this.title].addon, this.title)
+            
+            -- Force clear the current node to prevent it from reappearing
+            this.node[this.title] = nil
+            if IsEmpty(this.node) then
+                this.node = nil
+            end
 
             -- clear cached cluster so that tooltip refresh reflects removal
             pfMap.clusterCache = nil
