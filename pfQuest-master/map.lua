@@ -200,6 +200,37 @@ pfMap.minimap_indoor = minimap_indoor
 pfMap.minimap_zoom = minimap_zoom
 pfMap.minimap_sizes = minimap_sizes
 
+-- Очистить квест из всех кэшей и структур данных
+function pfMap:ClearQuestFromCaches(questID)
+    -- Удалить квест из pfQuest.questlog чтобы он перестал считаться активным
+    pfQuest.questlog[questID] = nil
+    
+    -- Удалить квест из очереди pfQuest.queue
+    for idx, entry in pairs(pfQuest.queue) do
+        if entry[2] == questID then
+            pfQuest.queue[idx] = nil
+        end
+    end
+    
+    -- Принудительно обновить доступные квесты для этого NPC
+    pfQuest.updateQuestGivers = true
+    pfQuest.updateQuestLog = true
+    
+    -- Очистить кэш кластеров чтобы принудительно пересканировать этого NPC
+    pfMap.clusterCache = nil
+    
+    -- Принудительно обновить карту сейчас же
+    pfMap.queue_update = GetTime()
+    
+    -- Полностью очистить все кэши чтобы принудительно пересканировать доступные квесты
+    pfMap.unifiedcache = {}
+    for k,v in pairs(similar_nodes) do
+        if v and v.questid == questID then
+            similar_nodes[k] = nil
+        end
+    end
+end
+
 -- XP Rate Detection System
 pfMap.xpRateDetector = {
     detectedRate = 1.0,           -- Current detected rate
@@ -993,33 +1024,8 @@ function pfMap:NodeClick()
                 pfQuest_history[questidToMark] = { time(), UnitLevel("player") }
                 print("Successfully marked quest", questidToMark, "as done")
                 
-                -- Удалить квест из pfQuest.questlog чтобы он перестал считаться активным
-                pfQuest.questlog[questidToMark] = nil
-                
-                -- Удалить квест из очереди pfQuest.queue
-                for idx, entry in pairs(pfQuest.queue) do
-                    if entry[2] == questidToMark then
-                        pfQuest.queue[idx] = nil
-                    end
-                end
-                
-                -- Принудительно обновить доступные квесты для этого NPC
-                pfQuest.updateQuestGivers = true
-                pfQuest.updateQuestLog = true
-                
-                -- Очистить кэш кластеров чтобы принудительно пересканировать этого NPC
-                pfMap.clusterCache = nil
-                
-                -- Принудительно обновить карту сейчас же
-                pfMap.queue_update = GetTime()
-                
-                -- Полностью очистить все кэши чтобы принудительно пересканировать доступные квесты
-                pfMap.unifiedcache = {}
-                for k,v in pairs(similar_nodes) do
-                    if v and v.questid == questidToMark then
-                        similar_nodes[k] = nil
-                    end
-                end
+                -- Очистить квест из всех кэшей и структур данных
+                pfMap:ClearQuestFromCaches(questidToMark)
                 
                 shouldDeleteNode = true
             end
