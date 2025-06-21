@@ -959,58 +959,32 @@ function pfMap:NodeClick()
 
         -- DETAILED DEBUG: Check cycling state at click time
         print("=== MARK AS DONE DEBUG ===")
+        print("Clicked frame questid:", this.questid)
+        print("Clicked frame spawn:", this.spawn)
         print("pfMap.activeQuestId:", pfMap.activeQuestId)
         print("pfMap.activeSpawnName:", pfMap.activeSpawnName)
         print("pfMap.cycleData exists:", pfMap.cycleData ~= nil)
 
-        -- PRIORITY 1: Use stored activeQuestId (most reliable)
-        if pfMap.activeQuestId then
+        -- PRIORITY 1: For clusters, use cycling system's activeQuestId
+        if pfMap.cycleData and pfMap.activeQuestId and not pfQuest_history[pfMap.activeQuestId] then
             questidToMark = pfMap.activeQuestId
-            print("Mark as Done: Using stored questid", questidToMark, "from active spawn", pfMap.activeSpawnName)
-        else
-            -- PRIORITY 2: Try complex cycleData logic (backup) with enhanced search
-            if pfMap.cycleData and pfMap.cycleData.allSpawns and pfMap.cycleIndex then
-                local activeSpawn = pfMap.cycleData.allSpawns[pfMap.cycleIndex]
-                print("activeSpawn exists:", activeSpawn ~= nil)
-                if activeSpawn then
-                    print("activeSpawn.spawn:", activeSpawn.spawn)
-                    print("DEBUG: activeSpawn full structure check:")
-                    print("  activeSpawn.questid:", activeSpawn.questid)
-                    print("  activeSpawn.spawnid:", activeSpawn.spawnid)
-
-                    -- Try activeSpawn.questid first (direct field)
-                    if activeSpawn.questid and not pfQuest_history[activeSpawn.questid] then
-                        questidToMark = activeSpawn.questid
-                        print("Mark as Done: Using activeSpawn.questid", questidToMark, "from", activeSpawn.spawn, "(direct field)")
-                    elseif activeSpawn.node then
-                        print("  Searching in activeSpawn.node:")
-                        for title, meta in pairs(activeSpawn.node) do
-                            print("    title:", title, "questid:", meta.questid, "QTYPE:", meta.QTYPE)
-                            if meta.questid and not pfQuest_history[meta.questid] then
-                                questidToMark = meta.questid
-                                print("Mark as Done: Using node questid", questidToMark, "from active spawn", activeSpawn.spawn)
-                                break
-                            elseif meta.questid and pfQuest_history[meta.questid] then
-                                print("    Skipping questid", meta.questid, "- already completed")
-                            end
-                        end
-                    end
-
-                    if not questidToMark then
-                        print("DEBUG: No questid found for", activeSpawn.spawn, "- this NPC may not have quests")
-                    end
-                end
-            end
+            print("Mark as Done: Using cycling activeQuestId", questidToMark, "from", pfMap.activeSpawnName, "(cluster)")
+        -- PRIORITY 2: For single NPCs, use clicked frame's questid
+        elseif this.questid and this.texture and this.layer < 5 and not pfQuest_history[this.questid] then
+            questidToMark = this.questid
+            print("Mark as Done: Using clicked frame questid", questidToMark, "from", this.spawn, "(single NPC)")
+        -- PRIORITY 3: Fallback to activeQuestId for edge cases
+        elseif pfMap.activeQuestId and not pfQuest_history[pfMap.activeQuestId] then
+            questidToMark = pfMap.activeQuestId
+            print("Mark as Done: Using fallback activeQuestId", questidToMark, "from", pfMap.activeSpawnName, "(fallback)")
         end
 
-        -- Fallback to original logic if no cycling or no questid found
-        if not questidToMark and this.questid and this.texture and this.layer < 5 then
-            -- Check if this quest is already completed before using it
-            if not pfQuest_history[this.questid] then
-                questidToMark = this.questid
-                print("Mark as Done: Using original questid", questidToMark, "from", this.spawn)
-            else
-                print("Mark as Done: Skipping questid", this.questid, "from", this.spawn, "- already completed")
+        if not questidToMark then
+            print("ERROR: No questid found to mark as done!")
+            -- Если не можем найти квест для пометки, всё равно удаляем узел
+            -- чтобы не зависать визуально на уже выполненных квестах
+            if this.node and this.title and this.node[this.title] then
+                print("Force removing visual node since all quests appear completed")
             end
         end
 
@@ -1030,11 +1004,8 @@ function pfMap:NodeClick()
                 shouldDeleteNode = true
             end
         else
-            print("ERROR: No questid found to mark as done!")
-            -- Если не можем найти квест для пометки, всё равно удаляем узел
-            -- чтобы не зависать визуально на уже выполненных квестах
+            -- Force remove node if no valid questid found but node exists
             if this.node and this.title and this.node[this.title] then
-                print("Force removing visual node since all quests appear completed")
                 shouldDeleteNode = true
             end
         end
