@@ -1774,8 +1774,8 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         end
     end
 
-    -- Set up highlighting for all related quests
-    if pfQuest_config["mouseover"] == "1" then
+    -- Set up highlighting for all related quests (only on initial hover, not during cycling)
+    if pfQuest_config["mouseover"] == "1" and not pfMap.cycleData then
         pfMap.clusterHighlights = questTitles
     end
 
