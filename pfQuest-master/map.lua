@@ -1807,6 +1807,18 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
     -- Scale tooltip down for more compact view
     tooltip:SetScale(0.9)
+    
+    -- Store tooltip position during cycling to prevent jumping
+    if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
+        if not pfMap.tooltipAnchor then
+            pfMap.tooltipAnchor = {tooltip:GetPoint()}
+        end
+        if pfMap.tooltipAnchor[1] then
+            tooltip:ClearAllPoints()
+            tooltip:SetPoint(pfMap.tooltipAnchor[1], pfMap.tooltipAnchor[2], pfMap.tooltipAnchor[3], pfMap.tooltipAnchor[4] or 0, pfMap.tooltipAnchor[5] or 0)
+        end
+    end
+    
     tooltip:Show()
 end
 
@@ -1820,6 +1832,8 @@ function pfMap:NodeLeave()
     tooltip:Hide()
     pfMap.highlight = nil
     pfMap.clusterHighlights = nil -- Clear cluster highlights
+    pfMap.tooltipAnchor = nil -- Clear tooltip anchor
+    -- Clear highlight flags
 
     -- Use a timer to delay clearing - gives time for mouse to move to nearby nodes
     if pfMap.clearTimer then
@@ -2338,9 +2352,10 @@ pfMap:SetScript("OnUpdate", function()
                 -- Update tooltip and highlight
                 pfMap:ShowClusterTooltip(pfMap.cycleData.currentNode, pfMap.cycleData.currentTooltip)
 
-                -- Update highlight for new active NPC
+                -- Highlight only active quest during cycling
                 if activeSpawn and activeSpawn.title and pfQuest_config["mouseover"] == "1" then
                     pfMap.highlight = activeSpawn.title
+                    pfMap.clusterHighlights = nil -- Clear cluster highlights during cycling
                     pfMap.queue_update = GetTime()
                 end
             end
@@ -2373,12 +2388,27 @@ pfMap:SetScript("OnUpdate", function()
                 transition = frame:Animate(frame.defsize, 0, fps) or transition
             elseif highlight or clusterHighlight then
                 -- zoom node (regular highlight or cluster highlight)
+                -- Raise frame level ONLY for the active quest (not cluster highlights)
+                if highlight and pfMap.highlight and not pfMap.clusterHighlights then
+                    if not frame.originalLevel then
+                        frame.originalLevel = frame:GetFrameLevel()
+                    end
+                    frame:SetFrameLevel(frame.originalLevel + 5)
+                else
+                    -- Restore level for cluster highlights
+                    if frame.originalLevel then
+                        frame:SetFrameLevel(frame.originalLevel)
+                    end
+                end
                 transition = frame:Animate((frame.texture and frame.defsize + 4 or frame.defsize), 1, fps) or transition
             elseif not highlight and not clusterHighlight and (pfMap.highlight or pfMap.clusterHighlights) then
-                -- fade node
+                -- fade node (standard dimming for all non-active)
                 transition = frame:Animate(frame.defsize, tonumber(pfQuest_config["nodefade"]) or 0.3, fps) or transition
             elseif frame.texture or frame.cluster then
-                -- defaults for textured nodes
+                -- defaults for textured nodes (restore frame level)
+                if frame.originalLevel then
+                    frame:SetFrameLevel(frame.originalLevel)
+                end
                 transition = frame:Animate(frame.defsize, 1, fps) or transition
             else
                 -- defaults
