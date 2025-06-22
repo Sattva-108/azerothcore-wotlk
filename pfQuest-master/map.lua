@@ -1082,12 +1082,41 @@ function pfMap:NodeEnter()
 
     local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
 
-    -- Smart anchor: use RIGHT if there's space, fallback to LEFT if near edge
-    local mouseX = GetCursorPosition() / UIParent:GetEffectiveScale()
-    local screenWidth = GetScreenWidth()
-    local useRightAnchor = mouseX < (screenWidth * 0.7) -- Use RIGHT if cursor in left 70% of screen
+    -- Smart anchor: automatically choose best position (top/bottom and left/right)
+    local mouseX, mouseY = GetCursorPosition()
+    local scale = UIParent:GetEffectiveScale()
+    mouseX = mouseX / scale
+    mouseY = mouseY / scale
 
-    tooltip:SetOwner(this, useRightAnchor and "ANCHOR_RIGHT" or "ANCHOR_LEFT")
+    local screenWidth = GetScreenWidth()
+    local screenHeight = GetScreenHeight()
+
+    -- Choose horizontal anchor (left/right based on screen position)
+    local useRightAnchor = mouseX < (screenWidth * 0.7)
+
+    -- Choose vertical anchor (top/bottom based on available space)
+    local useBottomAnchor = mouseY > (screenHeight * 0.5)
+
+    local anchorType
+    if useBottomAnchor then
+        -- Show tooltip below cursor
+        anchorType = useRightAnchor and "ANCHOR_BOTTOMRIGHT" or "ANCHOR_BOTTOMLEFT"
+    else
+        -- Show tooltip above cursor
+        anchorType = useRightAnchor and "ANCHOR_TOPRIGHT" or "ANCHOR_TOPLEFT"
+    end
+
+    -- Apply offset for left-anchored tooltips directly in SetOwner
+    local offsetX = 0
+    print(anchorType)
+    if anchorType == "ANCHOR_TOPRIGHT" then
+        offsetX = -10  -- Move left tooltips 10 pixels further left
+    elseif anchorType == "ANCHOR_BOTTOMRIGHT" then
+        offsetX = 10
+    end
+
+    tooltip:SetOwner(this, anchorType, offsetX, 0)
+
     this.spawn = this.spawn or UNKNOWN
 
     -- Use cluster tooltip by default
@@ -1807,7 +1836,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
     -- Scale tooltip down for more compact view
     tooltip:SetScale(0.9)
-    
+
     -- Store tooltip position during cycling to prevent jumping
     if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
         if not pfMap.tooltipAnchor then
@@ -1818,7 +1847,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             tooltip:SetPoint(pfMap.tooltipAnchor[1], pfMap.tooltipAnchor[2], pfMap.tooltipAnchor[3], pfMap.tooltipAnchor[4] or 0, pfMap.tooltipAnchor[5] or 0)
         end
     end
-    
+
     tooltip:Show()
 end
 
