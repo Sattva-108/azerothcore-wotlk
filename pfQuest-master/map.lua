@@ -647,18 +647,25 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
 
                 -- Add quest chain information
                 if meta["questid"] then
-                    print("DEBUG: Quest ID found:", meta["questid"])
                     local chainCount = pfMap:CountQuestsInChain(meta["questid"])
-                    print("DEBUG: Chain count:", chainCount)
+                    local chainTotalXP = pfMap:GetChainTotalXP(meta["questid"])
+                    local chainSummary = pfMap:GetChainSummary(meta["questid"])
+
                     if chainCount > 0 then
                         local chainText = "|cffaaaaaa- |r" .. "Chain: +" .. chainCount .. " quests"
-                        print("DEBUG: Adding chain text:", chainText)
+                        if chainTotalXP > 0 then
+                            chainText = chainText .. " (+" .. chainTotalXP .. " XP)"
+                        end
                         tooltip:AddLine(chainText, .6, .8, 1)  -- Light blue color for chain info
-                    else
-                        print("DEBUG: No chain quests found")
+
+                        -- Add chain summary
+                        if table.getn(chainSummary) > 0 then
+                            tooltip:AddLine(" ", 1, 1, 1)  -- Empty line for spacing
+                            for _, summaryLine in ipairs(chainSummary) do
+                                tooltip:AddLine("|cffaaaaaa" .. summaryLine .. "|r", .7, .7, .7)
+                            end
+                        end
                     end
-                else
-                    print("DEBUG: No questid in meta")
                 end
             end
         end
@@ -1099,7 +1106,7 @@ function pfMap:NodeEnter()
     local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
 
     -- Use ANCHOR_CURSOR_LEFT with node - cursor anchors only work with actual frames
-tooltip:SetOwner(this, "ANCHOR_CURSOR_RIGHT", -310, 10)
+tooltip:SetOwner(this, "ANCHOR_CURSOR_RIGHT", 10, 5)
 
     this.spawn = this.spawn or UNKNOWN
 
@@ -1196,27 +1203,13 @@ pfMap.currentClusterHash = nil
 
 -- Helper function to count quests in chain after given quest
 function pfMap:CountQuestsInChain(questid)
-    print("DEBUG CountQuestsInChain: Starting with questid:", questid)
-
     if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then
-        print("DEBUG CountQuestsInChain: Missing questid or pfDB structure")
         return 0
     end
 
     local questData = pfDB["quests"]["data"][questid]
     if not questData then
-        print("DEBUG CountQuestsInChain: No quest data found for", questid)
         return 0
-    end
-
-    print("DEBUG CountQuestsInChain: Quest data found, checking for chain field")
-    if questData["chain"] then
-        print("DEBUG CountQuestsInChain: Chain field found:", table.getn(questData["chain"]), "items")
-        for i, nextId in ipairs(questData["chain"]) do
-            print("DEBUG CountQuestsInChain: Chain item", i, ":", nextId)
-        end
-    else
-        print("DEBUG CountQuestsInChain: No chain field found")
     end
 
     local count = 0
@@ -1231,15 +1224,278 @@ function pfMap:CountQuestsInChain(questid)
         if qData and qData["chain"] then
             for _, nextQuestId in ipairs(qData["chain"]) do
                 count = count + 1
-                print("DEBUG CountQuestsInChain: Found next quest", nextQuestId, "total count now:", count)
                 countFollowUps(nextQuestId)
             end
         end
     end
 
     countFollowUps(questid)
-    print("DEBUG CountQuestsInChain: Final count:", count)
     return count
+end
+
+-- Helper function to calculate total XP for entire quest chain
+function pfMap:GetChainTotalXP(questid)
+    if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then
+        return 0
+    end
+
+    local totalXP = 0
+    local visited = {}
+
+    local function addChainXP(qid)
+        if visited[qid] or totalXP > 100000 then return end -- Prevent infinite loops, max reasonable XP
+        visited[qid] = true
+
+        local qData = pfDB["quests"]["data"][qid]
+        if qData then
+            -- Add XP for current quest
+            local questXP = self:GetQuestXP(qData)
+            if questXP and questXP > 0 then
+                totalXP = totalXP + questXP
+            end
+
+            -- Process chain quests
+            if qData["chain"] then
+                for _, nextQuestId in ipairs(qData["chain"]) do
+                    addChainXP(nextQuestId)
+                end
+            end
+        end
+    end
+
+    addChainXP(questid)
+    return totalXP
+end
+
+-- Helper function to get quest chain summary
+function pfMap:GetChainSummary(questid)
+    if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then
+        return {}
+    end
+
+    local chainSummary = {}
+    local visited = {}
+    local questCounter = 1
+
+    local function addChainInfo(qid)
+        if visited[qid] or questCounter > 10 then return end -- Prevent infinite loops, max 10 quests in summary
+        visited[qid] = true
+
+        local qData = pfDB["quests"]["data"][qid]
+        local qLoc = pfDB["quests"]["loc"] and pfDB["quests"]["loc"][qid]
+
+        if qData and qLoc then
+            local questName = qLoc["T"] or "Unknown Quest"
+            local objectiveZones = {}
+            local endNPCZone = "Unknown"
+
+            -- Get end NPC zone - try different structures
+            local endNPCId = nil
+            if qData["end"] then
+                -- Try different possible structures
+                if qData["end"]["U"] and type(qData["end"]["U"]) == "table" and qData["end"]["U"][1] then
+                    endNPCId = qData["end"]["U"][1]
+                elseif qData["end"][1] then
+                    endNPCId = qData["end"][1]
+                end
+
+                if endNPCId and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][endNPCId] then
+                    local npcData = pfDB["units"]["data"][endNPCId]
+                    -- Try different possible structures for NPC data
+                    local mapId = nil
+                    if npcData then
+                        if npcData[1] and npcData[1][1] then
+                            mapId = npcData[1][1]
+                        elseif npcData["coords"] and npcData["coords"][1] and npcData["coords"][1][3] then
+                            mapId = npcData["coords"][1][3]
+                        end
+                    end
+
+                    if mapId then
+                        local zoneName = pfMap:GetZoneName(mapId)
+                        print("  DEBUG: End NPC " .. endNPCId .. " mapId " .. mapId .. " → " .. zoneName)
+                        if zoneName and zoneName ~= "Unknown Zone" then
+                            endNPCZone = zoneName
+                        end
+                    end
+                end
+            end
+
+            -- Get objective zones from quest start NPC
+            local startNPCId = nil
+            if qData["start"] then
+                -- Try different possible structures
+                if qData["start"]["U"] and type(qData["start"]["U"]) == "table" and qData["start"]["U"][1] then
+                    startNPCId = qData["start"]["U"][1]
+                elseif qData["start"][1] then
+                    startNPCId = qData["start"][1]
+                end
+
+                if startNPCId and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][startNPCId] then
+                    local startNpcData = pfDB["units"]["data"][startNPCId]
+                    -- Try different possible structures for NPC data
+                    local mapId = nil
+                    if startNpcData then
+                        if startNpcData[1] and startNpcData[1][1] then
+                            mapId = startNpcData[1][1]
+                        elseif startNpcData["coords"] and startNpcData["coords"][1] and startNpcData["coords"][1][3] then
+                            mapId = startNpcData["coords"][1][3]
+                        end
+                    end
+
+                    if mapId then
+                        local zoneName = pfMap:GetZoneName(mapId)
+                        print("  DEBUG: Start NPC " .. startNPCId .. " mapId " .. mapId .. " → " .. zoneName)
+                        if zoneName and zoneName ~= "Unknown Zone" and not objectiveZones[zoneName] then
+                            objectiveZones[zoneName] = true
+                        end
+                    end
+                end
+            end
+
+            -- Get objective zones from quest objectives
+            if qData["obj"] then
+                for objKey, obj in pairs(qData["obj"]) do
+                    if type(obj) == "table" then
+                        -- Try to find Item/NPC/Object IDs in objectives
+                        for i = 1, 5 do
+                            local objId = obj[i]
+                            if objId and type(objId) == "number" then
+                                local mapId = nil
+
+                                -- Try to find mapId through different paths:
+                                local objType = "unknown"
+
+                                -- 1. Direct NPC lookup (for "U" objectives)
+                                if objKey == "U" and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][objId] then
+                                    local npcData = pfDB["units"]["data"][objId]
+                                    objType = "NPC"
+                                    if npcData then
+                                        if npcData[1] and npcData[1][1] then
+                                            mapId = npcData[1][1]
+                                        elseif npcData["coords"] and npcData["coords"][1] and npcData["coords"][1][3] then
+                                            mapId = npcData["coords"][1][3]
+                                        end
+                                    end
+                                end
+
+                                -- 2. Direct Object lookup (for "O" objectives)
+                                if not mapId and objKey == "O" and pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objId] then
+                                    local objectData = pfDB["objects"]["data"][objId]
+                                    objType = "Object"
+                                    if objectData and objectData["coords"] and objectData["coords"][1] and objectData["coords"][1][3] then
+                                        mapId = objectData["coords"][1][3]
+                                    end
+                                end
+
+                                -- 3. Item lookup (for "I" objectives) → Object lookup (like 4918 → 3290)
+                                if not mapId and objKey == "I" and pfDB["items"] and pfDB["items"]["data"] and pfDB["items"]["data"][objId] then
+                                    local itemData = pfDB["items"]["data"][objId]
+                                    objType = "Item"
+                                    if itemData and itemData["O"] then
+                                        -- Find first object that drops this item
+                                        for objectId, _ in pairs(itemData["O"]) do
+                                            if pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId] then
+                                                local objectData = pfDB["objects"]["data"][objectId]
+                                                if objectData and objectData["coords"] and objectData["coords"][1] and objectData["coords"][1][3] then
+                                                    mapId = objectData["coords"][1][3]
+                                                    objType = "Item→Object(" .. objectId .. ")"
+                                                    break
+                                                end
+                                            end
+                                        end
+                                    end
+                                end
+
+                                -- Add zone if found
+                                if mapId then
+                                    local zoneName = pfMap:GetZoneName(mapId)
+                                    print("  DEBUG: " .. objType .. " " .. objId .. " (objective " .. objKey .. ") → mapId " .. mapId .. " → " .. zoneName)
+                                    if zoneName and zoneName ~= "Unknown Zone" and not objectiveZones[zoneName] then
+                                        objectiveZones[zoneName] = true
+                                    end
+                                else
+                                    print("  DEBUG: " .. objType .. " " .. objId .. " (objective " .. objKey .. ") → NO LOCATION FOUND")
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            -- Convert objective zones table to comma-separated string
+            local objZonesList = {}
+            for zone, _ in pairs(objectiveZones) do
+                table.insert(objZonesList, zone)
+            end
+            local objZonesStr = table.getn(objZonesList) > 0 and table.concat(objZonesList, ", ") or endNPCZone
+
+            local summary = questCounter .. ". " .. questName .. " - " .. objZonesStr .. " - " .. endNPCZone
+
+            -- Debug: Show what objectives were found and where
+            print("QUEST DEBUG " .. qid .. " (" .. questName .. "):")
+            if qData["obj"] then
+                for objKey, obj in pairs(qData["obj"]) do
+                    if type(obj) == "table" then
+                        local objIds = {}
+                        for i = 1, 5 do
+                            if obj[i] and type(obj[i]) == "number" then
+                                table.insert(objIds, tostring(obj[i]))
+                            end
+                        end
+                        print("  Objective " .. objKey .. ": [" .. table.concat(objIds, ", ") .. "]")
+                    end
+                end
+            end
+            print("  Start NPC: " .. (startNPCId or "none"))
+            print("  End NPC: " .. (endNPCId or "none"))
+            print("  Found zones: " .. (table.getn(objZonesList) > 0 and table.concat(objZonesList, ", ") or "none"))
+            print("  End zone: " .. endNPCZone)
+            print("  Summary: " .. summary)
+            print("")
+
+            table.insert(chainSummary, summary)
+            questCounter = questCounter + 1
+
+            -- Process chain quests
+            if qData["chain"] then
+                for _, nextQuestId in ipairs(qData["chain"]) do
+                    addChainInfo(nextQuestId)
+                end
+            end
+        end
+    end
+
+    addChainInfo(questid)
+    return chainSummary
+end
+
+-- Helper function to get zone name from map ID
+function pfMap:GetZoneName(mapId)
+    if not pfDB or not pfDB["zones"] then
+        return "Unknown Zone"
+    end
+
+    -- Try to get zone name from localized data first
+    local locale = GetLocale() or "enUS"
+
+    if pfDB["zones"][locale] and pfDB["zones"][locale][mapId] then
+        return pfDB["zones"][locale][mapId]
+    end
+
+    -- Fallback to enUS if current locale not found
+    if locale ~= "enUS" and pfDB["zones"]["enUS"] and pfDB["zones"]["enUS"][mapId] then
+        return pfDB["zones"]["enUS"][mapId]
+    end
+
+    -- Last fallback: look for any available locale
+    for localeKey, localeData in pairs(pfDB["zones"]) do
+        if localeKey ~= "data" and type(localeData) == "table" and localeData[mapId] then
+            return localeData[mapId]
+        end
+    end
+
+    return "Unknown Zone"
 end
 
 function pfMap:ShowClusterTooltip(currentNode, tooltip)
@@ -1295,7 +1551,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         -- Get current mouse position for proximity check
         local isOnMinimap = currentNode:GetParent() ~= WorldMapButton
         if isOnMinimap then
-            clusterRadius = 0.5 -- smaller radius for minimap
+            clusterRadius = 0.3 -- smaller radius for minimap
         end
 
         -- Check if current node is a quest starter/ender
