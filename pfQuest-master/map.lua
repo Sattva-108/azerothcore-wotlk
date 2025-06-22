@@ -1364,29 +1364,8 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     for _ in pairs(uniqueSpawns) do uniqueSpawnCount = uniqueSpawnCount + 1 end
 
     -- Initialize mainSpawnData with current node (will be updated after altCycleData setup)
-    local mainSpawnData = {spawn = currentNode.spawn, node = currentNode.node, isCurrent = true, level = currentNode.level, spawntype = currentNode.spawntype, respawn = currentNode.respawn, spawnid = currentNode.spawnid}
-    local otherSpawns = sortedSpawns
-
-    -- Get current displayed spawn info from mainSpawnData
-    local displaySpawn = mainSpawnData.spawn
-    local displayLevel = mainSpawnData.level or (mainSpawnData.isCurrent and currentNode.level) or UNKNOWN
-    local displayType = mainSpawnData.spawntype or (mainSpawnData.isCurrent and currentNode.spawntype) or UNKNOWN
-    local displayRespawn = mainSpawnData.respawn or (mainSpawnData.isCurrent and currentNode.respawn) or UNKNOWN
-    local displaySpawnId = mainSpawnData.spawnid or (mainSpawnData.isCurrent and currentNode.spawnid) or ""
-
-    -- Set tooltip header with current main spawn (highlight if active in cycle)
-    local cycleIndicator = ""
-    local headerColor = {.3, 1, .8} -- default color
-    if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
-        cycleIndicator = " |cffcccccc(" .. pfMap.cycleIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")|r"
-        -- Highlight active spawn in bright green
-        headerColor = {.2, 1, .2}
-    end
-    tooltip:SetText(displaySpawn .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), headerColor[1], headerColor[2], headerColor[3])
-
-    tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
-    tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
-    tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", displayRespawn, .8,.8,.8, 1,1,1)
+    local mainSpawnData
+    local otherSpawns
 
     -- Show information for each nearby node but avoid duplicate spawn headers
     local currentSpawn = currentNode.spawn
@@ -1601,26 +1580,37 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         for i = 1, pfMap.cycleIndex - 1 do
             table.insert(otherSpawns, pfMap.cycleData.allSpawns[i])
         end
-
-        -- Update display info for cycling
-        displaySpawn = mainSpawnData.spawn
-        displayLevel = mainSpawnData.level or (mainSpawnData.isCurrent and currentNode.level) or UNKNOWN
-        displayType = mainSpawnData.spawntype or (mainSpawnData.isCurrent and currentNode.spawntype) or UNKNOWN
-        displayRespawn = mainSpawnData.respawn or (mainSpawnData.isCurrent and currentNode.respawn) or UNKNOWN
-        displaySpawnId = mainSpawnData.spawnid or (mainSpawnData.isCurrent and currentNode.spawnid) or ""
-
-        -- Update tooltip header for cycling
-        local cycleIndicator = " |cffcccccc(" .. pfMap.cycleIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")|r"
-        tooltip:SetText(displaySpawn .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
-
-        -- Update header lines
-        tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
-        tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
-        tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", displayRespawn, .8,.8,.8, 1,1,1)
     else
-        -- For non-compact format, use sortedSpawns directly
+        -- No cycling, just use the current node and sorted spawns
+        mainSpawnData = {
+            spawn = currentNode.spawn, node = currentNode.node, isCurrent = true,
+            level = currentNode.level, spawntype = currentNode.spawntype,
+            respawn = currentNode.respawn, spawnid = currentNode.spawnid
+        }
         otherSpawns = sortedSpawns
     end
+
+    -- Get current displayed spawn info from mainSpawnData
+    local displaySpawn = mainSpawnData.spawn
+    local displayLevel = mainSpawnData.level or (mainSpawnData.isCurrent and currentNode.level) or UNKNOWN
+    local displayType = mainSpawnData.spawntype or (mainSpawnData.isCurrent and currentNode.spawntype) or UNKNOWN
+    local displayRespawn = mainSpawnData.respawn or (mainSpawnData.isCurrent and currentNode.respawn) or UNKNOWN
+    local displaySpawnId = mainSpawnData.spawnid or (mainSpawnData.isCurrent and currentNode.spawnid) or ""
+
+    -- Set tooltip header
+    local cycleIndicator = ""
+    local headerColor = {.3, 1, .8} -- default color
+    if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
+        cycleIndicator = " |cffcccccc(" .. pfMap.cycleIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")|r"
+        -- Highlight active spawn in bright green
+        headerColor = {.2, 1, .2}
+    end
+    tooltip:SetText(displaySpawn .. cycleIndicator .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), headerColor[1], headerColor[2], headerColor[3])
+
+    -- Update header lines
+    tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
+    tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
+    tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", displayRespawn, .8,.8,.8, 1,1,1)
 
     -- Show main spawn's quests
     local shouldCompact = (estimatedChars > 200) -- Trigger compacting when tooltip exceeds 200 chars
