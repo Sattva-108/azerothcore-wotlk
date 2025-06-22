@@ -1578,6 +1578,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                 spawntype = spawnData.spawntype,
                 respawn = spawnData.respawn,
                 spawnid = spawnData.spawnid,
+                isCurrent = spawnData.isCurrent,
                 isExpanded = (i == pfMap.expandedSpawnIndex)
             })
         end
@@ -1616,7 +1617,11 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         cycleIndicator = " |cffcccccc(" .. pfMap.expandedSpawnIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")|r"
         tooltip:SetText("NPCs" .. cycleIndicator, .6, .6, .6)
     else
-        tooltip:SetText("", .6, .6, .6) -- Empty header for single NPC
+        -- For single NPC, show traditional header
+        tooltip:SetText(displaySpawn .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
+        tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", displayLevel, .8,.8,.8, 1,1,1)
+        tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
+        tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", displayRespawn, .8,.8,.8, 1,1,1)
     end
 
     -- Show all spawns in order with in-place expansion
@@ -1665,20 +1670,23 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                     tooltip:AddLine(" ") -- spacer
                 end
                 
-                -- Show spawn header info
-                if spawnData.isExpanded then
-                    -- Show full header for expanded NPC
-                    local headerColor = {.2, 1, .2} -- bright green for expanded
-                    local spawnName = spawnData.spawn .. (pfQuest_config.showids == "1" and " |cffcccccc("..(spawnData.spawnid or "")..")|r" or "")
-                    tooltip:AddLine(spawnName, headerColor[1], headerColor[2], headerColor[3])
-                    
-                    -- Add metadata lines
-                    tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (spawnData.level or UNKNOWN), .8,.8,.8, 1,1,1)
-                    tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (spawnData.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
-                    tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (spawnData.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
-                else
-                    -- Show compact header for non-expanded NPC
-                    tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
+                -- Show spawn header info (only for cycling mode)
+                if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
+                    if spawnData.isExpanded then
+                        -- Show full header for expanded NPC
+                        -- Main NPC (current node) = teal, other NPCs = green
+                        local headerColor = spawnData.isCurrent and {.3, 1, .8} or {.2, 1, .2}
+                        local spawnName = spawnData.spawn .. (pfQuest_config.showids == "1" and " |cffcccccc("..(spawnData.spawnid or "")..")|r" or "")
+                        tooltip:AddLine(spawnName, headerColor[1], headerColor[2], headerColor[3])
+                        
+                        -- Add metadata lines
+                        tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (spawnData.level or UNKNOWN), .8,.8,.8, 1,1,1)
+                        tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (spawnData.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
+                        tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (spawnData.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
+                    else
+                        -- Show compact header for non-expanded NPC
+                        tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
+                    end
                 end
 
                 for _, nodeInfo in ipairs(nodes) do
