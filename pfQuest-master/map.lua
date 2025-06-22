@@ -204,24 +204,24 @@ pfMap.minimap_sizes = minimap_sizes
 function pfMap:ClearQuestFromCaches(questID)
     -- Удалить квест из pfQuest.questlog чтобы он перестал считаться активным
     pfQuest.questlog[questID] = nil
-    
+
     -- Удалить квест из очереди pfQuest.queue
     for idx, entry in pairs(pfQuest.queue) do
         if entry[2] == questID then
             pfQuest.queue[idx] = nil
         end
     end
-    
+
     -- Принудительно обновить доступные квесты для этого NPC
     pfQuest.updateQuestGivers = true
     pfQuest.updateQuestLog = true
-    
+
     -- Очистить кэш кластеров чтобы принудительно пересканировать этого NPC
     pfMap.clusterCache = nil
-    
+
     -- Принудительно обновить карту сейчас же
     pfMap.queue_update = GetTime()
-    
+
     -- Полностью очистить все кэши чтобы принудительно пересканировать доступные квесты
     pfMap.unifiedcache = {}
     for k,v in pairs(similar_nodes) do
@@ -997,10 +997,10 @@ function pfMap:NodeClick()
             else
                 pfQuest_history[questidToMark] = { time(), UnitLevel("player") }
                 print("Successfully marked quest", questidToMark, "as done")
-                
+
                 -- Очистить квест из всех кэшей и структур данных
                 pfMap:ClearQuestFromCaches(questidToMark)
-                
+
                 shouldDeleteNode = true
             end
         else
@@ -1014,7 +1014,7 @@ function pfMap:NodeClick()
         if shouldDeleteNode and this.node and this.title and this.node[this.title] then
             -- delete node from map
             pfMap:DeleteNode(this.node[this.title].addon, this.title)
-            
+
             -- Force clear the current node to prevent it from reappearing
             this.node[this.title] = nil
             if IsEmpty(this.node) then
@@ -1044,7 +1044,7 @@ function pfMap:NodeClick()
 
             -- force immediate map refresh so current frame data updates
             pfMap.queue_update = GetTime()
-            
+
             -- Сбросить все данные циклинга и скрыть текущий tooltip,
             -- чтобы при следующем OnEnter построилось заново уже без удалённого квеста
             pfMap.cycleData      = nil
@@ -1616,6 +1616,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
         cycleIndicator = " |cffcccccc(" .. pfMap.expandedSpawnIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")|r"
         tooltip:SetText("NPCs" .. cycleIndicator, .6, .6, .6)
+        tooltip:AddLine(" ") -- Spacer after header
     else
         -- For single NPC, show traditional header
         tooltip:SetText(displaySpawn .. (pfQuest_config.showids == "1" and " |cffcccccc("..displaySpawnId..")|r" or ""), .3, 1, .8)
@@ -1669,23 +1670,21 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                 if i > 1 then
                     tooltip:AddLine(" ") -- spacer
                 end
-                
+
                 -- Show spawn header info (only for cycling mode)
                 if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
                     if spawnData.isExpanded then
-                        -- Show full header for expanded NPC
-                        -- Active/expanded NPC = teal, other NPCs = green
-                        local headerColor = {.3, 1, .8} -- Always teal for expanded NPC
-                        local spawnName = spawnData.spawn .. (pfQuest_config.showids == "1" and " |cffcccccc("..(spawnData.spawnid or "")..")|r" or "")
-                        tooltip:AddLine(spawnName, headerColor[1], headerColor[2], headerColor[3])
-                        
+                        -- Show header for expanded NPC
+                        local spawnName = "|cffFFFFFF>|r " .. spawnData.spawn .. (pfQuest_config.showids == "1" and " |cffcccccc("..(spawnData.spawnid or "")..")|r" or "")
+                        tooltip:AddLine(spawnName, 0.3, 1, 0.8) -- Teal name with white arrow
+
                         -- Add metadata lines
                         tooltip:AddDoubleLine(pfQuest_Loc["Level"] .. ":", (spawnData.level or UNKNOWN), .8,.8,.8, 1,1,1)
                         tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (spawnData.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
                         tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (spawnData.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
                     else
-                        -- Show compact header for non-expanded NPC
-                        tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
+                        -- Show compact header for non-expanded NPC with bullet and muted color
+                        tooltip:AddLine("• " .. spawnData.spawn, .4, .8, .4) -- Muted green for compact
                     end
                 end
 
@@ -1794,17 +1793,20 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             text = pfQuest_Loc["Use <Shift>-Click To Mark Quest As Done"]
         end
 
-        -- update tooltip and sizes
-        tooltip:AddLine(text, .6, .6, .6)
+        -- update tooltip and sizes with separator
+        tooltip:AddLine(" ") -- Spacer before help text
+        tooltip:AddLine("• " .. text, .5, .5, .8) -- Light blue with bullet
 
         -- Add right-click cycling help for tooltips with multiple spawns
         if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
-            tooltip:AddLine("Use <Right>-Click To Cycle Through All " .. table.getn(pfMap.cycleData.allSpawns) .. " NPCs", .6, .6, .6)
+            tooltip:AddLine("• Use <Right>-Click To Cycle Through All " .. table.getn(pfMap.cycleData.allSpawns) .. " NPCs", .5, .5, .8)
         end
 
         tooltip:Show()
     end
 
+    -- Scale tooltip down for more compact view
+    tooltip:SetScale(0.9)
     tooltip:Show()
 end
 
