@@ -1525,7 +1525,21 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         -- Initialize simple cycling data ONLY if this is a different cluster
         local isSameCluster = pfMap.currentClusterHash == clusterHash
 
-        if not pfMap.cycleData or not isSameCluster then
+        -- Check if the current spawn already exists in the previously built cycle
+        local spawnInCurrentCycle = false
+        if pfMap.cycleData and pfMap.cycleData.allSpawns then
+            for _, s in ipairs(pfMap.cycleData.allSpawns) do
+                if s.spawn == currentNode.spawn then
+                    spawnInCurrentCycle = true
+                    break
+                end
+            end
+        end
+
+        -- Decide whether to create a new cycle (default) or reuse the existing one
+        local shouldCreateNewCycle = (not pfMap.cycleData) or (not spawnInCurrentCycle and not isSameCluster)
+
+        if shouldCreateNewCycle then
             print("Cycling: Creating NEW cycle data for cluster:", clusterHash)
             pfMap.cycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
             pfMap.cycleIndex = 1
@@ -1553,7 +1567,18 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
             print("Cycling: Initialized with", table.getn(allSpawns), "spawns")
         else
+            -- Re-use current cycle data but add any NEW spawns that were discovered
             print("Cycling: REUSING cycle data for same cluster")
+
+            if pfMap.cycleData and pfMap.cycleData.allSpawns then
+                local existing = {}
+                for _, s in ipairs(pfMap.cycleData.allSpawns) do existing[s.spawn] = true end
+                for _, s in ipairs(allSpawns) do
+                    if not existing[s.spawn] then
+                        table.insert(pfMap.cycleData.allSpawns, s)
+                    end
+                end
+            end
         end
     else
         -- Clear cycling data when no nearby spawns
