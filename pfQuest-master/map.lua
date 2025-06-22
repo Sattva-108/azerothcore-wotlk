@@ -644,7 +644,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
                         end
                     end
                 end
-                
+
                 -- Add quest chain information
                 if meta["questid"] then
                     print("DEBUG: Quest ID found:", meta["questid"])
@@ -1098,40 +1098,8 @@ function pfMap:NodeEnter()
 
     local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
 
-    -- Smart anchor: automatically choose best position (top/bottom and left/right)
-    local mouseX, mouseY = GetCursorPosition()
-    local scale = UIParent:GetEffectiveScale()
-    mouseX = mouseX / scale
-    mouseY = mouseY / scale
-
-    local screenWidth = GetScreenWidth()
-    local screenHeight = GetScreenHeight()
-
-    -- Choose horizontal anchor (left/right based on screen position)
-    local useRightAnchor = mouseX < (screenWidth * 0.7)
-
-    -- Choose vertical anchor (top/bottom based on available space)
-    local useBottomAnchor = mouseY > (screenHeight * 0.5)
-
-    local anchorType
-    if useBottomAnchor then
-        -- Show tooltip below cursor
-        anchorType = useRightAnchor and "ANCHOR_BOTTOMRIGHT" or "ANCHOR_BOTTOMLEFT"
-    else
-        -- Show tooltip above cursor
-        anchorType = useRightAnchor and "ANCHOR_TOPRIGHT" or "ANCHOR_TOPLEFT"
-    end
-
-    -- Apply offset for left-anchored tooltips directly in SetOwner
-    local offsetX = 0
-    print(anchorType)
-    if anchorType == "ANCHOR_TOPRIGHT" then
-        offsetX = -10  -- Move left tooltips 10 pixels further left
-    elseif anchorType == "ANCHOR_BOTTOMRIGHT" then
-        offsetX = 10
-    end
-
-    tooltip:SetOwner(this, anchorType, offsetX, 0)
+    -- Use ANCHOR_CURSOR_LEFT with node - cursor anchors only work with actual frames
+tooltip:SetOwner(this, "ANCHOR_CURSOR_RIGHT", -310, 10)
 
     this.spawn = this.spawn or UNKNOWN
 
@@ -1229,18 +1197,18 @@ pfMap.currentClusterHash = nil
 -- Helper function to count quests in chain after given quest
 function pfMap:CountQuestsInChain(questid)
     print("DEBUG CountQuestsInChain: Starting with questid:", questid)
-    
+
     if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then
         print("DEBUG CountQuestsInChain: Missing questid or pfDB structure")
         return 0
     end
-    
+
     local questData = pfDB["quests"]["data"][questid]
-    if not questData then 
+    if not questData then
         print("DEBUG CountQuestsInChain: No quest data found for", questid)
-        return 0 
+        return 0
     end
-    
+
     print("DEBUG CountQuestsInChain: Quest data found, checking for chain field")
     if questData["chain"] then
         print("DEBUG CountQuestsInChain: Chain field found:", table.getn(questData["chain"]), "items")
@@ -1250,15 +1218,15 @@ function pfMap:CountQuestsInChain(questid)
     else
         print("DEBUG CountQuestsInChain: No chain field found")
     end
-    
+
     local count = 0
     local visited = {}
-    
+
     -- Count follow-up quests recursively
     local function countFollowUps(qid)
         if visited[qid] or count > 20 then return end -- Prevent infinite loops, max 20 quests
         visited[qid] = true
-        
+
         local qData = pfDB["quests"]["data"][qid]
         if qData and qData["chain"] then
             for _, nextQuestId in ipairs(qData["chain"]) do
@@ -1268,7 +1236,7 @@ function pfMap:CountQuestsInChain(questid)
             end
         end
     end
-    
+
     countFollowUps(questid)
     print("DEBUG CountQuestsInChain: Final count:", count)
     return count
