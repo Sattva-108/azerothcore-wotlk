@@ -1522,6 +1522,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             print("Cycling: Creating NEW cycle data for cluster:", clusterHash)
             pfMap.cycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
             pfMap.cycleIndex = 1
+            pfMap.expandedSpawnIndex = 1
             pfMap.currentClusterHash = clusterHash
 
             -- Initialize activeQuestId for the first spawn
@@ -1564,24 +1565,36 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         pfMap.cycleData = nil
     end
 
-    -- Update mainSpawnData based on cycling state
+    -- For in-place expansion, all spawns are treated equally
+    local allSpawnsToShow = {}
     if pfMap.cycleData then
-        mainSpawnData = pfMap.cycleData.allSpawns[pfMap.cycleIndex]
-        -- Create otherSpawns in cycling order: next items first, then previous items
-        otherSpawns = {}
-        local totalSpawns = table.getn(pfMap.cycleData.allSpawns)
-
-        -- Add items after current index (next in cycle)
-        for i = pfMap.cycleIndex + 1, totalSpawns do
-            table.insert(otherSpawns, pfMap.cycleData.allSpawns[i])
+        -- Copy all spawns in original order
+        for i, spawnData in ipairs(pfMap.cycleData.allSpawns) do
+            table.insert(allSpawnsToShow, {
+                spawn = spawnData.spawn,
+                node = spawnData.node,
+                nodes = spawnData.nodes,
+                level = spawnData.level,
+                spawntype = spawnData.spawntype,
+                respawn = spawnData.respawn,
+                spawnid = spawnData.spawnid,
+                isExpanded = (i == pfMap.expandedSpawnIndex)
+            })
         end
-
-        -- Add items before current index (previous in cycle, now at end)
-        for i = 1, pfMap.cycleIndex - 1 do
-            table.insert(otherSpawns, pfMap.cycleData.allSpawns[i])
-        end
+        -- Use first spawn for header info
+        mainSpawnData = pfMap.cycleData.allSpawns[pfMap.expandedSpawnIndex]
+        otherSpawns = {} -- Not used in new logic
     else
-        -- No cycling, just use the current node and sorted spawns
+        -- No cycling, single spawn
+        table.insert(allSpawnsToShow, {
+            spawn = currentNode.spawn,
+            node = currentNode.node,
+            level = currentNode.level,
+            spawntype = currentNode.spawntype,
+            respawn = currentNode.respawn,
+            spawnid = currentNode.spawnid,
+            isExpanded = true
+        })
         mainSpawnData = {
             spawn = currentNode.spawn, node = currentNode.node, isCurrent = true,
             level = currentNode.level, spawntype = currentNode.spawntype,
@@ -1601,7 +1614,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     local cycleIndicator = ""
     local headerColor = {.3, 1, .8} -- default color
     if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
-        cycleIndicator = " |cffcccccc(" .. pfMap.cycleIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")|r"
+        cycleIndicator = " |cffcccccc(" .. pfMap.expandedSpawnIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")|r"
         -- Highlight active spawn in bright green
         headerColor = {.2, 1, .2}
     end
@@ -1612,41 +1625,14 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", displayType, .8,.8,.8, 1,1,1)
     tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", displayRespawn, .8,.8,.8, 1,1,1)
 
-    -- Show main spawn's quests
+    -- Show all spawns in order with in-place expansion
     local shouldCompact = (estimatedChars > 200) -- Trigger compacting when tooltip exceeds 200 chars
-    
-    -- === Show ALL quests for main spawn (объединяем и убираем дубликаты) ===
-    local mainNodes = {}
-
-    -- из массива nodes (если он есть)
-    if mainSpawnData.nodes and type(mainSpawnData.nodes) == "table" then
-        for _, n in ipairs(mainSpawnData.nodes) do
-            table.insert(mainNodes, n)
-        end
-    end
-
-    -- из node-таблицы
-    if mainSpawnData.node and type(mainSpawnData.node) == "table" then
-        for _title, meta in pairs(mainSpawnData.node) do
-            local dup = false
-            for _, n in ipairs(mainNodes) do
-                if n.meta == meta then dup = true break end
-            end
-            if not dup then table.insert(mainNodes, { meta = meta }) end
-        end
-    end
-
-    -- теперь показываем
-    for _, n in ipairs(mainNodes) do
-        pfMap:ShowTooltip(n.meta or n, tooltip, shouldCompact)
-    end
-
-    -- Show other spawns in compact format
-    local maxSpawns = 15 -- Show max 15 different spawns with compact format
+    local maxSpawns = 15 -- Show max 15 different spawns
     local spawnCount = 0
     local remainingCounts = {starters = 0, enders = 0, vendors = 0, others = 0}
 
-    for i, spawnData in ipairs(otherSpawns or {}) do
+    -- Show all spawns in place
+    for i, spawnData in ipairs(allSpawnsToShow) do
         if spawnCount < maxSpawns then
             -- Build node list first and deduplicate
             local nodes = {}
@@ -1680,19 +1666,28 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             end
 
             if hasDisplay then
-                tooltip:AddLine(" ") -- spacer
-                tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
+                -- Add spacer before each spawn (except if it's the first and header already shows it)
+                if i > 1 or not spawnData.isExpanded then
+                    tooltip:AddLine(" ") -- spacer
+                end
+                
+                -- Show spawn name unless it's the expanded one (shown in header)
+                if not spawnData.isExpanded then
+                    tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
+                end
 
                 for _, nodeInfo in ipairs(nodes) do
                     local meta = nodeInfo.meta or nodeInfo
                     if meta.quest then
-                        if useCompactFormat then
+                        -- Show expanded details for expanded spawn, compact for others
+                        if spawnData.isExpanded then
+                            pfMap:ShowTooltip(meta, tooltip, shouldCompact)
+                        else
                             local symbol = pfMap:GetQuestSymbol(meta.quest)
                             tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
-                        else
-                            pfMap:ShowTooltip(meta, tooltip, shouldCompact)
                         end
                     else
+                        -- Always show full details for non-quest items
                         pfMap:ShowTooltip(meta, tooltip, shouldCompact)
                     end
                 end
@@ -1718,6 +1713,53 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     if spawnCount >= maxSpawns and totalHidden > 0 then
         tooltip:AddLine(" ") -- spacer
         tooltip:AddLine("|cffaaaaaa... +" .. totalHidden .. " more NPCs hidden|r")
+    end
+
+    -- Fallback: Show otherSpawns if cycling is not active and we have sorted spawns
+    if not pfMap.cycleData and otherSpawns and table.getn(otherSpawns) > 0 then
+        for i, spawnData in ipairs(otherSpawns) do
+            if spawnCount < maxSpawns then
+                -- Build node list first and deduplicate
+                local nodes = {}
+
+                if spawnData.nodes and type(spawnData.nodes) == "table" then
+                    for _, nodeInfo in ipairs(spawnData.nodes) do
+                        table.insert(nodes, nodeInfo)
+                    end
+                end
+
+                -- Determine if there is anything meaningful to display
+                local hasDisplay = false
+                for _, nodeInfo in ipairs(nodes) do
+                    local m = nodeInfo.meta or nodeInfo
+                    if m.quest or m.item or m.sellcount or m.droprate then
+                        hasDisplay = true
+                        break
+                    end
+                end
+
+                if hasDisplay then
+                    tooltip:AddLine(" ") -- spacer
+                    tooltip:AddLine("|cff00ff00" .. spawnData.spawn .. "|r", .8, 1, .8)
+
+                    for _, nodeInfo in ipairs(nodes) do
+                        local meta = nodeInfo.meta or nodeInfo
+                        if meta.quest then
+                            if useCompactFormat then
+                                local symbol = pfMap:GetQuestSymbol(meta.quest)
+                                tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
+                            else
+                                pfMap:ShowTooltip(meta, tooltip, shouldCompact)
+                            end
+                        else
+                            pfMap:ShowTooltip(meta, tooltip, shouldCompact)
+                        end
+                    end
+
+                    spawnCount = spawnCount + 1
+                end
+            end
+        end
     end
 
     -- Set up highlighting for all related quests
@@ -2193,6 +2235,7 @@ pfMap:SetScript("OnEvent", function()
         -- Clear cycling data and cache when changing maps
         pfMap.cycleData = nil
         pfMap.cycleIndex = 1
+        pfMap.expandedSpawnIndex = 1
         pfMap.rightPressed = false
         pfMap.activeQuestId = nil
         pfMap.activeSpawnName = nil
@@ -2250,15 +2293,15 @@ pfMap:SetScript("OnUpdate", function()
         if isRightDown and not pfMap.rightPressed then
             pfMap.rightPressed = true
 
-            -- Cycle to next spawn
+            -- Cycle to next spawn (expand in place)
             if pfMap.cycleData.allSpawns and table.getn(pfMap.cycleData.allSpawns) > 1 then
-                pfMap.cycleIndex = pfMap.cycleIndex + 1
-                if pfMap.cycleIndex > table.getn(pfMap.cycleData.allSpawns) then
-                    pfMap.cycleIndex = 1
+                pfMap.expandedSpawnIndex = pfMap.expandedSpawnIndex + 1
+                if pfMap.expandedSpawnIndex > table.getn(pfMap.cycleData.allSpawns) then
+                    pfMap.expandedSpawnIndex = 1
                 end
 
-                local activeSpawn = pfMap.cycleData.allSpawns[pfMap.cycleIndex]
-                print("Cycling: Switched to", activeSpawn.spawn, "(" .. pfMap.cycleIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")")
+                local activeSpawn = pfMap.cycleData.allSpawns[pfMap.expandedSpawnIndex]
+                print("Cycling: Expanded", activeSpawn.spawn, "(" .. pfMap.expandedSpawnIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")")
 
                 -- Store active spawn's questid for Mark as Done functionality
                 pfMap.activeQuestId = nil
