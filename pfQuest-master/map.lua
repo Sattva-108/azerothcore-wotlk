@@ -644,6 +644,22 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
                         end
                     end
                 end
+                
+                -- Add quest chain information
+                if meta["questid"] then
+                    print("DEBUG: Quest ID found:", meta["questid"])
+                    local chainCount = pfMap:CountQuestsInChain(meta["questid"])
+                    print("DEBUG: Chain count:", chainCount)
+                    if chainCount > 0 then
+                        local chainText = "|cffaaaaaa- |r" .. "Chain: +" .. chainCount .. " quests"
+                        print("DEBUG: Adding chain text:", chainText)
+                        tooltip:AddLine(chainText, .6, .8, 1)  -- Light blue color for chain info
+                    else
+                        print("DEBUG: No chain quests found")
+                    end
+                else
+                    print("DEBUG: No questid in meta")
+                end
             end
         end
     else
@@ -1209,6 +1225,54 @@ pfMap.clusterCache = nil
 
 -- Track current cluster coordinates to preserve cycle data within same cluster
 pfMap.currentClusterHash = nil
+
+-- Helper function to count quests in chain after given quest
+function pfMap:CountQuestsInChain(questid)
+    print("DEBUG CountQuestsInChain: Starting with questid:", questid)
+    
+    if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then
+        print("DEBUG CountQuestsInChain: Missing questid or pfDB structure")
+        return 0
+    end
+    
+    local questData = pfDB["quests"]["data"][questid]
+    if not questData then 
+        print("DEBUG CountQuestsInChain: No quest data found for", questid)
+        return 0 
+    end
+    
+    print("DEBUG CountQuestsInChain: Quest data found, checking for chain field")
+    if questData["chain"] then
+        print("DEBUG CountQuestsInChain: Chain field found:", table.getn(questData["chain"]), "items")
+        for i, nextId in ipairs(questData["chain"]) do
+            print("DEBUG CountQuestsInChain: Chain item", i, ":", nextId)
+        end
+    else
+        print("DEBUG CountQuestsInChain: No chain field found")
+    end
+    
+    local count = 0
+    local visited = {}
+    
+    -- Count follow-up quests recursively
+    local function countFollowUps(qid)
+        if visited[qid] or count > 20 then return end -- Prevent infinite loops, max 20 quests
+        visited[qid] = true
+        
+        local qData = pfDB["quests"]["data"][qid]
+        if qData and qData["chain"] then
+            for _, nextQuestId in ipairs(qData["chain"]) do
+                count = count + 1
+                print("DEBUG CountQuestsInChain: Found next quest", nextQuestId, "total count now:", count)
+                countFollowUps(nextQuestId)
+            end
+        end
+    end
+    
+    countFollowUps(questid)
+    print("DEBUG CountQuestsInChain: Final count:", count)
+    return count
+end
 
 function pfMap:ShowClusterTooltip(currentNode, tooltip)
     -- Ensure we start with a clean tooltip to avoid duplicated lines
