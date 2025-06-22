@@ -1674,8 +1674,8 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                 if pfMap.cycleData and table.getn(pfMap.cycleData.allSpawns) > 1 then
                     if spawnData.isExpanded then
                         -- Show full header for expanded NPC
-                        -- Main NPC (current node) = teal, other NPCs = green
-                        local headerColor = spawnData.isCurrent and {.3, 1, .8} or {.2, 1, .2}
+                        -- Active/expanded NPC = teal, other NPCs = green
+                        local headerColor = {.3, 1, .8} -- Always teal for expanded NPC
                         local spawnName = spawnData.spawn .. (pfQuest_config.showids == "1" and " |cffcccccc("..(spawnData.spawnid or "")..")|r" or "")
                         tooltip:AddLine(spawnName, headerColor[1], headerColor[2], headerColor[3])
                         
