@@ -664,7 +664,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
                         if IsAltKeyDown() then
                             local chainSummary = pfMap:GetChainSummary(meta["questid"])
                             if table.getn(chainSummary) > 0 then
-                                tooltip:AddLine("-------------------", .5, .5, .5)
+                                tooltip:AddLine("", .5, .5, .5)  -- Empty line for separator spacing
                                 for _, summaryLine in ipairs(chainSummary) do
                                     tooltip:AddLine("|cffaaaaaa" .. summaryLine .. "|r", .7, .7, .7)
                                 end
@@ -2057,7 +2057,12 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                             pfMap:ShowTooltip(meta, tooltip, shouldCompact)
                         else
                             local symbol = pfMap:GetQuestSymbol(meta.quest)
-                            tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
+                            -- Dim non-active quests by 30%
+                            local r, g, b = 1, 1, 0
+                            if pfMap.activeQuestId and meta.questid and meta.questid ~= pfMap.activeQuestId then
+                                r, g, b = r * 0.7, g * 0.7, b * 0.7
+                            end
+                            tooltip:AddLine(symbol .. meta.quest, r, g, b)
                         end
                     else
                         -- Always show full details for non-quest items
@@ -2120,7 +2125,12 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                         if meta.quest then
                             if useCompactFormat then
                                 local symbol = pfMap:GetQuestSymbol(meta.quest)
-                                tooltip:AddLine(symbol .. meta.quest, 1, 1, 0)
+                                -- Dim non-active quests by 30%
+                                local r, g, b = 1, 1, 0
+                                if pfMap.activeQuestId and meta.questid and meta.questid ~= pfMap.activeQuestId then
+                                    r, g, b = r * 0.7, g * 0.7, b * 0.7
+                                end
+                                tooltip:AddLine(symbol .. meta.quest, r, g, b)
                             else
                                 pfMap:ShowTooltip(meta, tooltip, shouldCompact)
                             end
