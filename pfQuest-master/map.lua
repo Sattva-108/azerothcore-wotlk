@@ -1594,53 +1594,65 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         end
     end
 
-    -- Function that performs radius-based search (no chaining) from seed node
+    -- Function that performs BFS connected search and returns results plus hash
     local function buildCluster()
         print("Cluster: Fresh scan for", currentNode.spawn)
-        local results, qTitles = {}, {}
-        local idsSet, namesSet = {}, {}
+        local results = {}
+        local qTitles = {}
+        local visitedSpawn = {}
 
-        -- seed coords
+        local function addNode(meta, title, dist)
+            local spawnName = meta.spawn or title
+            results[#results+1] = {
+                spawn    = spawnName,
+                level    = meta.level,
+                spawntype= meta.spawntype,
+                respawn  = meta.respawn,
+                spawnid  = meta.spawnid,
+                distance = dist or 0,
+                title    = title,
+                node     = {[title]=meta}
+            }
+            if meta.quest then qTitles[meta.quest] = true end
+        end
+
+        -- seed queue with current node coords
         local seedX, seedY
         for t,m in pairs(currentNode.node) do if m.x and m.y then seedX,seedY=tonumber(m.x),tonumber(m.y); break end end
         if not seedX then return results,qTitles,"" end
 
-        local function tryAdd(meta, title)
-            local spawnName = meta.spawn or title
-            local spawnId = meta.spawnid or 0
-            if idsSet[spawnId] or namesSet[spawnName] then return end
-            idsSet[spawnId] = true; namesSet[spawnName] = true
+        local queue={{x=seedX,y=seedY,node=currentNode}}
+        while #queue>0 do
+            local cur=table.remove(queue,1)
+            local bx,by=cur.x,cur.y
 
-            local dist = math.sqrt((tonumber(meta.x)-seedX)^2 + (tonumber(meta.y)-seedY)^2)
-            if dist<=clusterRadius then
-                table.insert(results, {
-                    spawn=spawnName, level=meta.level, spawntype=meta.spawntype, respawn=meta.respawn,
-                    spawnid=spawnId, distance=dist, title=title, node={[title]=meta}
-                })
-                if meta.quest then qTitles[meta.quest]=true end
-            else
-                idsSet[spawnId]=nil; namesSet[spawnName]=nil -- not included
-            end
-        end
-
-        -- scan all questgivers in map and test distance to seed
-        for addonName,addonData in pairs(pfMap.nodes) do
-            if addonData[map] then
-                for coords,coordNodes in pairs(addonData[map]) do
-                    for title,meta in pairs(coordNodes) do
-                        if meta.x and meta.y and IsQuestGiver(meta) then
-                            tryAdd(meta,title)
+            for addonName,addonData in pairs(pfMap.nodes) do
+                if addonData[map] then
+                    for coords,coordNodes in pairs(addonData[map]) do
+                        for title,meta in pairs(coordNodes) do
+                            if meta.x and meta.y then
+                                local sx,sy=tonumber(meta.x),tonumber(meta.y)
+                                local dist=math.sqrt((sx-bx)^2+(sy-by)^2)
+                                if dist<=clusterRadius then
+                                    local spawnName=meta.spawn or title
+                                    local isQuestGiver=meta.QTYPE and (meta.QTYPE=="NPC_START" or meta.QTYPE=="NPC_END" or meta.QTYPE=="OBJECT_START" or meta.QTYPE=="OBJECT_END")
+                                    if isQuestGiver and not visitedSpawn[spawnName] then
+                                        visitedSpawn[spawnName]=true
+                                        addNode(meta,title,dist)
+                                        queue[#queue+1]={x=sx,y=sy,node=coordNodes}
+                                    end
+                                end
+                            end
                         end
                     end
                 end
             end
         end
 
-        -- hash
-        local keys = {}
-        for id,_ in pairs(idsSet) do table.insert(keys, tostring(id)) end
-        table.sort(keys)
-        local hash = table.concat(keys, "|")
+        local names={}
+        for n,_ in pairs(visitedSpawn) do names[#names+1]=n end
+        table.sort(names)
+        local hash=table.concat(names,"|")
         return results,qTitles,hash
     end
 
@@ -1857,45 +1869,32 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         end
 
         -- Create cluster hash based on all spawns in cluster (not just current node)
-        local clusterIDs = {}
-        local function addId(data)
-            if data.spawnid then
-                table.insert(clusterIDs, tostring(data.spawnid))
-            else
-                table.insert(clusterIDs, data.spawn) -- fallback
-            end
-        end
-
-        -- current node
-        for _t,_m in pairs(currentNode.node) do addId(_m); break end
-
+        local clusterSpawns = {}
+        table.insert(clusterSpawns, currentNode.spawn)
         for _, spawnData in ipairs(sortedSpawns) do
-            if spawnData.nodes and spawnData.nodes[1] and spawnData.nodes[1].meta then
-                addId(spawnData.nodes[1].meta)
-            end
+            table.insert(clusterSpawns, spawnData.spawn)
         end
-        table.sort(clusterIDs)
-        local clusterHash = table.concat(clusterIDs, "|")
+        table.sort(clusterSpawns) -- Sort to ensure consistent hash
+        local clusterHash = table.concat(clusterSpawns, "|")
 
-        -- Check if current spawn is already in existing cycle
+        -- Initialize simple cycling data ONLY if this is a different cluster
+        local isSameCluster = pfMap.currentClusterHash == clusterHash
+
+        -- Check if the current spawn already exists in the previously built cycle
         local spawnInCurrentCycle = false
-        local currentSpawnId = nil
-        for _t, _m in pairs(currentNode.node) do
-            if _m.spawnid then currentSpawnId = _m.spawnid; break end
-        end
-        
         if pfMap.cycleData and pfMap.cycleData.allSpawns then
-            for idx, s in ipairs(pfMap.cycleData.allSpawns) do
-                if s.spawn == currentNode.spawn and (s.spawnid or 0) == (currentSpawnId or 0) then
+            for _, s in ipairs(pfMap.cycleData.allSpawns) do
+                if s.spawn == currentNode.spawn then
                     spawnInCurrentCycle = true
                     break
                 end
             end
         end
 
-        local needNewCycle = (not spawnInCurrentCycle)
+        -- Decide whether to create a new cycle (default) or reuse the existing one
+        local shouldCreateNewCycle = (not pfMap.cycleData) or (not spawnInCurrentCycle and not isSameCluster)
 
-        if needNewCycle then
+        if shouldCreateNewCycle then
             print("Cycling: Creating NEW cycle data for cluster:", clusterHash)
             pfMap.cycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
             pfMap.cycleIndex = 1
@@ -1907,12 +1906,15 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             pfMap.activeSpawnName = nil
             if allSpawns[1] then
                 pfMap.activeSpawnName = allSpawns[1].spawn
+                -- Try direct questid field first (new improved structure)
                 if allSpawns[1].questid then
                     pfMap.activeQuestId = allSpawns[1].questid
+                    print("Cycling: Initial questid", pfMap.activeQuestId, "for", allSpawns[1].spawn)
                 elseif allSpawns[1].node then
                     for title, meta in pairs(allSpawns[1].node) do
                         if meta.questid then
                             pfMap.activeQuestId = meta.questid
+                            print("Cycling: Initial questid", pfMap.activeQuestId, "for", allSpawns[1].spawn)
                             break
                         end
                     end
@@ -1920,6 +1922,19 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             end
 
             print("Cycling: Initialized with", table.getn(allSpawns), "spawns")
+        else
+            -- Re-use current cycle data but add any NEW spawns that were discovered
+            print("Cycling: REUSING cycle data for same cluster")
+
+            if pfMap.cycleData and pfMap.cycleData.allSpawns then
+                local existing = {}
+                for _, s in ipairs(pfMap.cycleData.allSpawns) do existing[s.spawn] = true end
+                for _, s in ipairs(allSpawns) do
+                    if not existing[s.spawn] then
+                        table.insert(pfMap.cycleData.allSpawns, s)
+                    end
+                end
+            end
         end
     else
         -- Clear cycling data when no nearby spawns
@@ -2227,15 +2242,16 @@ function pfMap:NodeLeave()
         end
 
         if not stillActive then
-            -- Node completely left – сбрасываем только визуальное состояние; сохранённый cycleData
-            -- остаётся, чтобы при повторном наведении на тот же кластер индексы продолжали счётчик.
+            --print("NodeLeave: Clearing cycle data after timeout")
+            pfMap.cycleData = nil
             pfMap.cycleIndex = 1
             pfMap.rightPressed = false
             pfMap.activeQuestId = nil
             pfMap.activeSpawnName = nil
             pfMap.clusterCache = nil
-             
-             -- Remove this timer
+            pfMap.currentClusterHash = nil
+
+            -- Remove this timer
             if pfMap.clearTimer then
                 pfMap.clearTimer:SetScript("OnUpdate", nil)
                 pfMap.clearTimer = nil
