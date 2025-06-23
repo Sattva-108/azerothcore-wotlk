@@ -200,6 +200,9 @@ pfMap.minimap_indoor = minimap_indoor
 pfMap.minimap_zoom = minimap_zoom
 pfMap.minimap_sizes = minimap_sizes
 
+-- INSERT: Track the node that owns the currently displayed tooltip so we can fully rebuild it when Alt is pressed.
+pfMap.tooltipCurrentNode = nil
+
 -- Очистить квест из всех кэшей и структур данных
 function pfMap:ClearQuestFromCaches(questID)
     -- Удалить квест из pfQuest.questlog чтобы он перестал считаться активным
@@ -1111,6 +1114,9 @@ function pfMap:NodeEnter()
 
     -- Use ANCHOR_CURSOR_LEFT with node - cursor anchors only work with actual frames
 tooltip:SetOwner(this, "ANCHOR_CURSOR_RIGHT", 10, 5)
+
+    -- Remember the node that is currently showing a tooltip
+    pfMap.tooltipCurrentNode = this
 
     this.spawn = this.spawn or UNKNOWN
 
@@ -2200,6 +2206,8 @@ function pfMap:NodeLeave()
     pfMap.clusterHighlights = nil -- Clear cluster highlights
     pfMap.tooltipAnchor = nil -- Clear tooltip anchor
     pfMap.tooltipMeta = nil -- Clear tooltip meta for Alt
+    pfMap.tooltipCurrentNode = nil -- Clear stored node reference
+    pfMap.tooltipMetaList = nil -- Clear any stored meta list
     -- Clear highlight flags
 
     -- Use a timer to delay clearing - gives time for mouse to move to nearby nodes
@@ -2683,17 +2691,24 @@ local hlstate, shiftstate, transition, hidecluster, fps, resetmap
 pfMap:SetScript("OnUpdate", function()
     -- Ultra lightweight Alt check
     local alt = IsAltKeyDown()
-    if pfMap.lastAlt ~= alt and pfMap.tooltipMeta then
+    if pfMap.lastAlt ~= alt then
         pfMap.lastAlt = alt
-        -- Check both tooltips
-        if GameTooltip:IsShown() then
-            GameTooltip:ClearLines()
-            pfMap:ShowTooltip(pfMap.tooltipMeta, GameTooltip)
-            GameTooltip:Show()
-        elseif WorldMapTooltip and WorldMapTooltip:IsShown() then
-            WorldMapTooltip:ClearLines()
-            pfMap:ShowTooltip(pfMap.tooltipMeta, WorldMapTooltip)
-            WorldMapTooltip:Show()
+
+        local function rebuildTooltip(tt)
+            if pfMap.tooltipCurrentNode and tt and tt:IsShown() then
+                tt:ClearLines()
+                pfMap:ShowClusterTooltip(pfMap.tooltipCurrentNode, tt)
+                tt:Show()
+            elseif pfMap.tooltipMeta and tt and tt:IsShown() then
+                tt:ClearLines()
+                pfMap:ShowTooltip(pfMap.tooltipMeta, tt)
+                tt:Show()
+            end
+        end
+
+        rebuildTooltip(GameTooltip)
+        if WorldMapTooltip then
+            rebuildTooltip(WorldMapTooltip)
         end
     end
     
