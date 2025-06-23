@@ -1289,31 +1289,73 @@ function pfMap:GetChainSummary(questid)
             local objectiveZones = {}
             local endNPCZone = "Unknown"
 
-            -- Get end NPC zone - try different structures
+            -- Get end NPC/Object zone - try different structures
             local endNPCId = nil
             if qData["end"] then
                 -- Try different possible structures
                 if qData["end"]["U"] and type(qData["end"]["U"]) == "table" and qData["end"]["U"][1] then
                     endNPCId = qData["end"]["U"][1]
+                elseif qData["end"]["O"] and type(qData["end"]["O"]) == "table" and qData["end"]["O"][1] then
+                    endNPCId = qData["end"]["O"][1]
                 elseif qData["end"][1] then
                     endNPCId = qData["end"][1]
                 end
 
-                if endNPCId and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][endNPCId] then
-                    local npcData = pfDB["units"]["data"][endNPCId]
-                    -- Try different possible structures for NPC data
+                if endNPCId then
                     local mapId = nil
-                    if npcData then
-                        if npcData[1] and npcData[1][1] then
-                            mapId = npcData[1][1]
-                        elseif npcData["coords"] and npcData["coords"][1] and npcData["coords"][1][3] then
-                            mapId = npcData["coords"][1][3]
+                    local endType = "unknown"
+                    
+                    -- Check what type of end this should be based on quest data
+                    local isObjectEnd = qData["end"]["O"] ~= nil
+                    
+                    if isObjectEnd then
+                        -- For Object ends, try Object first
+                        if pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][endNPCId] then
+                            local objectData = pfDB["objects"]["data"][endNPCId]
+                            endType = "Object"
+                            if objectData and objectData["coords"] and objectData["coords"][1] and objectData["coords"][1][3] then
+                                mapId = objectData["coords"][1][3]
+                            end
+                        end
+                        
+                        -- Fallback to NPC if Object not found
+                        if not mapId and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][endNPCId] then
+                            local npcData = pfDB["units"]["data"][endNPCId]
+                            endType = "NPC (fallback)"
+                            if npcData then
+                                if npcData[1] and npcData[1][1] then
+                                    mapId = npcData[1][1]
+                                elseif npcData["coords"] and npcData["coords"][1] and npcData["coords"][1][3] then
+                                    mapId = npcData["coords"][1][3]
+                                end
+                            end
+                        end
+                    else
+                        -- For NPC ends, try NPC first
+                        if pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][endNPCId] then
+                            local npcData = pfDB["units"]["data"][endNPCId]
+                            endType = "NPC"
+                            if npcData then
+                                if npcData[1] and npcData[1][1] then
+                                    mapId = npcData[1][1]
+                                elseif npcData["coords"] and npcData["coords"][1] and npcData["coords"][1][3] then
+                                    mapId = npcData["coords"][1][3]
+                                end
+                            end
+                        end
+                        
+                        -- Fallback to Object if NPC not found
+                        if not mapId and pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][endNPCId] then
+                            local objectData = pfDB["objects"]["data"][endNPCId]
+                            endType = "Object (fallback)"
+                            if objectData and objectData["coords"] and objectData["coords"][1] and objectData["coords"][1][3] then
+                                mapId = objectData["coords"][1][3]
+                            end
                         end
                     end
-
+                    
                     if mapId then
                         local zoneName = pfMap:GetZoneName(mapId)
-                        print("  DEBUG: End NPC " .. endNPCId .. " mapId " .. mapId .. " → " .. zoneName)
                         if zoneName and zoneName ~= "Unknown Zone" then
                             endNPCZone = zoneName
                         end
@@ -1321,37 +1363,7 @@ function pfMap:GetChainSummary(questid)
                 end
             end
 
-            -- Get objective zones from quest start NPC
-            local startNPCId = nil
-            if qData["start"] then
-                -- Try different possible structures
-                if qData["start"]["U"] and type(qData["start"]["U"]) == "table" and qData["start"]["U"][1] then
-                    startNPCId = qData["start"]["U"][1]
-                elseif qData["start"][1] then
-                    startNPCId = qData["start"][1]
-                end
-
-                if startNPCId and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][startNPCId] then
-                    local startNpcData = pfDB["units"]["data"][startNPCId]
-                    -- Try different possible structures for NPC data
-                    local mapId = nil
-                    if startNpcData then
-                        if startNpcData[1] and startNpcData[1][1] then
-                            mapId = startNpcData[1][1]
-                        elseif startNpcData["coords"] and startNpcData["coords"][1] and startNpcData["coords"][1][3] then
-                            mapId = startNpcData["coords"][1][3]
-                        end
-                    end
-
-                    if mapId then
-                        local zoneName = pfMap:GetZoneName(mapId)
-                        print("  DEBUG: Start NPC " .. startNPCId .. " mapId " .. mapId .. " → " .. zoneName)
-                        if zoneName and zoneName ~= "Unknown Zone" and not objectiveZones[zoneName] then
-                            objectiveZones[zoneName] = true
-                        end
-                    end
-                end
-            end
+            -- Note: Start NPC zone is not added to objectives - only actual objective locations matter
 
             -- Get objective zones from quest objectives
             if qData["obj"] then
@@ -1406,16 +1418,49 @@ function pfMap:GetChainSummary(questid)
                                         end
                                     end
                                 end
+                                
+                                -- 4. Item Required lookup (for "IR" objectives) 
+                                if not mapId and objKey == "IR" then
+                                    objType = "ItemReq"
+                                    -- Find targets where this item should be used (following database.lua logic)
+                                    if pfDB["quests-itemreq"] and pfDB["quests-itemreq"]["data"] and pfDB["quests-itemreq"]["data"][objId] then
+                                        local itemreqData = pfDB["quests-itemreq"]["data"][objId]
+                                        -- Find coordinates of TARGET entities, not the item itself
+                                        for targetId, spellId in pairs(itemreqData) do
+                                            local realId = tonumber(targetId) or 0
+                                            if realId > 0 then
+                                                -- Positive ID = NPC target
+                                                if pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][realId] then
+                                                    local npcData = pfDB["units"]["data"][realId]
+                                                    if npcData and npcData["coords"] and npcData["coords"][1] and npcData["coords"][1][3] then
+                                                        mapId = npcData["coords"][1][3]
+                                                        objType = "ItemReq→UseOnNPC(" .. realId .. ")"
+                                                        break
+                                                    end
+                                                end
+                                            elseif realId < 0 then
+                                                -- Negative ID = GameObject target
+                                                local goId = math.abs(realId)
+                                                if pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][goId] then
+                                                    local objectData = pfDB["objects"]["data"][goId]
+                                                    if objectData and objectData["coords"] and objectData["coords"][1] and objectData["coords"][1][3] then
+                                                        mapId = objectData["coords"][1][3]
+                                                        objType = "ItemReq→UseOnObject(" .. goId .. ")"
+                                                        break
+                                                    end
+                                                end
+                                            end
+                                        end
+                                    end
+                                    -- Note: No fallback to item drop locations for ItemReq - they need specific targets
+                                end
 
                                 -- Add zone if found
                                 if mapId then
                                     local zoneName = pfMap:GetZoneName(mapId)
-                                    print("  DEBUG: " .. objType .. " " .. objId .. " (objective " .. objKey .. ") → mapId " .. mapId .. " → " .. zoneName)
                                     if zoneName and zoneName ~= "Unknown Zone" and not objectiveZones[zoneName] then
                                         objectiveZones[zoneName] = true
                                     end
-                                else
-                                    print("  DEBUG: " .. objType .. " " .. objId .. " (objective " .. objKey .. ") → NO LOCATION FOUND")
                                 end
                             end
                         end
