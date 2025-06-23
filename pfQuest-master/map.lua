@@ -1130,6 +1130,8 @@ tooltip:SetOwner(this, "ANCHOR_CURSOR_RIGHT", 10, 5)
     end
 
     pfMap.highlight = pfQuest_config["mouseover"] == "1" and this.title
+
+    -- Always reset cycle index when starting a fresh hover
 end
 
 -- Helper function to get quest symbol and status
@@ -1573,83 +1575,71 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         estimatedChars = self:addObjectiveChars(meta.questid, estimatedChars)
     end
 
-    -- Use cluster cache or scan nearby nodes
+    -- Use cluster cache or perform fresh connected-component scan
     local nearbyNodes, questTitles
-    local cacheKey = currentNode.spawn .. "_" .. tostring(currentNode.x) .. "_" .. tostring(currentNode.y)
+    local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
 
-    if pfMap.clusterCache and pfMap.clusterCache.key == cacheKey then
-        -- Use cached data to prevent tooltip flickering
-        nearbyNodes = pfMap.clusterCache.nearbyNodes
-        questTitles = pfMap.clusterCache.questTitles
-        -- Using cached data - no debug needed
-    else
-        -- Perform fresh scan and cache results
+    local clusterRadius = currentNode:GetParent() ~= WorldMapButton and 0.3 or 1.3
+
+    -- Helper to check if a meta represents a quest-giver (start or end, NPC or object)
+    local function IsQuestGiver(meta)
+        return meta and meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END")
+    end
+
+    local isCurrentNodeQuestGiver = false
+    for __t, __m in pairs(currentNode.node) do
+        if IsQuestGiver(__m) then
+            isCurrentNodeQuestGiver = true
+            break
+        end
+    end
+
+    -- Function that performs BFS connected search and returns results plus hash
+    local function buildCluster()
         print("Cluster: Fresh scan for", currentNode.spawn)
-        local map = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
-        local clusterRadius = 1.3 -- Map coordinate units for clustering
-        nearbyNodes = {}
-        questTitles = {} -- Track quest titles for highlighting
+        local results = {}
+        local qTitles = {}
+        local visitedSpawn = {}
 
-        -- Get current node coordinates from its data
-        local currentX, currentY = nil, nil
-        if not currentNode.node then
-            print("ERROR: currentNode.node is nil in ShowClusterTooltip")
-            return
-        end
-        for title, meta in pairs(currentNode.node) do
-            if meta.x and meta.y then
-                currentX, currentY = tonumber(meta.x), tonumber(meta.y)
-                break -- Use first found coordinates
-            end
-        end
-
-        -- Get current mouse position for proximity check
-        local isOnMinimap = currentNode:GetParent() ~= WorldMapButton
-        if isOnMinimap then
-            clusterRadius = 0.3 -- smaller radius for minimap
+        local function addNode(meta, title, dist)
+            local spawnName = meta.spawn or title
+            results[#results+1] = {
+                spawn    = spawnName,
+                level    = meta.level,
+                spawntype= meta.spawntype,
+                respawn  = meta.respawn,
+                spawnid  = meta.spawnid,
+                distance = dist or 0,
+                title    = title,
+                node     = {[title]=meta}
+            }
+            if meta.quest then qTitles[meta.quest] = true end
         end
 
-        -- Check if current node is a quest starter/ender
-        local isCurrentNodeQuestGiver = false
-        for title, meta in pairs(currentNode.node) do
-            if meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or
-                meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END") then
-                isCurrentNodeQuestGiver = true
-                break
-            end
-        end
+        -- seed queue with current node coords
+        local seedX, seedY
+        for t,m in pairs(currentNode.node) do if m.x and m.y then seedX,seedY=tonumber(m.x),tonumber(m.y); break end end
+        if not seedX then return results,qTitles,"" end
 
-        -- Only do clustering if current node is a quest giver
-        if isCurrentNodeQuestGiver and pfMap.nodes and currentX and currentY then
-            for addonName, addonData in pairs(pfMap.nodes) do
+        local queue={{x=seedX,y=seedY,node=currentNode}}
+        while #queue>0 do
+            local cur=table.remove(queue,1)
+            local bx,by=cur.x,cur.y
+
+            for addonName,addonData in pairs(pfMap.nodes) do
                 if addonData[map] then
-                    for coords, coordNodes in pairs(addonData[map]) do
-                        for title, meta in pairs(coordNodes) do
+                    for coords,coordNodes in pairs(addonData[map]) do
+                        for title,meta in pairs(coordNodes) do
                             if meta.x and meta.y then
-                                local nodeX, nodeY = tonumber(meta.x), tonumber(meta.y)
-                                local distance = math.sqrt((nodeX - currentX)^2 + (nodeY - currentY)^2)
-
-                                if distance <= clusterRadius then
-                                    -- Only include nodes that are quest starters/enders
-                                    local isQuestGiver = meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or
-                                        meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END")
-
-                                    if isQuestGiver then
-                                        table.insert(nearbyNodes, {
-                                            spawn = meta.spawn or title,
-                                            level = meta.level,
-                                            spawntype = meta.spawntype,
-                                            respawn = meta.respawn,
-                                            spawnid = meta.spawnid,
-                                            distance = distance,
-                                            title = title,
-                                            node = {[title] = meta}
-                                        })
-
-                                        -- Track quest titles for highlighting
-                                        if meta.quest then
-                                            questTitles[meta.quest] = true
-                                        end
+                                local sx,sy=tonumber(meta.x),tonumber(meta.y)
+                                local dist=math.sqrt((sx-bx)^2+(sy-by)^2)
+                                if dist<=clusterRadius then
+                                    local spawnName=meta.spawn or title
+                                    local isQuestGiver=meta.QTYPE and (meta.QTYPE=="NPC_START" or meta.QTYPE=="NPC_END" or meta.QTYPE=="OBJECT_START" or meta.QTYPE=="OBJECT_END")
+                                    if isQuestGiver and not visitedSpawn[spawnName] then
+                                        visitedSpawn[spawnName]=true
+                                        addNode(meta,title,dist)
+                                        queue[#queue+1]={x=sx,y=sy,node=coordNodes}
                                     end
                                 end
                             end
@@ -1659,11 +1649,25 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             end
         end
 
-        -- Cache the results
+        local names={}
+        for n,_ in pairs(visitedSpawn) do names[#names+1]=n end
+        table.sort(names)
+        local hash=table.concat(names,"|")
+        return results,qTitles,hash
+    end
+
+    -- decide cache reuse
+    if pfMap.clusterCache and pfMap.clusterCache.key and pfMap.tooltipCurrentNode and pfMap.clusterCache.nodeRef==pfMap.tooltipCurrentNode then
+        nearbyNodes = pfMap.clusterCache.nearbyNodes
+        questTitles = pfMap.clusterCache.questTitles
+    else
+        local clusterHash
+        nearbyNodes, questTitles, clusterHash = buildCluster()
         pfMap.clusterCache = {
-            key = cacheKey,
-            nearbyNodes = nearbyNodes,
-            questTitles = questTitles
+            key=clusterHash,
+            nearbyNodes=nearbyNodes,
+            questTitles=questTitles,
+            nodeRef=currentNode
         }
     end
 
