@@ -519,6 +519,9 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
     local catch = nil
     local catch_obj = nil
     local tooltip = tooltip or GameTooltip
+    
+    -- Ultra lightweight: just store meta when tooltip shown
+    pfMap.tooltipMeta = meta
 
     -- add quest data
     if meta["quest"] then
@@ -649,21 +652,22 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
                 if meta["questid"] then
                     local chainCount = pfMap:CountQuestsInChain(meta["questid"])
                     local chainTotalXP = pfMap:GetChainTotalXP(meta["questid"])
-                    local chainSummary = pfMap:GetChainSummary(meta["questid"])
 
                     if chainCount > 0 then
-                        local chainText = "|cffaaaaaa- |r" .. "Chain: +" .. chainCount .. " quests"
-                        if chainTotalXP > 0 then
-                            chainText = chainText .. " (+" .. chainTotalXP .. " XP)"
-                        end
-                        tooltip:AddLine(chainText, .6, .8, 1)  -- Light blue color for chain info
-
-                        -- Add chain summary
-                        if table.getn(chainSummary) > 0 then
-                            tooltip:AddLine(" ", 1, 1, 1)  -- Empty line for spacing
-                            for _, summaryLine in ipairs(chainSummary) do
-                                tooltip:AddLine("|cffaaaaaa" .. summaryLine .. "|r", .7, .7, .7)
+                        local chainText = "Chain: " .. chainCount .. " quests (" .. chainTotalXP .. " XP total)"
+                        tooltip:AddLine(chainText, .6, .8, 1)
+                        
+                        -- Alt expand
+                        if IsAltKeyDown() then
+                            local chainSummary = pfMap:GetChainSummary(meta["questid"])
+                            if table.getn(chainSummary) > 0 then
+                                tooltip:AddLine("-------------------", .5, .5, .5)
+                                for _, summaryLine in ipairs(chainSummary) do
+                                    tooltip:AddLine("|cffaaaaaa" .. summaryLine .. "|r", .7, .7, .7)
+                                end
                             end
+                        else
+                            tooltip:AddLine("|cff00ff00[Alt]|r for details", .5, .5, .5)
                         end
                     end
                 end
@@ -2195,6 +2199,7 @@ function pfMap:NodeLeave()
     pfMap.highlight = nil
     pfMap.clusterHighlights = nil -- Clear cluster highlights
     pfMap.tooltipAnchor = nil -- Clear tooltip anchor
+    pfMap.tooltipMeta = nil -- Clear tooltip meta for Alt
     -- Clear highlight flags
 
     -- Use a timer to delay clearing - gives time for mouse to move to nearby nodes
@@ -2676,6 +2681,22 @@ end)
 local hlstate, shiftstate, transition, hidecluster, fps, resetmap
 
 pfMap:SetScript("OnUpdate", function()
+    -- Ultra lightweight Alt check
+    local alt = IsAltKeyDown()
+    if pfMap.lastAlt ~= alt and pfMap.tooltipMeta then
+        pfMap.lastAlt = alt
+        -- Check both tooltips
+        if GameTooltip:IsShown() then
+            GameTooltip:ClearLines()
+            pfMap:ShowTooltip(pfMap.tooltipMeta, GameTooltip)
+            GameTooltip:Show()
+        elseif WorldMapTooltip and WorldMapTooltip:IsShown() then
+            WorldMapTooltip:ClearLines()
+            pfMap:ShowTooltip(pfMap.tooltipMeta, WorldMapTooltip)
+            WorldMapTooltip:Show()
+        end
+    end
+    
     -- Simple right-click cycling
     if pfMap.cycleData and pfMap.cycleData.currentTooltip and pfMap.cycleData.currentTooltip:IsShown() then
         local isRightDown = IsMouseButtonDown("RightButton")
