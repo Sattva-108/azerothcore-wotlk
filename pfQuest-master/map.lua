@@ -1594,11 +1594,17 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         end
     end
 
-    -- Function that performs BFS connected search and returns results plus hash
+    -- Function that performs   connected search and returns results plus hash
     local function buildCluster()
         print("Cluster: Fresh scan for", currentNode.spawn)
         local results = {}
         local qTitles = {}
+
+        -- Helper to create a unique key for a spawn using its name and id
+        local function getSpawnKey(meta, title)
+            return (meta.spawn or title or "") .. ":" .. (meta.spawnid or "0")
+        end
+
         local visitedSpawn = {}
 
         local function addNode(meta, title, dist)
@@ -1635,11 +1641,13 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                                 local dist=math.sqrt((sx-bx)^2+(sy-by)^2)
                                 if dist<=clusterRadius then
                                     local spawnName=meta.spawn or title
-                                    local isQuestGiver=meta.QTYPE and (meta.QTYPE=="NPC_START" or meta.QTYPE=="NPC_END" or meta.QTYPE=="OBJECT_START" or meta.QTYPE=="OBJECT_END")
-                                    if isQuestGiver and not visitedSpawn[spawnName] then
-                                        visitedSpawn[spawnName]=true
+                                    local spawnKey  = getSpawnKey(meta, title)
+
+                                    local isQuestGiver = meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END")
+                                    if isQuestGiver and not visitedSpawn[spawnKey] then
+                                        visitedSpawn[spawnKey] = true
                                         addNode(meta,title,dist)
-                                        queue[#queue+1]={x=sx,y=sy,node=coordNodes}
+                                        queue[#queue+1] = {x = sx, y = sy, node = coordNodes}
                                     end
                                 end
                             end
@@ -1756,6 +1764,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             if not spawnGroups[spawnName] then
                 spawnGroups[spawnName] = {
                     spawn = spawnName,
+                    spawnid = nodeData.spawnid,
                     distance = nodeData.distance,
                     nodes = {},
                     hasStarter = false,
@@ -1870,9 +1879,9 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
         -- Create cluster hash based on all spawns in cluster (not just current node)
         local clusterSpawns = {}
-        table.insert(clusterSpawns, currentNode.spawn)
+        table.insert(clusterSpawns, (currentNode.spawn or "") .. ":" .. (currentNode.spawnid or "0"))
         for _, spawnData in ipairs(sortedSpawns) do
-            table.insert(clusterSpawns, spawnData.spawn)
+            table.insert(clusterSpawns, (spawnData.spawn or "") .. ":" .. (spawnData.spawnid or "0"))
         end
         table.sort(clusterSpawns) -- Sort to ensure consistent hash
         local clusterHash = table.concat(clusterSpawns, "|")
@@ -1892,7 +1901,11 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         end
 
         -- Decide whether to create a new cycle (default) or reuse the existing one
-        local shouldCreateNewCycle = (not pfMap.cycleData) or (not spawnInCurrentCycle and not isSameCluster)
+        -- If the cluster hash changed, we ALWAYS create a new cycle – even if the
+        -- current spawn already exists in the previous cycle. This prevents
+        -- accidentally merging two nearby but distinct clusters that just happen
+        -- to share an NPC name (e.g. multiple "Candy Bucket" gameobjects).
+        local shouldCreateNewCycle = (not pfMap.cycleData) or (not isSameCluster)
 
         if shouldCreateNewCycle then
             print("Cycling: Creating NEW cycle data for cluster:", clusterHash)
