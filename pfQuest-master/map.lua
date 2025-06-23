@@ -522,7 +522,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
     local catch = nil
     local catch_obj = nil
     local tooltip = tooltip or GameTooltip
-    
+
     -- Ultra lightweight: just store meta when tooltip shown
     pfMap.tooltipMeta = meta
 
@@ -659,7 +659,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
                     if chainCount > 0 then
                         local chainText = "Chain: " .. chainCount .. " quests (" .. chainTotalXP .. " XP total)"
                         tooltip:AddLine(chainText, .6, .8, 1)
-                        
+
                         -- Alt expand
                         if IsAltKeyDown() then
                             local chainSummary = pfMap:GetChainSummary(meta["questid"])
@@ -1316,10 +1316,10 @@ function pfMap:GetChainSummary(questid)
                 if endNPCId then
                     local mapId = nil
                     local endType = "unknown"
-                    
+
                     -- Check what type of end this should be based on quest data
                     local isObjectEnd = qData["end"]["O"] ~= nil
-                    
+
                     if isObjectEnd then
                         -- For Object ends, try Object first
                         if pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][endNPCId] then
@@ -1329,7 +1329,7 @@ function pfMap:GetChainSummary(questid)
                                 mapId = objectData["coords"][1][3]
                             end
                         end
-                        
+
                         -- Fallback to NPC if Object not found
                         if not mapId and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][endNPCId] then
                             local npcData = pfDB["units"]["data"][endNPCId]
@@ -1355,7 +1355,7 @@ function pfMap:GetChainSummary(questid)
                                 end
                             end
                         end
-                        
+
                         -- Fallback to Object if NPC not found
                         if not mapId and pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][endNPCId] then
                             local objectData = pfDB["objects"]["data"][endNPCId]
@@ -1365,7 +1365,7 @@ function pfMap:GetChainSummary(questid)
                             end
                         end
                     end
-                    
+
                     if mapId then
                         local zoneName = pfMap:GetZoneName(mapId)
                         if zoneName and zoneName ~= "Unknown Zone" then
@@ -1430,8 +1430,8 @@ function pfMap:GetChainSummary(questid)
                                         end
                                     end
                                 end
-                                
-                                -- 4. Item Required lookup (for "IR" objectives) 
+
+                                -- 4. Item Required lookup (for "IR" objectives)
                                 if not mapId and objKey == "IR" then
                                     objType = "ItemReq"
                                     -- Find targets where this item should be used (following database.lua logic)
@@ -1594,17 +1594,11 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         end
     end
 
-    -- Function that performs   connected search and returns results plus hash
+    -- Function that performs BFS connected search and returns results plus hash
     local function buildCluster()
         print("Cluster: Fresh scan for", currentNode.spawn)
         local results = {}
         local qTitles = {}
-
-        -- Helper to create a unique key for a spawn using its name and id
-        local function getSpawnKey(meta, title)
-            return (meta.spawn or title or "") .. ":" .. (meta.spawnid or "0")
-        end
-
         local visitedSpawn = {}
 
         local function addNode(meta, title, dist)
@@ -1641,11 +1635,9 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                                 local dist=math.sqrt((sx-bx)^2+(sy-by)^2)
                                 if dist<=clusterRadius then
                                     local spawnName=meta.spawn or title
-                                    local spawnKey  = getSpawnKey(meta, title)
-
                                     local isQuestGiver = meta.QTYPE and (meta.QTYPE == "NPC_START" or meta.QTYPE == "NPC_END" or meta.QTYPE == "OBJECT_START" or meta.QTYPE == "OBJECT_END")
-                                    if isQuestGiver and not visitedSpawn[spawnKey] then
-                                        visitedSpawn[spawnKey] = true
+                                    if isQuestGiver and not visitedSpawn[spawnName] then
+                                        visitedSpawn[spawnName]=true
                                         addNode(meta,title,dist)
                                         queue[#queue+1] = {x = sx, y = sy, node = coordNodes}
                                     end
@@ -1764,7 +1756,6 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             if not spawnGroups[spawnName] then
                 spawnGroups[spawnName] = {
                     spawn = spawnName,
-                    spawnid = nodeData.spawnid,
                     distance = nodeData.distance,
                     nodes = {},
                     hasStarter = false,
@@ -1879,9 +1870,9 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
         -- Create cluster hash based on all spawns in cluster (not just current node)
         local clusterSpawns = {}
-        table.insert(clusterSpawns, (currentNode.spawn or "") .. ":" .. (currentNode.spawnid or "0"))
+        table.insert(clusterSpawns, currentNode.spawn)
         for _, spawnData in ipairs(sortedSpawns) do
-            table.insert(clusterSpawns, (spawnData.spawn or "") .. ":" .. (spawnData.spawnid or "0"))
+            table.insert(clusterSpawns, spawnData.spawn)
         end
         table.sort(clusterSpawns) -- Sort to ensure consistent hash
         local clusterHash = table.concat(clusterSpawns, "|")
@@ -2738,7 +2729,7 @@ pfMap:SetScript("OnUpdate", function()
             rebuildTooltip(WorldMapTooltip)
         end
     end
-    
+
     -- Simple right-click cycling
     if pfMap.cycleData and pfMap.cycleData.currentTooltip and pfMap.cycleData.currentTooltip:IsShown() then
         local isRightDown = IsMouseButtonDown("RightButton")
