@@ -28,6 +28,8 @@ local GetBuildInfo = GetBuildInfo
 -- Debug browser frame
 local pfDebugBrowser = nil
 local activeCategory = "itemreq"
+local activeCoordTab = "coords5050"
+local isSearching = false
 
 -- Categories and their functions
 local debugCategories = {
@@ -274,6 +276,20 @@ local debugCategories = {
             return results, currentZone
         end
     },
+    ["coordinates"] = {
+        name = "Coordinates",
+        icon = "Interface\\Icons\\INV_Misc_Map_01",
+        description = "Find entities with problematic coordinates",
+        hasSubTabs = true,
+        searchFunction = function(searchTerm)
+            -- Delegate to active sub-tab
+            return coordCategories[activeCoordTab].searchFunction(searchTerm)
+        end
+    }
+}
+
+-- Coordinate sub-categories
+local coordCategories = {
     ["coords5050"] = {
         name = "50,50 Coords",
         icon = "Interface\\Icons\\INV_Misc_Map_01",
@@ -292,9 +308,9 @@ local debugCategories = {
                 if not pfDB["quests"] or not pfDB["quests"]["data"] then
                     return false, {}
                 end
-                
+
                 local relatedQuests = {}
-                
+
                 for questId, quest in pairs(pfDB["quests"]["data"]) do
                     -- Check quest starters
                     if quest.start then
@@ -314,7 +330,7 @@ local debugCategories = {
                             end
                         end
                     end
-                    
+
                     -- Check quest finishers
                     if quest.finish then
                         if entityType == "NPC" and quest.finish.U then
@@ -334,7 +350,7 @@ local debugCategories = {
                         end
                     end
                 end
-                
+
                 return #relatedQuests > 0, relatedQuests
             end
 
@@ -344,7 +360,7 @@ local debugCategories = {
                     if unit.coords then
                         for _, coord in ipairs(unit.coords) do
                             local x, y, zoneId = coord[1], coord[2], coord[3]
-                            
+
                             -- Check zone filter if specified
                             local zoneMatches = true
                             if zoneFilter then
@@ -353,27 +369,27 @@ local debugCategories = {
                                 if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                                     zoneName = pfDB["zones"]["loc"][zoneId]
                                 end
-                                
+
                                 if string.find(string.lower(zoneName), zoneFilter) then
                                     zoneMatches = true
                                 end
                             end
-                            
+
                             -- Check for exact 50,50 coordinates
                             if (x == targetX and y == targetY) and zoneMatches then
                                 local isRelated, relatedQuests = isQuestRelated("NPC", unitId)
-                                
+
                                 if isRelated then
                                     local unitName = "Unit " .. unitId
                                     if pfDB["units"]["loc"] and pfDB["units"]["loc"][unitId] then
                                         unitName = pfDB["units"]["loc"][unitId]
                                     end
-                                    
+
                                     local zoneName = "Zone " .. zoneId
                                     if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                                         zoneName = pfDB["zones"]["loc"][zoneId]
                                     end
-                                    
+
                                     table.insert(results, {
                                         type = "NPC",
                                         id = unitId,
@@ -400,7 +416,7 @@ local debugCategories = {
                     if object.coords then
                         for _, coord in ipairs(object.coords) do
                             local x, y, zoneId = coord[1], coord[2], coord[3]
-                            
+
                             -- Check zone filter if specified
                             local zoneMatches = true
                             if zoneFilter then
@@ -409,27 +425,27 @@ local debugCategories = {
                                 if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                                     zoneName = pfDB["zones"]["loc"][zoneId]
                                 end
-                                
+
                                 if string.find(string.lower(zoneName), zoneFilter) then
                                     zoneMatches = true
                                 end
                             end
-                            
+
                             -- Check for exact 50,50 coordinates
                             if (x == targetX and y == targetY) and zoneMatches then
                                 local isRelated, relatedQuests = isQuestRelated("Object", objectId)
-                                
+
                                 if isRelated then
                                     local objectName = "Object " .. objectId
                                     if pfDB["objects"]["loc"] and pfDB["objects"]["loc"][objectId] then
                                         objectName = pfDB["objects"]["loc"][objectId]
                                     end
-                                    
+
                                     local zoneName = "Zone " .. zoneId
                                     if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                                         zoneName = pfDB["zones"]["loc"][zoneId]
                                     end
-                                    
+
                                     table.insert(results, {
                                         type = "Object",
                                         id = objectId,
@@ -465,7 +481,7 @@ local debugCategories = {
             if zoneFilter then
                 summary = summary .. " in zones matching '" .. searchTerm .. "'"
             end
-            
+
             return results, summary
         end
     },
@@ -508,6 +524,14 @@ local debugCategories = {
         searchFunction = function(searchTerm)
             return searchEntitiesWithoutCoordinates(searchTerm)
         end
+    },
+    ["coordsnozone"] = {
+        name = "No Zone",
+        icon = "Interface\\Icons\\INV_Misc_QuestionMark",
+        description = "Find quest-related entities without zone info",
+        searchFunction = function(searchTerm)
+            return searchEntitiesWithoutZone(searchTerm)
+        end
     }
 }
 
@@ -523,7 +547,7 @@ function searchCoordinatePattern(targetX, targetY, patternName, searchTerm)
     -- Pre-build quest relationship maps for faster lookup
     local npcQuestMap = {}
     local objectQuestMap = {}
-    
+
     if pfDB["quests"] and pfDB["quests"]["data"] then
         for questId, quest in pairs(pfDB["quests"]["data"]) do
             -- Build NPC quest map
@@ -541,7 +565,7 @@ function searchCoordinatePattern(targetX, targetY, patternName, searchTerm)
                     table.insert(npcQuestMap[id], questId)
                 end
             end
-            
+
             -- Build Object quest map
             if quest.start and quest.start.O then
                 for _, objectId in ipairs(quest.start.O) do
@@ -574,7 +598,7 @@ function searchCoordinatePattern(targetX, targetY, patternName, searchTerm)
             if unit.coords then
                 for _, coord in ipairs(unit.coords) do
                     local x, y, zoneId = coord[1], coord[2], coord[3]
-                    
+
                     -- Check zone filter if specified
                     local zoneMatches = true
                     if zoneFilter then
@@ -583,27 +607,27 @@ function searchCoordinatePattern(targetX, targetY, patternName, searchTerm)
                         if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                             zoneName = pfDB["zones"]["loc"][zoneId]
                         end
-                        
+
                         if string.find(string.lower(zoneName), zoneFilter) then
                             zoneMatches = true
                         end
                     end
-                    
+
                     -- Check for target coordinates
                     if (x == targetX and y == targetY) and zoneMatches then
                         local isRelated, relatedQuests = isQuestRelated("NPC", unitId)
-                        
+
                         if isRelated then
                             local unitName = "Unit " .. unitId
                             if pfDB["units"]["loc"] and pfDB["units"]["loc"][unitId] then
                                 unitName = pfDB["units"]["loc"][unitId]
                             end
-                            
+
                             local zoneName = "Zone " .. zoneId
                             if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                                 zoneName = pfDB["zones"]["loc"][zoneId]
                             end
-                            
+
                             table.insert(results, {
                                 type = "NPC",
                                 id = unitId,
@@ -630,7 +654,7 @@ function searchCoordinatePattern(targetX, targetY, patternName, searchTerm)
             if object.coords then
                 for _, coord in ipairs(object.coords) do
                     local x, y, zoneId = coord[1], coord[2], coord[3]
-                    
+
                     -- Check zone filter if specified
                     local zoneMatches = true
                     if zoneFilter then
@@ -639,27 +663,27 @@ function searchCoordinatePattern(targetX, targetY, patternName, searchTerm)
                         if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                             zoneName = pfDB["zones"]["loc"][zoneId]
                         end
-                        
+
                         if string.find(string.lower(zoneName), zoneFilter) then
                             zoneMatches = true
                         end
                     end
-                    
+
                     -- Check for target coordinates
                     if (x == targetX and y == targetY) and zoneMatches then
                         local isRelated, relatedQuests = isQuestRelated("Object", objectId)
-                        
+
                         if isRelated then
                             local objectName = "Object " .. objectId
                             if pfDB["objects"]["loc"] and pfDB["objects"]["loc"][objectId] then
                                 objectName = pfDB["objects"]["loc"][objectId]
                             end
-                            
+
                             local zoneName = "Zone " .. zoneId
                             if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                                 zoneName = pfDB["zones"]["loc"][zoneId]
                             end
-                            
+
                             table.insert(results, {
                                 type = "Object",
                                 id = objectId,
@@ -695,7 +719,7 @@ function searchCoordinatePattern(targetX, targetY, patternName, searchTerm)
     if zoneFilter then
         summary = summary .. " in zones matching '" .. searchTerm .. "'"
     end
-    
+
     return results, summary
 end
 
@@ -710,7 +734,7 @@ function searchEntitiesWithoutCoordinates(searchTerm)
 
     -- Pre-build quest relationship maps for faster lookup
     local npcQuestMap = {}
-    
+
     if pfDB["quests"] and pfDB["quests"]["data"] then
         for questId, quest in pairs(pfDB["quests"]["data"]) do
             -- Build NPC quest map (only NPCs, objects usually have coordinates)
@@ -738,19 +762,19 @@ function searchEntitiesWithoutCoordinates(searchTerm)
             if not unit.coords or #unit.coords == 0 then
                 -- Check if this NPC is quest-related
                 local relatedQuests = npcQuestMap[tonumber(unitId)] or {}
-                
+
                 if #relatedQuests > 0 then
                     local unitName = "Unit " .. unitId
                     if pfDB["units"]["loc"] and pfDB["units"]["loc"][unitId] then
                         unitName = pfDB["units"]["loc"][unitId]
                     end
-                    
+
                     -- Apply name filter if specified
                     local nameMatches = true
                     if nameFilter then
                         nameMatches = string.find(string.lower(unitName), nameFilter) ~= nil
                     end
-                    
+
                     if nameMatches then
                         table.insert(results, {
                             type = "NPC",
@@ -779,7 +803,7 @@ function searchEntitiesWithoutCoordinates(searchTerm)
     if nameFilter then
         summary = summary .. " matching '" .. searchTerm .. "'"
     end
-    
+
     return results, summary
 end
 
@@ -856,11 +880,20 @@ local function CreateDebugBrowser()
     pfDebugBrowser.searchPanel:SetHeight(500)
     pfDebugBrowser.searchPanel:SetPoint("TOPRIGHT", pfDebugBrowser, "TOPRIGHT", -15, -50)
 
+    -- Coordinate tabs panel (initially hidden)
+    pfDebugBrowser.coordTabsPanel = CreateFrame("Frame", nil, pfDebugBrowser.searchPanel)
+    pfDebugBrowser.coordTabsPanel:SetWidth(480)
+    pfDebugBrowser.coordTabsPanel:SetHeight(25)
+    pfDebugBrowser.coordTabsPanel:SetPoint("TOPLEFT", pfDebugBrowser.searchPanel, "TOPLEFT", 0, -5)
+    pfDebugBrowser.coordTabsPanel:Hide()
+
     -- Search input
     pfDebugBrowser.searchBox = CreateFrame("EditBox", nil, pfDebugBrowser.searchPanel)
     pfDebugBrowser.searchBox:SetWidth(300)
     pfDebugBrowser.searchBox:SetHeight(25)
     pfDebugBrowser.searchBox:SetPoint("TOPLEFT", pfDebugBrowser.searchPanel, "TOPLEFT", 5, -5)
+    pfDebugBrowser.searchBox.defaultOffsetY = -5
+    pfDebugBrowser.searchBox.tabsOffsetY = -35
     pfDebugBrowser.searchBox:SetFontObject("GameFontNormal")
     pfDebugBrowser.searchBox:SetAutoFocus(false)
     pfDebugBrowser.searchBox:SetBackdrop({
@@ -935,6 +968,9 @@ local function CreateDebugBrowser()
 
     -- Create category buttons
     CreateCategoryButtons()
+
+    -- Initialize coordinate tabs
+    pfDebugBrowser.coordTabs = nil
 
     -- Hide initially
     pfDebugBrowser:Hide()
@@ -1011,6 +1047,14 @@ end
 function SelectCategory(categoryId)
     activeCategory = categoryId
 
+    -- Cancel any ongoing search when switching categories
+    isSearching = false
+
+    -- Clear previous results and status immediately
+    ClearResults()
+    local category = debugCategories[categoryId]
+    pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Switching to " .. category.name .. "...|r")
+
     -- Update button appearances
     for id, btn in pairs(pfDebugBrowser.categoryButtons) do
         if id == categoryId then
@@ -1022,63 +1066,204 @@ function SelectCategory(categoryId)
         end
     end
 
-    -- Update status with current zone
-    local category = debugCategories[categoryId]
-    local currentZone = GetRealZoneText() or "Unknown"
-    pfDebugBrowser.statusText:SetText(COLORS.SUBHEADER .. category.name .. " selected - Current Zone: " .. currentZone .. "|r")
-
-    -- Clear search box and results
+    -- Clear search box
     pfDebugBrowser.searchBox:SetText("")
-    ClearResults()
 
-    -- Auto-search for current category to show zone-relevant results
-    -- For coords5050, always start with empty search to show zone grouping
-    if categoryId == "coords5050" then
-        PerformSearch("")
+    -- Show/hide coordinate tabs based on category
+    if categoryId == "coordinates" then
+        pfDebugBrowser.coordTabsPanel:Show()
+        pfDebugBrowser.searchBox:ClearAllPoints()
+        pfDebugBrowser.searchBox:SetPoint("TOPLEFT", pfDebugBrowser.searchPanel, "TOPLEFT", 5, pfDebugBrowser.searchBox.tabsOffsetY)
+        CreateCoordinateTabs()
     else
-        PerformSearch("")
+        pfDebugBrowser.coordTabsPanel:Hide()
+        pfDebugBrowser.searchBox:ClearAllPoints()
+        pfDebugBrowser.searchBox:SetPoint("TOPLEFT", pfDebugBrowser.searchPanel, "TOPLEFT", 5, pfDebugBrowser.searchBox.defaultOffsetY)
     end
+
+    -- Delay new search to ensure previous one is cancelled
+    local delayFrame = CreateFrame("Frame")
+    delayFrame:SetScript("OnUpdate", function()
+        this:SetScript("OnUpdate", nil)
+        PerformSearch("")
+    end)
+end
+
+-- Create coordinate sub-tabs
+function CreateCoordinateTabs()
+    if pfDebugBrowser.coordTabs then
+        return -- Already created
+    end
+
+    pfDebugBrowser.coordTabs = {}
+    local xOffset = 0
+    local tabWidth = 65
+
+    local tabOrder = {"coords5050", "coords00", "coords100100", "coords0100", "coords1000", "coordsnocoords", "coordsnozone"}
+
+    for i, tabId in ipairs(tabOrder) do
+        local tab = coordCategories[tabId]
+        if tab then
+            local btn = CreateFrame("Button", nil, pfDebugBrowser.coordTabsPanel)
+            btn:SetWidth(tabWidth)
+            btn:SetHeight(20)
+            btn:SetPoint("TOPLEFT", pfDebugBrowser.coordTabsPanel, "TOPLEFT", xOffset, -2)
+
+            -- Tab background
+            btn:SetBackdrop({
+                bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+                edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                tile = true, tileSize = 8, edgeSize = 8,
+                insets = { left = 2, right = 2, top = 2, bottom = 2 }
+            })
+            btn:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+            btn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+
+            -- Tab text
+            btn.text = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            btn.text:SetPoint("CENTER", btn, "CENTER", 0, 0)
+            btn.text:SetText(tab.name:gsub(" Corner", ""):gsub(" Coords", ""):gsub("No Coordinates", "None"):gsub("No Zone", "NoZone"))
+
+            -- Click handler
+            btn.tabId = tabId
+            btn:SetScript("OnClick", function()
+                SelectCoordinateTab(this.tabId)
+            end)
+
+            -- Hover effect
+            btn:SetScript("OnEnter", function()
+                this:SetBackdropColor(0.2, 0.2, 0.3, 0.9)
+            end)
+            btn:SetScript("OnLeave", function()
+                if activeCoordTab ~= this.tabId then
+                    this:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+                end
+            end)
+
+            pfDebugBrowser.coordTabs[tabId] = btn
+            xOffset = xOffset + tabWidth + 2
+        end
+    end
+
+    -- Select default tab
+    SelectCoordinateTab(activeCoordTab)
+end
+
+-- Select coordinate tab
+function SelectCoordinateTab(tabId)
+    activeCoordTab = tabId
+
+    -- Cancel any ongoing search when switching tabs
+    isSearching = false
+
+    -- Clear previous results and status immediately
+    ClearResults()
+    pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Switching to " .. coordCategories[tabId].name .. "...|r")
+
+    -- Update tab appearances
+    for id, btn in pairs(pfDebugBrowser.coordTabs) do
+        if id == tabId then
+            btn:SetBackdropColor(0.2, 0.4, 0.6, 0.9)
+            btn:SetBackdropBorderColor(0.4, 0.6, 0.8, 1)
+        else
+            btn:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+            btn:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+        end
+    end
+
+    -- Clear search box
+    pfDebugBrowser.searchBox:SetText("")
+
+    -- Delay new search to ensure previous one is cancelled
+    local delayFrame = CreateFrame("Frame")
+    delayFrame:SetScript("OnUpdate", function()
+        this:SetScript("OnUpdate", nil)
+        PerformSearch("")
+    end)
 end
 
 -- Perform search
 function PerformSearch(searchTerm)
     if not activeCategory then return end
 
+    -- Cancel any ongoing search first
+    isSearching = false
+
+    -- Force a frame delay to ensure all batch operations stop
+    local startFrame = CreateFrame("Frame")
+    startFrame:SetScript("OnUpdate", function()
+        this:SetScript("OnUpdate", nil)
+
+        local category = debugCategories[activeCategory]
+        if not category.searchFunction then return end
+
+        isSearching = true
+        pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Searching...|r")
+
+        -- Perform actual search
+        DoActualSearch(searchTerm)
+    end)
+end
+
+function DoActualSearch(searchTerm)
     local category = debugCategories[activeCategory]
-    if not category.searchFunction then return end
 
-    pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Searching...|r")
-
-    -- Special handling for ItemReq and Coords5050 with lazy loading
+    -- Special handling for ItemReq and coordinate categories with lazy loading
     if activeCategory == "itemreq" then
         PerformItemReqSearchLazy(searchTerm)
-    elseif activeCategory == "coords5050" then
+    elseif activeCategory == "coordinates" then
         PerformCoordsSearchLazy(searchTerm)
     else
-        -- Regular search for other categories
-        local results, extra = category.searchFunction(searchTerm)
-
+        -- Use lazy loading for all other categories
         if activeCategory == "rares" then
-            DisplayRareResults(results, extra, searchTerm)
+            PerformRaresSearchLazy(searchTerm)
         elseif activeCategory == "working" then
-            DisplayWorkingQuestResults(results)
-        elseif activeCategory == "coords00" or activeCategory == "coords100100" or 
-               activeCategory == "coords0100" or activeCategory == "coords1000" or 
-               activeCategory == "coordsnocoords" then
-            -- Handle coordinate pattern searches
-            if searchTerm and searchTerm ~= "" then
-                -- Show detailed results for zone/name search
-                DisplayCoordsResults(results, extra, searchTerm)
-            else
-                -- Show grouped results for global search (except for no coords)
-                if activeCategory == "coordsnocoords" then
-                    DisplayCoordsResults(results, extra, searchTerm)
-                else
-                    DisplayCoordsGroupedResults(results)
-                end
-            end
+            PerformWorkingSearchLazy(searchTerm)
+        elseif activeCategory == "validation" then
+            PerformValidationSearchLazy(searchTerm)
         else
-            pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "Search not implemented for this category|r")
+            -- Generic lazy loading for any remaining categories
+            PerformGenericSearchLazy(searchTerm)
+        end
+    end
+end
+
+-- Generic result display for other categories
+function DisplayGenericResults(results, extra, searchTerm)
+    pfDebugBrowser.statusText:SetText(COLORS.SUCCESS .. "Search completed: " .. #results .. " results|r")
+
+    ClearResults()
+    if #results == 0 then
+        local emptyMsg = pfDebugBrowser.resultsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        emptyMsg:SetPoint("TOPLEFT", pfDebugBrowser.resultsFrame, "TOPLEFT", 5, -5)
+        emptyMsg:SetText(COLORS.WARNING .. "No results found|r")
+        return
+    end
+
+    local yOffset = -5
+    for i, result in ipairs(results) do
+        local resultText = tostring(result)
+        local resultLabel = pfDebugBrowser.resultsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        resultLabel:SetPoint("TOPLEFT", pfDebugBrowser.resultsFrame, "TOPLEFT", 5, yOffset)
+        resultLabel:SetText(resultText)
+        yOffset = yOffset - 20
+    end
+
+    pfDebugBrowser.resultsFrame:SetHeight(math.abs(yOffset) + 10)
+end
+
+-- Display coordinate search results based on active tab
+function DisplayCoordinateResults(results, extra, searchTerm)
+    -- Handle coordinate pattern searches
+    if searchTerm and searchTerm ~= "" then
+        -- Show detailed results for zone/name search
+        DisplayCoordsResults(results, extra, searchTerm)
+    else
+        -- Show grouped results for global search (except for no coords)
+        if activeCoordTab == "coordsnocoords" then
+            DisplayCoordsResults(results, extra, searchTerm)
+        else
+            DisplayCoordsGroupedResults(results)
         end
     end
 end
@@ -1102,7 +1287,7 @@ function PerformItemReqSearchLazy(searchTerm)
 
     local totalItems = #itemsToProcess
     local processedItems = 0
-    local batchSize = 10 -- Process 10 items per frame
+    local batchSize = 15 -- Process 15 items per frame
 
     -- Clear results first
     ClearResults()
@@ -1226,23 +1411,28 @@ function PerformItemReqSearchLazy(searchTerm)
         pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Processing... " .. progress .. "% (" .. processedItems .. "/" .. totalItems .. ")|r")
 
         -- Continue processing or finish
-        if processedItems < totalItems then
+        if processedItems < totalItems and isSearching then
             -- Schedule next batch
             local nextBatchFrame = CreateFrame("Frame")
             nextBatchFrame:SetScript("OnUpdate", function()
                 this:SetScript("OnUpdate", nil)
-                ProcessBatch()
+                if isSearching then
+                    ProcessBatch()
+                end
             end)
         else
             -- Finished processing, sort and display results
-            table.sort(results, function(a, b)
-                if a.isInCurrentZone ~= b.isInCurrentZone then
-                    return a.isInCurrentZone
-                end
-                return a.questName < b.questName
-            end)
+            if isSearching then
+                isSearching = false
+                table.sort(results, function(a, b)
+                    if a.isInCurrentZone ~= b.isInCurrentZone then
+                        return a.isInCurrentZone
+                    end
+                    return a.questName < b.questName
+                end)
 
-            DisplayItemReqResults(results, currentZone, searchTerm)
+                DisplayItemReqResults(results, currentZone, searchTerm)
+            end
         end
     end
 
@@ -1257,6 +1447,30 @@ function PerformCoordsSearchLazy(searchTerm)
         return
     end
 
+    -- Use lazy loading for all coordinate tabs
+    if activeCoordTab == "coords5050" then
+        PerformCoords5050SearchLazy(searchTerm)
+    elseif activeCoordTab == "coords00" then
+        PerformCoordsPatternSearchLazy(0, 0, "corner (0,0)", searchTerm)
+    elseif activeCoordTab == "coords100100" then
+        PerformCoordsPatternSearchLazy(100, 100, "corner (100,100)", searchTerm)
+    elseif activeCoordTab == "coords0100" then
+        PerformCoordsPatternSearchLazy(0, 100, "corner (0,100)", searchTerm)
+    elseif activeCoordTab == "coords1000" then
+        PerformCoordsPatternSearchLazy(100, 0, "corner (100,0)", searchTerm)
+    elseif activeCoordTab == "coordsnocoords" then
+        PerformNoCoordsSearchLazy(searchTerm)
+    elseif activeCoordTab == "coordsnozone" then
+        PerformNoZoneSearchLazy(searchTerm)
+    end
+end
+
+function PerformCoords5050SearchLazy(searchTerm)
+    if not pfDB then
+        pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "pfDB not loaded|r")
+        return
+    end
+
     local results = {}
     local zoneFilter = searchTerm and string.lower(searchTerm) or nil
     local targetX, targetY = 50, 50
@@ -1264,7 +1478,7 @@ function PerformCoordsSearchLazy(searchTerm)
     -- Pre-build quest relationship maps for faster lookup
     local npcQuestMap = {}
     local objectQuestMap = {}
-    
+
     if pfDB["quests"] and pfDB["quests"]["data"] then
         for questId, quest in pairs(pfDB["quests"]["data"]) do
             -- Build NPC quest map
@@ -1282,7 +1496,7 @@ function PerformCoordsSearchLazy(searchTerm)
                     table.insert(npcQuestMap[id], questId)
                 end
             end
-            
+
             -- Build Object quest map
             if quest.start and quest.start.O then
                 for _, objectId in ipairs(quest.start.O) do
@@ -1311,14 +1525,19 @@ function PerformCoordsSearchLazy(searchTerm)
 
     -- Pre-filter entities that have 50,50 coordinates and are quest-related
     local entitiesToProcess = {}
-    
+    local foundCount = 0
+    local processedCount = 0
+    local maxProcess = 10000 -- Limit processing for performance
+
     -- Add NPCs that have 50,50 coords and are quest-related
     if pfDB["units"] and pfDB["units"]["data"] then
         for unitId, unit in pairs(pfDB["units"]["data"]) do
+            processedCount = processedCount + 1
+            if processedCount > maxProcess then break end
             if unit.coords then
                 local hasTargetCoords = false
                 local relevantCoords = {}
-                
+
                 for _, coord in ipairs(unit.coords) do
                     local x, y = coord[1], coord[2]
                     if x == targetX and y == targetY then
@@ -1326,7 +1545,7 @@ function PerformCoordsSearchLazy(searchTerm)
                         table.insert(relevantCoords, coord)
                     end
                 end
-                
+
                 -- Only process if has 50,50 coords and is quest-related
                 if hasTargetCoords then
                     local isRelated, relatedQuests = isQuestRelated("NPC", unitId)
@@ -1337,19 +1556,22 @@ function PerformCoordsSearchLazy(searchTerm)
                             coords = relevantCoords,
                             questIds = relatedQuests
                         })
+                        foundCount = foundCount + 1
                     end
                 end
             end
         end
     end
-    
+
     -- Add Objects that have 50,50 coords and are quest-related
-    if pfDB["objects"] and pfDB["objects"]["data"] then
+    if pfDB["objects"] and pfDB["objects"]["data"] and processedCount <= maxProcess then
         for objectId, object in pairs(pfDB["objects"]["data"]) do
+            processedCount = processedCount + 1
+            if processedCount > maxProcess then break end
             if object.coords then
                 local hasTargetCoords = false
                 local relevantCoords = {}
-                
+
                 for _, coord in ipairs(object.coords) do
                     local x, y = coord[1], coord[2]
                     if x == targetX and y == targetY then
@@ -1357,7 +1579,7 @@ function PerformCoordsSearchLazy(searchTerm)
                         table.insert(relevantCoords, coord)
                     end
                 end
-                
+
                 -- Only process if has 50,50 coords and is quest-related
                 if hasTargetCoords then
                     local isRelated, relatedQuests = isQuestRelated("Object", objectId)
@@ -1368,6 +1590,7 @@ function PerformCoordsSearchLazy(searchTerm)
                             coords = relevantCoords,
                             questIds = relatedQuests
                         })
+                        foundCount = foundCount + 1
                     end
                 end
             end
@@ -1387,11 +1610,11 @@ function PerformCoordsSearchLazy(searchTerm)
         for i = processedEntities + 1, batchEnd do
             local entity = entitiesToProcess[i]
             local entityType, entityId, coords, questIds = entity.type, entity.id, entity.coords, entity.questIds
-            
+
             -- Process each coordinate for this entity
             for _, coord in ipairs(coords) do
                 local x, y, zoneId = coord[1], coord[2], coord[3]
-                
+
                 -- Check zone filter if specified
                 local zoneMatches = true
                 if zoneFilter then
@@ -1400,12 +1623,12 @@ function PerformCoordsSearchLazy(searchTerm)
                     if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                         zoneName = pfDB["zones"]["loc"][zoneId]
                     end
-                    
+
                     if string.find(string.lower(zoneName), zoneFilter) then
                         zoneMatches = true
                     end
                 end
-                
+
                 -- Add to results if zone matches
                 if zoneMatches then
                     local entityName = (entityType == "NPC" and "Unit " or "Object ") .. entityId
@@ -1413,12 +1636,12 @@ function PerformCoordsSearchLazy(searchTerm)
                     if locTable and locTable[entityId] then
                         entityName = locTable[entityId]
                     end
-                    
+
                     local zoneName = "Zone " .. zoneId
                     if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
                         zoneName = pfDB["zones"]["loc"][zoneId]
                     end
-                    
+
                     table.insert(results, {
                         type = entityType,
                         id = entityId,
@@ -1442,27 +1665,849 @@ function PerformCoordsSearchLazy(searchTerm)
         pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Processing... " .. progress .. "% (" .. #results .. " found)|r")
 
         -- Continue processing or finish
-        if processedEntities < totalEntities then
+        if processedEntities < totalEntities and isSearching then
             -- Schedule next batch
             local nextBatchFrame = CreateFrame("Frame")
             nextBatchFrame:SetScript("OnUpdate", function()
                 this:SetScript("OnUpdate", nil)
-                ProcessBatch()
+                if isSearching then
+                    ProcessBatch()
+                end
             end)
         else
             -- Finished processing, display results
-            if searchTerm and searchTerm ~= "" then
-                -- Show detailed results for zone search
-                DisplayCoordsResults(results, "Found " .. #results .. " quest-related entities with exact 50,50 coordinates in zones matching '" .. searchTerm .. "'", searchTerm)
-            else
-                -- Show grouped results for global search
-                DisplayCoordsGroupedResults(results)
+            if isSearching then
+                isSearching = false
+                if searchTerm and searchTerm ~= "" then
+                    -- Show detailed results for zone search
+                    DisplayCoordsResults(results, "Found " .. #results .. " quest-related entities with exact 50,50 coordinates in zones matching '" .. searchTerm .. "'", searchTerm)
+                else
+                    -- Show grouped results for global search
+                    DisplayCoordsGroupedResults(results)
+                end
             end
         end
     end
 
     -- Start processing
     ProcessBatch()
+end
+
+-- Generic lazy loading search for coordinate patterns
+function PerformCoordsPatternSearchLazy(targetX, targetY, patternName, searchTerm)
+    if not pfDB then
+        pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "pfDB not loaded|r")
+        return
+    end
+
+    local results = {}
+    local zoneFilter = searchTerm and string.lower(searchTerm) or nil
+
+    -- Pre-build quest relationship maps for faster lookup
+    local npcQuestMap = {}
+    local objectQuestMap = {}
+
+    if pfDB["quests"] and pfDB["quests"]["data"] then
+        for questId, quest in pairs(pfDB["quests"]["data"]) do
+            -- Build NPC quest map
+            if quest.start and quest.start.U then
+                for _, unitId in ipairs(quest.start.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+            if quest.finish and quest.finish.U then
+                for _, unitId in ipairs(quest.finish.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+
+            -- Build Object quest map
+            if quest.start and quest.start.O then
+                for _, objectId in ipairs(quest.start.O) do
+                    local id = tonumber(objectId)
+                    if not objectQuestMap[id] then objectQuestMap[id] = {} end
+                    table.insert(objectQuestMap[id], questId)
+                end
+            end
+            if quest.finish and quest.finish.O then
+                for _, objectId in ipairs(quest.finish.O) do
+                    local id = tonumber(objectId)
+                    if not objectQuestMap[id] then objectQuestMap[id] = {} end
+                    table.insert(objectQuestMap[id], questId)
+                end
+            end
+        end
+    end
+
+    -- Fast quest lookup function
+    local function isQuestRelated(entityType, entityId)
+        local id = tonumber(entityId)
+        local questMap = entityType == "NPC" and npcQuestMap or objectQuestMap
+        local relatedQuests = questMap[id] or {}
+        return #relatedQuests > 0, relatedQuests
+    end
+
+    -- Pre-filter entities that have target coordinates and are quest-related
+    local entitiesToProcess = {}
+    local foundCount = 0
+    local processedCount = 0
+    local maxProcess = 10000 -- Limit processing to prevent infinite search
+
+    -- Add NPCs that have target coords and are quest-related
+    if pfDB["units"] and pfDB["units"]["data"] then
+        for unitId, unit in pairs(pfDB["units"]["data"]) do
+            processedCount = processedCount + 1
+            if processedCount > maxProcess then break end
+
+            if unit.coords then
+                local hasTargetCoords = false
+                local relevantCoords = {}
+
+                for _, coord in ipairs(unit.coords) do
+                    local x, y = coord[1], coord[2]
+                    if x == targetX and y == targetY then
+                        hasTargetCoords = true
+                        table.insert(relevantCoords, coord)
+                    end
+                end
+
+                -- Only process if has target coords and is quest-related
+                if hasTargetCoords then
+                    local isRelated, relatedQuests = isQuestRelated("NPC", unitId)
+                    if isRelated then
+                        table.insert(entitiesToProcess, {
+                            type = "NPC",
+                            id = unitId,
+                            coords = relevantCoords,
+                            questIds = relatedQuests
+                        })
+                        foundCount = foundCount + 1
+                    end
+                end
+            end
+        end
+    end
+
+    -- Add Objects that have target coords and are quest-related
+    if pfDB["objects"] and pfDB["objects"]["data"] and processedCount <= maxProcess then
+        for objectId, object in pairs(pfDB["objects"]["data"]) do
+            processedCount = processedCount + 1
+            if processedCount > maxProcess then break end
+
+            if object.coords then
+                local hasTargetCoords = false
+                local relevantCoords = {}
+
+                for _, coord in ipairs(object.coords) do
+                    local x, y = coord[1], coord[2]
+                    if x == targetX and y == targetY then
+                        hasTargetCoords = true
+                        table.insert(relevantCoords, coord)
+                    end
+                end
+
+                -- Only process if has target coords and is quest-related
+                if hasTargetCoords then
+                    local isRelated, relatedQuests = isQuestRelated("Object", objectId)
+                    if isRelated then
+                        table.insert(entitiesToProcess, {
+                            type = "Object",
+                            id = objectId,
+                            coords = relevantCoords,
+                            questIds = relatedQuests
+                        })
+                        foundCount = foundCount + 1
+                    end
+                end
+            end
+        end
+    end
+
+    local totalEntities = #entitiesToProcess
+    local processedEntities = 0
+    local batchSize = 100 -- Process 100 entities per frame (pre-filtered)
+
+    -- Clear results first
+    ClearResults()
+
+    -- Early exit if no entities to process
+    if totalEntities == 0 then
+        isSearching = false
+        local summary = "No quest-related entities found with " .. patternName .. " coordinates"
+        if zoneFilter then
+            summary = summary .. " in zones matching '" .. searchTerm .. "'"
+        end
+        pfDebugBrowser.statusText:SetText(COLORS.SUCCESS .. summary .. "|r")
+
+        -- Show friendly message for coordinate searches with no results
+        local emptyMsg = pfDebugBrowser.resultsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        emptyMsg:SetPoint("TOPLEFT", pfDebugBrowser.resultsFrame, "TOPLEFT", 5, -5)
+        emptyMsg:SetText(COLORS.WARNING .. summary .. "|r")
+        pfDebugBrowser.resultsFrame:SetHeight(25)
+        return
+    end
+
+    local function ProcessBatch()
+        local batchEnd = math.min(processedEntities + batchSize, totalEntities)
+
+        for i = processedEntities + 1, batchEnd do
+            local entity = entitiesToProcess[i]
+            local entityType = entity.type
+            local entityId = entity.id
+            local questIds = entity.questIds
+
+            -- Process each relevant coordinate (all are already target coordinates)
+            for _, coord in ipairs(entity.coords) do
+                local x, y, zoneId = coord[1], coord[2], coord[3]
+
+                -- Check zone filter if specified
+                local zoneMatches = true
+                if zoneFilter then
+                    zoneMatches = false
+                    local zoneName = "Zone " .. zoneId
+                    if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                        zoneName = pfDB["zones"]["loc"][zoneId]
+                    end
+
+                    if string.find(string.lower(zoneName), zoneFilter) then
+                        zoneMatches = true
+                    end
+                end
+
+                if zoneMatches then
+                    local entityName = (entityType == "NPC" and "Unit " or "Object ") .. entityId
+                    local locTable = pfDB[entityType == "NPC" and "units" or "objects"]["loc"]
+                    if locTable and locTable[entityId] then
+                        entityName = locTable[entityId]
+                    end
+
+                    local zoneName = "Zone " .. zoneId
+                    if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                        zoneName = pfDB["zones"]["loc"][zoneId]
+                    end
+
+                    table.insert(results, {
+                        type = entityType,
+                        id = entityId,
+                        name = entityName,
+                        zoneName = zoneName,
+                        zoneId = zoneId,
+                        x = x,
+                        y = y,
+                        questIds = questIds,
+                        questCount = #questIds,
+                        level = 1 -- For sorting
+                    })
+                    break -- Only count once per entity
+                end
+            end
+        end
+
+        processedEntities = batchEnd
+
+        -- Update progress
+        local progress = math.floor((processedEntities / totalEntities) * 100)
+        pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Processing " .. patternName .. "... " .. progress .. "% (" .. #results .. " found)|r")
+
+        -- Continue processing or finish
+        if processedEntities < totalEntities and isSearching then
+            -- Schedule next batch
+            local nextBatchFrame = CreateFrame("Frame")
+            nextBatchFrame:SetScript("OnUpdate", function()
+                this:SetScript("OnUpdate", nil)
+                if isSearching then
+                    ProcessBatch()
+                end
+            end)
+        else
+            -- Finished processing
+            if isSearching then
+                isSearching = false
+                -- Sort results by zone name, then by type, then by name
+                table.sort(results, function(a, b)
+                    if a.zoneName ~= b.zoneName then
+                        return a.zoneName < b.zoneName
+                    end
+                    if a.type ~= b.type then
+                        return a.type < b.type
+                    end
+                    return a.name < b.name
+                end)
+
+                -- Display results
+                local summary = "Found " .. #results .. " quest-related entities with " .. patternName .. " coordinates"
+                if zoneFilter then
+                    summary = summary .. " in zones matching '" .. searchTerm .. "'"
+                end
+
+                if searchTerm and searchTerm ~= "" then
+                    DisplayCoordsResults(results, summary, searchTerm)
+                else
+                    DisplayCoordsGroupedResults(results)
+                end
+            end
+        end
+    end
+
+    -- Start processing
+    ProcessBatch()
+end
+
+-- Lazy loading search for entities without coordinates
+function PerformNoCoordsSearchLazy(searchTerm)
+    if not pfDB then
+        pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "pfDB not loaded|r")
+        return
+    end
+
+    local results = {}
+    local searchLower = searchTerm and string.lower(searchTerm) or ""
+
+    -- Pre-build quest relationship maps
+    local npcQuestMap = {}
+    local objectQuestMap = {}
+
+    if pfDB["quests"] and pfDB["quests"]["data"] then
+        for questId, quest in pairs(pfDB["quests"]["data"]) do
+            if quest.start and quest.start.U then
+                for _, unitId in ipairs(quest.start.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+            if quest.finish and quest.finish.U then
+                for _, unitId in ipairs(quest.finish.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+        end
+    end
+
+    -- Convert NPCs to array for batch processing
+    local npcsToProcess = {}
+    if pfDB["units"] and pfDB["units"]["data"] then
+        for unitId, unit in pairs(pfDB["units"]["data"]) do
+            table.insert(npcsToProcess, {id = unitId, data = unit})
+        end
+    end
+
+    local totalNPCs = #npcsToProcess
+    local processedNPCs = 0
+    local batchSize = 100 -- Process 100 NPCs per frame
+
+    ClearResults()
+
+    local function ProcessBatch()
+        local batchEnd = math.min(processedNPCs + batchSize, totalNPCs)
+
+        for i = processedNPCs + 1, batchEnd do
+            local npc = npcsToProcess[i]
+            local unitId = npc.id
+            local unit = npc.data
+
+            -- Check if NPC is quest-related but has no coordinates
+            local questIds = npcQuestMap[tonumber(unitId)] or {}
+            if #questIds > 0 and (not unit.coords or #unit.coords == 0) then
+                local unitName = "Unit " .. unitId
+                if pfDB["units"]["loc"] and pfDB["units"]["loc"][unitId] then
+                    unitName = pfDB["units"]["loc"][unitId]
+                end
+
+                local matches = not searchTerm or
+                               string.find(string.lower(unitName), searchLower) or
+                               tostring(unitId) == searchTerm
+
+                if matches then
+                    table.insert(results, {
+                        type = "NPC",
+                        id = unitId,
+                        name = unitName,
+                        questIds = questIds,
+                        questCount = #questIds
+                    })
+                end
+            end
+        end
+
+        processedNPCs = batchEnd
+
+        -- Update progress
+        local progress = math.floor((processedNPCs / totalNPCs) * 100)
+        pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Processing no-coords... " .. progress .. "% (" .. #results .. " found)|r")
+
+        -- Continue processing or finish
+        if processedNPCs < totalNPCs and isSearching then
+            local nextBatchFrame = CreateFrame("Frame")
+            nextBatchFrame:SetScript("OnUpdate", function()
+                this:SetScript("OnUpdate", nil)
+                if isSearching then
+                    ProcessBatch()
+                end
+            end)
+        else
+            -- Finished processing
+            if isSearching then
+                isSearching = false
+                -- Sort by name
+                table.sort(results, function(a, b)
+                    return a.name < b.name
+                end)
+
+                local summary = "Found " .. #results .. " quest-related NPCs without coordinates"
+                if searchTerm then
+                    summary = summary .. " matching '" .. searchTerm .. "'"
+                end
+
+                DisplayCoordsResults(results, summary, searchTerm)
+            end
+        end
+    end
+
+    ProcessBatch()
+end
+
+-- Lazy loading search for entities without zone info
+function PerformNoZoneSearchLazy(searchTerm)
+    if not pfDB then
+        pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "pfDB not loaded|r")
+        return
+    end
+
+    local results = {}
+    local searchLower = searchTerm and string.lower(searchTerm) or ""
+
+    -- Pre-build quest relationship maps
+    local npcQuestMap = {}
+    local objectQuestMap = {}
+
+    if pfDB["quests"] and pfDB["quests"]["data"] then
+        for questId, quest in pairs(pfDB["quests"]["data"]) do
+            if quest.start and quest.start.U then
+                for _, unitId in ipairs(quest.start.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+            if quest.finish and quest.finish.U then
+                for _, unitId in ipairs(quest.finish.U) do
+                    local id = tonumber(unitId)
+                    if not npcQuestMap[id] then npcQuestMap[id] = {} end
+                    table.insert(npcQuestMap[id], questId)
+                end
+            end
+            if quest.start and quest.start.O then
+                for _, objectId in ipairs(quest.start.O) do
+                    local id = tonumber(objectId)
+                    if not objectQuestMap[id] then objectQuestMap[id] = {} end
+                    table.insert(objectQuestMap[id], questId)
+                end
+            end
+            if quest.finish and quest.finish.O then
+                for _, objectId in ipairs(quest.finish.O) do
+                    local id = tonumber(objectId)
+                    if not objectQuestMap[id] then objectQuestMap[id] = {} end
+                    table.insert(objectQuestMap[id], questId)
+                end
+            end
+        end
+    end
+
+    -- Pre-filter entities that have coordinates but no zone info
+    local entitiesToProcess = {}
+
+    -- Add NPCs that have coords but invalid/missing zone
+    if pfDB["units"] and pfDB["units"]["data"] then
+        for unitId, unit in pairs(pfDB["units"]["data"]) do
+            local questIds = npcQuestMap[tonumber(unitId)] or {}
+            if #questIds > 0 and unit.coords and #unit.coords > 0 then
+                local hasInvalidZone = false
+                for _, coord in ipairs(unit.coords) do
+                    local zoneId = coord[3]
+                    if not zoneId or not pfDB["zones"] or not pfDB["zones"]["loc"] or not pfDB["zones"]["loc"][zoneId] then
+                        hasInvalidZone = true
+                        break
+                    end
+                end
+
+                if hasInvalidZone then
+                    table.insert(entitiesToProcess, {
+                        type = "NPC",
+                        id = unitId,
+                        data = unit,
+                        questIds = questIds
+                    })
+                end
+            end
+        end
+    end
+
+    -- Add Objects that have coords but invalid/missing zone
+    if pfDB["objects"] and pfDB["objects"]["data"] then
+        for objectId, object in pairs(pfDB["objects"]["data"]) do
+            local questIds = objectQuestMap[tonumber(objectId)] or {}
+            if #questIds > 0 and object.coords and #object.coords > 0 then
+                local hasInvalidZone = false
+                for _, coord in ipairs(object.coords) do
+                    local zoneId = coord[3]
+                    if not zoneId or not pfDB["zones"] or not pfDB["zones"]["loc"] or not pfDB["zones"]["loc"][zoneId] then
+                        hasInvalidZone = true
+                        break
+                    end
+                end
+
+                if hasInvalidZone then
+                    table.insert(entitiesToProcess, {
+                        type = "Object",
+                        id = objectId,
+                        data = object,
+                        questIds = questIds
+                    })
+                end
+            end
+        end
+    end
+
+    local totalEntities = #entitiesToProcess
+    local processedEntities = 0
+    local batchSize = 50 -- Process 50 entities per frame
+
+    ClearResults()
+
+    local function ProcessBatch()
+        local batchEnd = math.min(processedEntities + batchSize, totalEntities)
+
+        for i = processedEntities + 1, batchEnd do
+            local entity = entitiesToProcess[i]
+            local entityType = entity.type
+            local entityId = entity.id
+            local entityData = entity.data
+            local questIds = entity.questIds
+
+            local entityName = (entityType == "NPC" and "Unit " or "Object ") .. entityId
+            local locTable = pfDB[entityType == "NPC" and "units" or "objects"]["loc"]
+            if locTable and locTable[entityId] then
+                entityName = locTable[entityId]
+            end
+
+            local matches = not searchTerm or
+                           string.find(string.lower(entityName), searchLower) or
+                           tostring(entityId) == searchTerm
+
+            if matches then
+                -- Get coordinate info for display
+                local coordInfo = "No Coords"
+                if entityData.coords and #entityData.coords > 0 then
+                    local coord = entityData.coords[1] -- Use first coordinate
+                    local x, y, zoneId = coord[1], coord[2], coord[3]
+                    coordInfo = "(" .. (x or "?") .. "," .. (y or "?") .. ") Zone:" .. (zoneId or "?")
+                end
+
+                table.insert(results, {
+                    type = entityType,
+                    id = entityId,
+                    name = entityName,
+                    zoneName = nil, -- No valid zone
+                    questIds = questIds,
+                    questCount = #questIds,
+                    coordInfo = coordInfo
+                })
+            end
+        end
+
+        processedEntities = batchEnd
+
+        -- Update progress
+        local progress = math.floor((processedEntities / totalEntities) * 100)
+        pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Processing no-zone... " .. progress .. "% (" .. #results .. " found)|r")
+
+        -- Continue processing or finish
+        if processedEntities < totalEntities and isSearching then
+            local nextBatchFrame = CreateFrame("Frame")
+            nextBatchFrame:SetScript("OnUpdate", function()
+                this:SetScript("OnUpdate", nil)
+                if isSearching then
+                    ProcessBatch()
+                end
+            end)
+        else
+            -- Finished processing
+            if isSearching then
+                isSearching = false
+                -- Sort by name
+                table.sort(results, function(a, b)
+                    return a.name < b.name
+                end)
+
+                local summary = "Found " .. #results .. " quest-related entities without valid zone info"
+                if searchTerm then
+                    summary = summary .. " matching '" .. searchTerm .. "'"
+                end
+
+                DisplayCoordsResults(results, summary, searchTerm)
+            end
+        end
+    end
+
+    ProcessBatch()
+end
+
+-- Lazy loading search for rare creatures
+function PerformRaresSearchLazy(searchTerm)
+    if not pfDB or not pfDB["meta"] or not pfDB["meta"]["rares"] then
+        pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "No rares data available|r")
+        return
+    end
+
+    local currentZone = GetRealZoneText()
+    local results = {}
+    local searchLower = searchTerm and string.lower(searchTerm) or ""
+
+    -- Convert rares to array for processing
+    local raresToProcess = {}
+    for rareId, rareLevel in pairs(pfDB["meta"]["rares"]) do
+        table.insert(raresToProcess, {rareId = rareId, level = rareLevel})
+    end
+
+    local totalRares = #raresToProcess
+    local processedRares = 0
+    local batchSize = 20 -- Process 20 rares per frame
+
+    ClearResults()
+
+    local function ProcessBatch()
+        local batchEnd = math.min(processedRares + batchSize, totalRares)
+
+        for i = processedRares + 1, batchEnd do
+            local rare = raresToProcess[i]
+            local rareId = rare.rareId
+            local rareLevel = rare.level
+
+            local rareName = ""
+            if pfDB["units"] and pfDB["units"]["loc"] and pfDB["units"]["loc"][rareId] then
+                rareName = pfDB["units"]["loc"][rareId]
+            else
+                rareName = "Rare " .. rareId
+            end
+
+            local matches = not searchTerm or
+                           string.find(string.lower(rareName), searchLower) or
+                           tostring(rareId) == searchTerm
+
+            if matches then
+                local isInCurrentZone = false
+                local unit = pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][rareId]
+
+                if unit and unit.coords then
+                    for _, coord in ipairs(unit.coords) do
+                        local zoneId = coord[3]
+                        local zoneName = ""
+                        if pfDB["zones"] and pfDB["zones"]["loc"] and pfDB["zones"]["loc"][zoneId] then
+                            zoneName = pfDB["zones"]["loc"][zoneId]
+                            if zoneName == currentZone then
+                                isInCurrentZone = true
+                            end
+                        end
+                    end
+                end
+
+                -- Get respawn time
+                local respawnTime = "Unknown"
+                if unit and unit.coords then
+                    for _, coord in ipairs(unit.coords) do
+                        if coord[4] and coord[4] > 0 then
+                            local seconds = coord[4]
+                            if seconds >= 3600 then
+                                respawnTime = math.floor(seconds / 3600) .. "h"
+                            elseif seconds >= 60 then
+                                respawnTime = math.floor(seconds / 60) .. "m"
+                            else
+                                respawnTime = seconds .. "s"
+                            end
+                            break
+                        end
+                    end
+                end
+
+                table.insert(results, {
+                    rareId = rareId,
+                    rareName = rareName,
+                    level = rareLevel,
+                    coords = unit and unit.coords or {},
+                    isInCurrentZone = isInCurrentZone,
+                    respawn = respawnTime
+                })
+            end
+        end
+
+        processedRares = batchEnd
+
+        -- Update progress
+        local progress = math.floor((processedRares / totalRares) * 100)
+        pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Processing rares... " .. progress .. "% (" .. #results .. " found)|r")
+
+        -- Continue processing or finish
+        if processedRares < totalRares and isSearching then
+            local nextBatchFrame = CreateFrame("Frame")
+            nextBatchFrame:SetScript("OnUpdate", function()
+                this:SetScript("OnUpdate", nil)
+                if isSearching then
+                    ProcessBatch()
+                end
+            end)
+        else
+            if isSearching then
+                isSearching = false
+                -- Sort: current zone first, then by level desc
+                table.sort(results, function(a, b)
+                    if a.isInCurrentZone ~= b.isInCurrentZone then
+                        return a.isInCurrentZone
+                    end
+                    return a.level > b.level
+                end)
+
+                DisplayRareResults(results, currentZone, searchTerm)
+            end
+        end
+    end
+
+    ProcessBatch()
+end
+
+-- Lazy loading search for working quests
+function PerformWorkingSearchLazy(searchTerm)
+    if not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then
+        pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "No quests data available|r")
+        return
+    end
+
+    local results = {}
+
+    -- Convert quests to array for processing
+    local questsToProcess = {}
+    for questId, quest in pairs(pfDB["quests"]["data"]) do
+        table.insert(questsToProcess, {questId = questId, quest = quest})
+    end
+
+    local totalQuests = #questsToProcess
+    local processedQuests = 0
+    local batchSize = 50 -- Process 50 quests per frame
+    local workingCount = 0
+
+    ClearResults()
+
+    local function ProcessBatch()
+        local batchEnd = math.min(processedQuests + batchSize, totalQuests)
+
+        for i = processedQuests + 1, batchEnd do
+            local questData = questsToProcess[i]
+            local quest = questData.quest
+
+            if quest.start and (quest.start.U or quest.start.O) then
+                workingCount = workingCount + 1
+            end
+        end
+
+        processedQuests = batchEnd
+
+        -- Update progress
+        local progress = math.floor((processedQuests / totalQuests) * 100)
+        pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Processing quests... " .. progress .. "% (" .. workingCount .. " working)|r")
+
+        -- Continue processing or finish
+        if processedQuests < totalQuests and isSearching then
+            local nextBatchFrame = CreateFrame("Frame")
+            nextBatchFrame:SetScript("OnUpdate", function()
+                this:SetScript("OnUpdate", nil)
+                if isSearching then
+                    ProcessBatch()
+                end
+            end)
+        else
+            if isSearching then
+                isSearching = false
+                DisplayWorkingQuestResults({workingCount})
+            end
+        end
+    end
+
+    ProcessBatch()
+end
+
+-- Lazy loading search for validation
+function PerformValidationSearchLazy(searchTerm)
+    if not pfDB then
+        pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "pfDB not loaded|r")
+        return
+    end
+
+    local results = {}
+    local validationSteps = {
+        "Checking quest database integrity...",
+        "Validating NPC coordinates...",
+        "Checking item requirements...",
+        "Validating zone data...",
+        "Checking quest chains..."
+    }
+
+    local currentStep = 1
+    local totalSteps = #validationSteps
+
+    ClearResults()
+
+    local function ProcessValidation()
+        -- Simulate validation work
+        pfDebugBrowser.statusText:SetText(COLORS.WARNING .. validationSteps[currentStep] .. " (" .. currentStep .. "/" .. totalSteps .. ")|r")
+
+        currentStep = currentStep + 1
+
+        if currentStep <= totalSteps and isSearching then
+            local nextStepFrame = CreateFrame("Frame")
+            nextStepFrame:SetScript("OnUpdate", function()
+                this:SetScript("OnUpdate", nil)
+                if isSearching then
+                    ProcessValidation()
+                end
+            end)
+        else
+            if isSearching then
+                isSearching = false
+                table.insert(results, "Validation completed successfully")
+                DisplayGenericResults(results, "Validation", searchTerm)
+            end
+        end
+    end
+
+    ProcessValidation()
+end
+
+-- Generic lazy loading for any other categories
+function PerformGenericSearchLazy(searchTerm)
+    local category = debugCategories[activeCategory]
+    if not category or not category.searchFunction then
+        pfDebugBrowser.statusText:SetText(COLORS.ERROR .. "Category not implemented|r")
+        return
+    end
+
+    -- Simulate processing with small delay
+    pfDebugBrowser.statusText:SetText(COLORS.WARNING .. "Processing " .. category.name .. "...|r")
+
+    local processFrame = CreateFrame("Frame")
+    processFrame:SetScript("OnUpdate", function()
+        this:SetScript("OnUpdate", nil)
+        if isSearching then
+            isSearching = false
+            local results, extra = category.searchFunction(searchTerm)
+            DisplayGenericResults(results, extra, searchTerm)
+        end
+    end)
 end
 
 -- Display ItemReq search results
@@ -1552,7 +2597,7 @@ function DisplayItemReqResults(results, currentZone, searchTerm)
         questBtn.itemInfo:SetText(COLORS.SUBHEADER .. "Item: " .. result.itemName .. " [" .. result.itemId .. "] - " .. targetCount .. " targets|r")
         questBtn.itemInfo:SetJustifyH("LEFT")
         questBtn.itemInfo:SetJustifyV("TOP")
-        
+
         -- Zone info in gold (third line)
         local zoneText = ""
         if result.zones and #result.zones > 0 then
@@ -1895,7 +2940,9 @@ function DisplayCoordsResults(results, summary, searchTerm)
         coordBtn.locationInfo = coordBtn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         coordBtn.locationInfo:SetPoint("TOPLEFT", coordBtn.entityName, "BOTTOMLEFT", 0, -3)
         coordBtn.locationInfo:SetPoint("BOTTOMRIGHT", coordBtn, "BOTTOMRIGHT", -5, 5)
-        coordBtn.locationInfo:SetText(COLORS.GOLD .. "Zone: " .. result.zoneName .. " | Coords: (50.0, 50.0)" .. questText .. "|r")
+        local zoneName = result.zoneName or "Unknown Zone"
+        local coords = result.x and result.y and "(" .. result.x .. "," .. result.y .. ")" or "No Coords"
+        coordBtn.locationInfo:SetText(COLORS.GOLD .. "Zone: " .. zoneName .. " | Coords: " .. coords .. questText .. "|r")
         coordBtn.locationInfo:SetJustifyH("LEFT")
         coordBtn.locationInfo:SetJustifyV("TOP")
 
@@ -1914,7 +2961,7 @@ function DisplayCoordsResults(results, summary, searchTerm)
                 else
                     maps = pfDatabase:SearchObjectID(entityId)
                 end
-                
+
                 local bestMap = pfDatabase:GetBestMap(maps)
                 if bestMap then
                     pfMap:ShowMapID(bestMap)
@@ -1931,10 +2978,11 @@ function DisplayCoordsResults(results, summary, searchTerm)
             this:SetBackdropColor(0.15, 0.15, 0.2, 0.9)
 
             GameTooltip:SetOwner(this, "ANCHOR_RIGHT")
-            GameTooltip:SetText(result.type .. " " .. result.id .. " at 50,50", 1, 1, 1)
-            GameTooltip:AddLine("Zone: " .. result.zoneName, 0.8, 1, 0.8)
-            GameTooltip:AddLine("Coordinates: (50.0, 50.0)", 1, 0.8, 0.8)
-            
+            local coords = result.x and result.y and "(" .. result.x .. "," .. result.y .. ")" or (result.coordInfo or "No Coords")
+            GameTooltip:SetText(result.type .. " " .. result.id, 1, 1, 1)
+            GameTooltip:AddLine("Zone: " .. (result.zoneName or "Unknown Zone"), 0.8, 1, 0.8)
+            GameTooltip:AddLine("Coordinates: " .. coords, 1, 0.8, 0.8)
+
             if result.questIds and #result.questIds > 0 then
                 GameTooltip:AddLine(" ", 1, 1, 1)
                 GameTooltip:AddLine("Related Quests:", 1, 1, 0.5)
@@ -1943,7 +2991,7 @@ function DisplayCoordsResults(results, summary, searchTerm)
                         GameTooltip:AddLine("... and more", 0.8, 0.8, 0.8)
                         break
                     end
-                    
+
                     local questName = "Quest " .. qId
                     if pfDB and pfDB["quests"] and pfDB["quests"]["loc"] and pfDB["quests"]["loc"][qId] then
                         local questData = pfDB["quests"]["loc"][qId]
@@ -1961,7 +3009,7 @@ function DisplayCoordsResults(results, summary, searchTerm)
             GameTooltip:AddLine("Click to show on map", 0.5, 0.5, 1)
             GameTooltip:Show()
         end)
-        
+
         coordBtn:SetScript("OnLeave", function()
             -- Restore original alternating color
             if i % 2 == 0 then
@@ -2004,7 +3052,7 @@ function DisplayCoordsGroupedResults(results)
         local zoneId = result.zoneId
         if not zoneGroups[zoneId] then
             zoneGroups[zoneId] = {
-                zoneName = result.zoneName,
+                zoneName = result.zoneName or "Unknown Zone",
                 zoneId = zoneId,
                 entities = {}
             }
@@ -2104,7 +3152,7 @@ function DisplayCoordsGroupedResults(results)
 
             local maxShown = 10
             local entityCount = 0
-            
+
             -- Show NPCs first
             for _, entity in ipairs(zoneGroup.entities) do
                 if entity.type == "NPC" and entityCount < maxShown then
@@ -2116,7 +3164,7 @@ function DisplayCoordsGroupedResults(results)
                     entityCount = entityCount + 1
                 end
             end
-            
+
             -- Then show Objects
             for _, entity in ipairs(zoneGroup.entities) do
                 if entity.type == "Object" and entityCount < maxShown then
@@ -2137,7 +3185,7 @@ function DisplayCoordsGroupedResults(results)
             GameTooltip:AddLine("Click to filter by this zone", 0.5, 0.5, 1)
             GameTooltip:Show()
         end)
-        
+
         zoneBtn:SetScript("OnLeave", function()
             -- Restore original alternating color
             if i % 2 == 0 then
