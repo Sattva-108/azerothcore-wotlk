@@ -2,8 +2,11 @@ import os, re, csv
 from collections import defaultdict
 
 # ----------------------- CONFIG -----------------------
-# No zone restrictions – process all quests
-ALLOWED_ZONES: set[str] = set()
+ALLOWED_ZONES = {
+    'Durotar',
+    'The Barrens',
+    'Orgrimmar',
+}
 
 # Expansion thresholds (same logic as previous script)
 def wowhead_prefix(qid: int) -> str:
@@ -88,16 +91,12 @@ def extract_ids(pattern: str, text: str):
 print('Parsing quest names from quest_template.sql (may take a moment)...')
 quest_id_to_name: dict[int, str] = {}
 try:
-    # Capture quest ID and the first quoted Title allowing escaped quotes (\')
-    name_re = re.compile(r"\(\s*(\d+)[^']*'((?:[^'\\]|\\.)*)'", re.DOTALL)
+    name_re = re.compile(r"\((\d+),[^']*'([^']+)'", re.DOTALL)
     with open(QUEST_TEMPLATE_SQL, 'r', encoding='utf-8', errors='ignore') as fsql:
         for line in fsql:
             m = name_re.search(line)
             if m:
-                qid = int(m.group(1))
-                raw = m.group(2)
-                # unescape \' → '
-                qname = raw.replace("\\'", "'")
+                qid, qname = int(m.group(1)), m.group(2)
                 quest_id_to_name[qid] = qname
     print(f'Collected {len(quest_id_to_name):,} quest names from SQL')
 except FileNotFoundError:
@@ -111,7 +110,6 @@ with open(QUESTS_LUA, 'r', encoding='utf-8', errors='ignore') as fin, \
     writer.writerow(['Quest Link', 'Completion Time'])
 
     kept = 0
-    rows = []
     for line in fin:
         if ('["start"]' not in line) or ('["end"]' not in line) or ('["obj"]' not in line):
             continue
@@ -138,27 +136,19 @@ with open(QUESTS_LUA, 'r', encoding='utf-8', errors='ignore') as fin, \
         for oid in end_objs:
             zone_names.update(get_zones_for_id(oid, is_object=True))
 
-        # (Optional) If user still provided allowed zones, honor them; if set empty, skip filtering
-        if ALLOWED_ZONES and not zone_names.intersection(ALLOWED_ZONES):
+        # intersect with allowed zones
+        if not zone_names.intersection(ALLOWED_ZONES):
             continue
-
-        # Extract quest level and class flag
-        m_lvl = re.search(r'\["lvl"\]\s*=\s*(-?\d+)', line)
-        lvl = int(m_lvl.group(1)) if m_lvl else 0
-        is_class = '["class"]' in line
 
         link = f'https://www.wowhead.com/{wowhead_prefix(qid)}/quest={qid}'
 
+        # Build Google-sheets formula; if name missing, fall back to wowhead title
         qname = quest_id_to_name.get(qid, f'Quest {qid}')
+
+        # Escape any double quotes in display text
         disp = qname.replace('"', '""')
         formula = f'=HYPERLINK("{link}", "{disp}")'
-
-        rows.append((is_class, lvl, qid, formula))
+        writer.writerow([formula, ''])
         kept += 1
 
-    # Sort: non-class quests first by level, then id; class quests afterwards
-    rows.sort(key=lambda t: (t[0], t[1], t[2]))  # is_class False(0) before True(1)
-    for _isc, _lvl, _qid, _formula in rows:
-        writer.writerow([_formula, ''])
-
-print(f'Generated {kept} quests. Output -> {OUTPUT_TSV}') 
+print(f'Generated {kept} quests limited to zones: {", ".join(sorted(ALLOWED_ZONES))}. Output -> {OUTPUT_TSV}') 
