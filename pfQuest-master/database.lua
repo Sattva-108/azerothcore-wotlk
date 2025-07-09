@@ -344,7 +344,8 @@ local bitclasses = {
   [64] = "SHAMAN",
   [128] = "MAGE",
   [256] = "WARLOCK",
-  [1024] = "DRUID"
+  [1024] = "DRUID",
+  [2048] = "HERO"
 }
 
 -- make it public for extensions
