@@ -199,9 +199,9 @@ function calculate_minimap_coordinates(area_data, dungeon_fallback)
     end
   end
   
-  -- Calculate dimensions using DBC→coordinates formula (same as working file)
-  local width = math.abs(locRight - locLeft)
-  local height = math.abs(locTop - locBottom)
+  -- Calculate dimensions using DBC→coordinates formula with Ascension scaling
+  local width = math.abs(locRight - locLeft) * 0.634
+  local height = math.abs(locTop - locBottom) * 0.634
   
   -- Validate dimensions
   if width == 0 or height == 0 then

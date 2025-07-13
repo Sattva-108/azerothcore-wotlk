@@ -1,2 +1,1 @@
-pfDB["zones"]["enUS-ascension"] = {
-  }
+pfDB["zones"]["enUS-ascension"] = {}
