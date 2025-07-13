@@ -1500,11 +1500,13 @@ function pfMap:GetChainSummary(questid)
             local hasObjectObjectives = false
 
             -- Analyze quest objectives to determine icons needed
+            local hasAreaObjectives = false
             if qData["obj"] then
                 for objKey, obj in pairs(qData["obj"]) do
                     if objKey == "U" then hasKillObjectives = true end
                     if objKey == "I" or objKey == "IR" then hasItemObjectives = true end
                     if objKey == "O" then hasObjectObjectives = true end
+                    if objKey == "A" then hasAreaObjectives = true end
                 end
             end
 
@@ -1519,14 +1521,14 @@ function pfMap:GetChainSummary(questid)
             for zone, _ in pairs(objectiveZones) do
                 local zoneWithIcon = zone
                 -- Add appropriate icon based on objective types
-                if hasKillObjectives and hasItemObjectives then
-                    zoneWithIcon = "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t " .. zone
-                elseif hasKillObjectives then
-                    zoneWithIcon = "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t " .. zone
-                elseif hasItemObjectives then
-                    zoneWithIcon = "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t " .. zone
-                elseif hasObjectObjectives then
-                    zoneWithIcon = "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t " .. zone
+                local icons = ""
+                if hasKillObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t" end
+                if hasItemObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t" end
+                if hasObjectObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t" end
+                if hasAreaObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\arrow:12:12:0:0|t" end
+                
+                if icons ~= "" then
+                    zoneWithIcon = icons .. " " .. zone
                 end
                 table.insert(objZonesList, zoneWithIcon)
             end
@@ -1537,14 +1539,17 @@ function pfMap:GetChainSummary(questid)
             if cleanObjZonesStr == endNPCZone then
                 -- Same zone for objectives and turn-in, show only once with icons
                 local zoneWithIcons = endNPCZone
-                if hasKillObjectives and hasItemObjectives then
-                    zoneWithIcons = "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t " .. endNPCZone
-                elseif hasKillObjectives then
-                    zoneWithIcons = "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t " .. endNPCZone
-                elseif hasItemObjectives then
-                    zoneWithIcons = "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t " .. endNPCZone
-                elseif hasObjectObjectives then
-                    zoneWithIcons = "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t " .. endNPCZone
+                local icons = ""
+                if hasKillObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t" end
+                if hasItemObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t" end
+                if hasObjectObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t" end
+                if hasAreaObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\arrow:12:12:0:0|t" end
+                
+                -- If no objectives, this is a turn-in only quest
+                if icons == "" then
+                    zoneWithIcons = "|cff555555[|cffffcc00?|cff555555]|r " .. endNPCZone
+                else
+                    zoneWithIcons = icons .. " " .. endNPCZone
                 end
                 summary = questCounter .. ". " .. questName .. " - " .. zoneWithIcons
             else
