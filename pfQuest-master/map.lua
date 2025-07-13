@@ -1307,6 +1307,7 @@ function pfMap:GetChainSummary(questid)
     local chainSummary = {}
     local visited = {}
     local questCounter = 1
+    local isFirstQuest = true
 
     local function addChainInfo(qid)
         if visited[qid] or questCounter > 10 then return end -- Prevent infinite loops, max 10 quests in summary
@@ -1557,11 +1558,19 @@ function pfMap:GetChainSummary(questid)
                 else
                     zoneWithIcons = icons .. " " .. endNPCZone
                 end
-                summary = questCounter .. ". " .. questName .. " - " .. zoneWithIcons
+                if isFirstQuest then
+                    summary = "|cffffffff>|r " .. questName .. " - " .. zoneWithIcons
+                else
+                    summary = (questCounter - 1) .. ". " .. questName .. " - " .. zoneWithIcons
+                end
             else
                 -- Different zones, show both with turn-in icon
                 local turnInZone = "|cff555555[|cffffcc00?|cff555555]|r " .. endNPCZone
-                summary = questCounter .. ". " .. questName .. " - " .. objZonesStr .. " - " .. turnInZone
+                if isFirstQuest then
+                    summary = "|cffffffff>|r " .. questName .. " - " .. objZonesStr .. " - " .. turnInZone
+                else
+                    summary = (questCounter - 1) .. ". " .. questName .. " - " .. objZonesStr .. " - " .. turnInZone
+                end
             end
 
             -- Debug: Show what objectives were found and where
@@ -1590,6 +1599,7 @@ function pfMap:GetChainSummary(questid)
 
             table.insert(chainSummary, summary)
             questCounter = questCounter + 1
+            isFirstQuest = false
 
             -- Process chain quests
             if qData["chain"] then
