@@ -1503,6 +1503,7 @@ function pfMap:GetChainSummary(questid)
             local summary = questCounter .. ". " .. questName .. " - " .. objZonesStr .. " - " .. endNPCZone
 
             -- Debug: Show what objectives were found and where
+            --[[ COMMENTED OUT FOR LESS SPAM
             print("QUEST DEBUG " .. qid .. " (" .. questName .. "):")
             if qData["obj"] then
                 for objKey, obj in pairs(qData["obj"]) do
@@ -1523,6 +1524,7 @@ function pfMap:GetChainSummary(questid)
             print("  End zone: " .. endNPCZone)
             print("  Summary: " .. summary)
             print("")
+            --]]
 
             table.insert(chainSummary, summary)
             questCounter = questCounter + 1
@@ -1609,7 +1611,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
     -- Function that performs BFS connected search and returns results plus hash
     local function buildCluster()
-        print("Cluster: Fresh scan for", currentNode.spawn)
+        -- print("Cluster: Fresh scan for", currentNode.spawn)
         local results = {}
         local qTitles = {}
         local visitedSpawn = {}
@@ -1912,7 +1914,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         local shouldCreateNewCycle = (not pfMap.cycleData) or (not isSameCluster)
 
         if shouldCreateNewCycle then
-            print("Cycling: Creating NEW cycle data for cluster:", clusterHash)
+            -- print("Cycling: Creating NEW cycle data for cluster:", clusterHash)
             pfMap.cycleData = {allSpawns = allSpawns, nodeHash = currentNode.spawn}
             pfMap.cycleIndex = 1
             pfMap.expandedSpawnIndex = 1
@@ -1926,22 +1928,22 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
                 -- Try direct questid field first (new improved structure)
                 if allSpawns[1].questid then
                     pfMap.activeQuestId = allSpawns[1].questid
-                    print("Cycling: Initial questid", pfMap.activeQuestId, "for", allSpawns[1].spawn)
+                    -- print("Cycling: Initial questid", pfMap.activeQuestId, "for", allSpawns[1].spawn)
                 elseif allSpawns[1].node then
                     for title, meta in pairs(allSpawns[1].node) do
                         if meta.questid then
                             pfMap.activeQuestId = meta.questid
-                            print("Cycling: Initial questid", pfMap.activeQuestId, "for", allSpawns[1].spawn)
+                            -- print("Cycling: Initial questid", pfMap.activeQuestId, "for", allSpawns[1].spawn)
                             break
                         end
                     end
                 end
             end
 
-            print("Cycling: Initialized with", table.getn(allSpawns), "spawns")
+            -- print("Cycling: Initialized with", table.getn(allSpawns), "spawns")
         else
             -- Re-use current cycle data but add any NEW spawns that were discovered
-            print("Cycling: REUSING cycle data for same cluster")
+            -- print("Cycling: REUSING cycle data for same cluster")
 
             if pfMap.cycleData and pfMap.cycleData.allSpawns then
                 local existing = {}
@@ -2681,7 +2683,7 @@ pfMap:SetScript("OnEvent", function()
             pfMap.clearTimer:SetScript("OnUpdate", nil)
             pfMap.clearTimer = nil
         end
-        print("Map Change: Cleared all cycling data and cache")
+        -- print("Map Change: Cleared all cycling data and cache")
 
         pfMap:UpdateNodes()
         last_zone = zone
@@ -2770,7 +2772,7 @@ pfMap:SetScript("OnUpdate", function()
                 end
 
                 local activeSpawn = pfMap.cycleData.allSpawns[pfMap.expandedSpawnIndex]
-                print("Cycling: Expanded", activeSpawn.spawn, "(" .. pfMap.expandedSpawnIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")")
+                -- print("Cycling: Expanded", activeSpawn.spawn, "(" .. pfMap.expandedSpawnIndex .. "/" .. table.getn(pfMap.cycleData.allSpawns) .. ")")
 
                 -- Store active spawn's questid for Mark as Done functionality
                 pfMap.activeQuestId = nil
@@ -2778,12 +2780,12 @@ pfMap:SetScript("OnUpdate", function()
                 -- Try direct questid field first (new improved structure)
                 if activeSpawn.questid then
                     pfMap.activeQuestId = activeSpawn.questid
-                    print("Cycling: Stored questid", pfMap.activeQuestId, "for Mark as Done")
+                    -- print("Cycling: Stored questid", pfMap.activeQuestId, "for Mark as Done")
                 elseif activeSpawn.node then
                     for title, meta in pairs(activeSpawn.node) do
                         if meta.questid then
                             pfMap.activeQuestId = meta.questid
-                            print("Cycling: Stored questid", pfMap.activeQuestId, "for Mark as Done")
+                            -- print("Cycling: Stored questid", pfMap.activeQuestId, "for Mark as Done")
                             break
                         end
                     end
