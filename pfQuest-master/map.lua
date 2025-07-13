@@ -1512,13 +1512,13 @@ function pfMap:GetChainSummary(questid)
                 local zoneWithIcon = zone
                 -- Add appropriate icon based on objective types
                 if hasKillObjectives and hasItemObjectives then
-                    zoneWithIcon = "|TInterface\\AddOns\\pfQuest-wotlk\\img\\cluster_mob:12:12:0:0|t|TInterface\\AddOns\\pfQuest-wotlk\\img\\cluster_item:12:12:0:0|t " .. zone
+                    zoneWithIcon = "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t " .. zone
                 elseif hasKillObjectives then
-                    zoneWithIcon = "|TInterface\\AddOns\\pfQuest-wotlk\\img\\cluster_mob:12:12:0:0|t " .. zone
+                    zoneWithIcon = "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t " .. zone
                 elseif hasItemObjectives then
-                    zoneWithIcon = "|TInterface\\AddOns\\pfQuest-wotlk\\img\\cluster_item:12:12:0:0|t " .. zone
+                    zoneWithIcon = "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t " .. zone
                 elseif hasObjectObjectives then
-                    zoneWithIcon = "|TInterface\\AddOns\\pfQuest-wotlk\\img\\icon_object:12:12:0:0|t " .. zone
+                    zoneWithIcon = "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t " .. zone
                 end
                 table.insert(objZonesList, zoneWithIcon)
             end
