@@ -214,7 +214,10 @@ end
 
 -- Generate minimap.lua file
 function generate_minimap_file(minimap_data)
-  local output_file = "minimap-ascension.lua"
+  -- Create output directory if it doesn't exist
+  os.execute('mkdir output 2>nul || mkdir output 2>/dev/null || true')
+  
+  local output_file = "output/minimap-ascension.lua"
   
   print("Generating minimap file: " .. output_file)
   
@@ -295,7 +298,18 @@ function main()
   
   -- Generate output file
   if processed_count > 0 then
-    return generate_minimap_file(minimap_data)
+    local success = generate_minimap_file(minimap_data)
+    if success then
+      -- Copy to pfQuest-ascension db folder
+      print("Copying to pfQuest-ascension...")
+      local copy_result = os.execute('copy "output\\minimap-ascension.lua" "..\\pfQuest-ascension\\db\\minimap-ascension.lua" 2>nul || cp "output/minimap-ascension.lua" "../pfQuest-ascension/db/minimap-ascension.lua" 2>/dev/null')
+      if copy_result then
+        print("  SUCCESS: File copied to pfQuest-ascension/db/")
+      else
+        print("  WARNING: Could not copy to pfQuest-ascension/db/ - please copy manually")
+      end
+    end
+    return success
   else
     print("ERROR: No valid minimap data to generate")
     return false
