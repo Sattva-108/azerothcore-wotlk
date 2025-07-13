@@ -388,6 +388,11 @@ pfMap.xpRateDetector = {
     end
 }
 
+-- Create custom tooltip frame to avoid conflicts with other addons
+local pfQuestTooltip = CreateFrame("GameTooltip", "pfQuestTooltip", UIParent, "GameTooltipTemplate")
+pfQuestTooltip:SetFrameStrata("TOOLTIP")
+pfQuestTooltip:SetFrameLevel(100)
+
 pfMap.tooltip = CreateFrame("Frame" , "pfMapTooltip", GameTooltip)
 pfMap.tooltip:SetScript("OnShow", function()
     local focus = GetMouseFocus()
@@ -521,7 +526,7 @@ end
 function pfMap:ShowTooltip(meta, tooltip, forceCompact)
     local catch = nil
     local catch_obj = nil
-    local tooltip = tooltip or GameTooltip
+    local tooltip = tooltip or pfQuestTooltip
 
     -- Ultra lightweight: just store meta when tooltip shown
     pfMap.tooltipMeta = meta
@@ -1116,7 +1121,7 @@ function pfMap:NodeEnter()
         WorldMapPOIFrame.allowBlobTooltip = false
     end
 
-    local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
+    local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or pfQuestTooltip
 
     -- Use ANCHOR_CURSOR_LEFT with node - cursor anchors only work with actual frames
     if this ~= tooltip then
@@ -1126,13 +1131,13 @@ function pfMap:NodeEnter()
     end
 
     -- Remember the node that is currently showing a tooltip
-    -- CRITICAL FIX: Don't let GameTooltip set itself as current node
-    if this ~= GameTooltip and this ~= WorldMapTooltip then
+    -- CRITICAL FIX: Don't let tooltips set themselves as current node
+    if this ~= pfQuestTooltip and this ~= WorldMapTooltip then
         pfMap.tooltipCurrentNode = this
     end
 
-    -- Only proceed with tooltip if this is a valid node (not GameTooltip itself)
-    if this ~= GameTooltip and this ~= WorldMapTooltip then
+    -- Only proceed with tooltip if this is a valid node (not tooltip itself)
+    if this ~= pfQuestTooltip and this ~= WorldMapTooltip then
         local spawnName = this.spawn or UNKNOWN
         local originalSpawn = this.spawn
 
@@ -1644,7 +1649,7 @@ end
 
 function pfMap:ShowClusterTooltip(currentNode, tooltip)
     -- Ensure we start with a clean tooltip to avoid duplicated lines
-    tooltip = tooltip or GameTooltip
+    tooltip = tooltip or pfQuestTooltip
     if tooltip.ClearLines then
         tooltip:ClearLines()
     end
@@ -1800,7 +1805,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
                 if currentNode.cluster then
                     text = pfQuest_Loc["Hold <Ctrl> To Hide Cluster"]
-                elseif tooltip == GameTooltip then
+                elseif tooltip == pfQuestTooltip then
                     text = pfQuest_Loc["Hold <Ctrl> To Hide Minimap Nodes"]
                 elseif not currentNode.texture then
                     text = pfQuest_Loc["Click Node To Change Color"]
@@ -2262,7 +2267,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
         if currentNode.cluster then
             text = pfQuest_Loc["Hold <Ctrl> To Hide Cluster"]
-        elseif tooltip == GameTooltip then
+        elseif tooltip == pfQuestTooltip then
             text = pfQuest_Loc["Hold <Ctrl> To Hide Minimap Nodes"]
         elseif not currentNode.texture then
             text = pfQuest_Loc["Click Node To Change Color"]
@@ -2305,7 +2310,7 @@ function pfMap:NodeLeave()
         WorldMapPOIFrame.allowBlobTooltip = true
     end
 
-    local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
+    local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or pfQuestTooltip
     tooltip:Hide()
     pfMap.highlight = nil
     pfMap.clusterHighlights = nil -- Clear cluster highlights
@@ -2326,7 +2331,7 @@ function pfMap:NodeLeave()
         local stillActive = false
 
         -- Check if any tooltip is still shown or mouse is over map areas
-        if (GameTooltip:IsShown() and MouseIsOver(GameTooltip)) or
+        if (pfQuestTooltip:IsShown() and MouseIsOver(pfQuestTooltip)) or
            (WorldMapTooltip:IsShown() and MouseIsOver(WorldMapTooltip)) or
            MouseIsOver(WorldMapButton) or MouseIsOver(pfMap.drawlayer) then
             stillActive = true
@@ -2806,8 +2811,8 @@ pfMap:SetScript("OnUpdate", function()
                 local canShow = tt:IsShown() or MouseIsOver(pfMap.tooltipCurrentNode)
 
                 if canShow then
-                    -- Don't rebuild if tooltipCurrentNode is GameTooltip itself
-                    if pfMap.tooltipCurrentNode == GameTooltip or pfMap.tooltipCurrentNode == WorldMapTooltip then
+                    -- Don't rebuild if tooltipCurrentNode is tooltip itself
+                    if pfMap.tooltipCurrentNode == pfQuestTooltip or pfMap.tooltipCurrentNode == WorldMapTooltip then
                         return
                     end
 
@@ -2822,7 +2827,7 @@ pfMap:SetScript("OnUpdate", function()
             end
         end
 
-        rebuildTooltip(GameTooltip)
+        rebuildTooltip(pfQuestTooltip)
         if WorldMapTooltip then
             rebuildTooltip(WorldMapTooltip)
         end
