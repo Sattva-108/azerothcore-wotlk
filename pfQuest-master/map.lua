@@ -988,33 +988,33 @@ function pfMap:NodeClick()
         local questidToMark = nil
 
         -- DETAILED DEBUG: Check cycling state at click time
-        print("=== MARK AS DONE DEBUG ===")
-        print("Clicked frame questid:", this.questid)
-        print("Clicked frame spawn:", this.spawn)
-        print("pfMap.activeQuestId:", pfMap.activeQuestId)
-        print("pfMap.activeSpawnName:", pfMap.activeSpawnName)
-        print("pfMap.cycleData exists:", pfMap.cycleData ~= nil)
+        --print("=== MARK AS DONE DEBUG ===")
+        --print("Clicked frame questid:", this.questid)
+        --print("Clicked frame spawn:", this.spawn)
+        --print("pfMap.activeQuestId:", pfMap.activeQuestId)
+        --print("pfMap.activeSpawnName:", pfMap.activeSpawnName)
+        --print("pfMap.cycleData exists:", pfMap.cycleData ~= nil)
 
         -- PRIORITY 1: For clusters, use cycling system's activeQuestId
         if pfMap.cycleData and pfMap.activeQuestId and not pfQuest_history[pfMap.activeQuestId] then
             questidToMark = pfMap.activeQuestId
-            print("Mark as Done: Using cycling activeQuestId", questidToMark, "from", pfMap.activeSpawnName, "(cluster)")
+            --print("Mark as Done: Using cycling activeQuestId", questidToMark, "from", pfMap.activeSpawnName, "(cluster)")
         -- PRIORITY 2: For single NPCs, use clicked frame's questid
         elseif this.questid and this.texture and this.layer < 5 and not pfQuest_history[this.questid] then
             questidToMark = this.questid
-            print("Mark as Done: Using clicked frame questid", questidToMark, "from", this.spawn, "(single NPC)")
+            --print("Mark as Done: Using clicked frame questid", questidToMark, "from", this.spawn, "(single NPC)")
         -- PRIORITY 3: Fallback to activeQuestId for edge cases
         elseif pfMap.activeQuestId and not pfQuest_history[pfMap.activeQuestId] then
             questidToMark = pfMap.activeQuestId
-            print("Mark as Done: Using fallback activeQuestId", questidToMark, "from", pfMap.activeSpawnName, "(fallback)")
+            --print("Mark as Done: Using fallback activeQuestId", questidToMark, "from", pfMap.activeSpawnName, "(fallback)")
         end
 
         if not questidToMark then
-            print("ERROR: No questid found to mark as done!")
+            --print("ERROR: No questid found to mark as done!")
             -- Если не можем найти квест для пометки, всё равно удаляем узел
             -- чтобы не зависать визуально на уже выполненных квестах
             if this.node and this.title and this.node[this.title] then
-                print("Force removing visual node since all quests appear completed")
+                --print("Force removing visual node since all quests appear completed")
             end
         end
 
@@ -1022,11 +1022,11 @@ function pfMap:NodeClick()
         local shouldDeleteNode = false
         if questidToMark then
             if pfQuest_history[questidToMark] then
-                print("Quest", questidToMark, "is already marked as done - but will still remove node")
+                --print("Quest", questidToMark, "is already marked as done - but will still remove node")
                 shouldDeleteNode = true
             else
                 pfQuest_history[questidToMark] = { time(), UnitLevel("player") }
-                print("Successfully marked quest", questidToMark, "as done")
+                --print("Successfully marked quest", questidToMark, "as done")
 
                 -- Очистить квест из всех кэшей и структур данных
                 pfMap:ClearQuestFromCaches(questidToMark)
@@ -1039,7 +1039,7 @@ function pfMap:NodeClick()
                 shouldDeleteNode = true
             end
         end
-        print("===========================")
+        --print("===========================")
 
         if shouldDeleteNode and this.node and this.title and this.node[this.title] then
             -- delete node from map
@@ -1525,7 +1525,7 @@ function pfMap:GetChainSummary(questid)
                 if hasKillObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t" end
                 if hasItemObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t" end
                 if hasObjectObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t" end
-                if hasAreaObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\arrow:12:12:0:0|t" end
+                if hasAreaObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_misc:12:12:0:0|t" end
                 
                 if icons ~= "" then
                     zoneWithIcon = icons .. " " .. zone
@@ -1543,7 +1543,7 @@ function pfMap:GetChainSummary(questid)
                 if hasKillObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t" end
                 if hasItemObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t" end
                 if hasObjectObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t" end
-                if hasAreaObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\arrow:12:12:0:0|t" end
+                if hasAreaObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_misc:12:12:0:0|t" end
                 
                 -- If no objectives, this is a turn-in only quest
                 if icons == "" then
