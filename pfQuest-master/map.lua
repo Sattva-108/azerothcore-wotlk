@@ -1112,16 +1112,29 @@ function pfMap:NodeEnter()
 
     local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
 
-    -- Use ANCHOR_CURSOR_LEFT with node - cursor anchors only work with actual frames
-tooltip:SetOwner(this, "ANCHOR_CURSOR_RIGHT", 10, 5)
+    -- Use ANCHOR_CURSOR_LEFT with node - cursor anchors only work with actual frames  
+    if this ~= tooltip then
+        tooltip:SetOwner(this, "ANCHOR_CURSOR_RIGHT", 10, 5)
+    else
+        tooltip:SetOwner(UIParent, "ANCHOR_CURSOR_RIGHT", 10, 5)
+    end
 
     -- Remember the node that is currently showing a tooltip
-    pfMap.tooltipCurrentNode = this
+    -- CRITICAL FIX: Don't let GameTooltip set itself as current node
+    if this ~= GameTooltip and this ~= WorldMapTooltip then
+        pfMap.tooltipCurrentNode = this
+    end
 
-    this.spawn = this.spawn or UNKNOWN
-
-    -- Use cluster tooltip by default
-    pfMap:ShowClusterTooltip(this, tooltip)
+    -- Only proceed with tooltip if this is a valid node (not GameTooltip itself)
+    if this ~= GameTooltip and this ~= WorldMapTooltip then
+        local spawnName = this.spawn or UNKNOWN
+        local originalSpawn = this.spawn
+        
+        -- Temporarily set spawn for tooltip (restore after)
+        this.spawn = spawnName
+        pfMap:ShowClusterTooltip(this, tooltip)
+        this.spawn = originalSpawn
+    end
 
     -- Save tooltip context for cycling
     if pfMap.cycleData then
@@ -1565,7 +1578,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     -- Early estimation of tooltip size for compact decisions
     local estimatedChars = 0
     estimatedChars = estimatedChars + string.len(currentNode.spawn or "")
-    for title, meta in pairs(currentNode.node) do
+    for title, meta in pairs(currentNode.node or {}) do
         if meta.quest then
             estimatedChars = estimatedChars + string.len(meta.quest or "")
         end
@@ -1587,7 +1600,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
     end
 
     local isCurrentNodeQuestGiver = false
-    for __t, __m in pairs(currentNode.node) do
+    for __t, __m in pairs(currentNode.node or {}) do
         if IsQuestGiver(__m) then
             isCurrentNodeQuestGiver = true
             break
@@ -1618,7 +1631,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
 
         -- seed queue with current node coords
         local seedX, seedY
-        for t,m in pairs(currentNode.node) do if m.x and m.y then seedX,seedY=tonumber(m.x),tonumber(m.y); break end end
+        for t,m in pairs(currentNode.node or {}) do if m.x and m.y then seedX,seedY=tonumber(m.x),tonumber(m.y); break end end
         if not seedX then return results,qTitles,"" end
 
         local queue={{x=seedX,y=seedY,node=currentNode}}
@@ -1690,7 +1703,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         nodeCount = 1
 
         -- Add current node's quests to highlight
-        for title, meta in pairs(currentNode.node) do
+        for title, meta in pairs(currentNode.node or {}) do
             if meta.quest then
                 questTitles[meta.quest] = true
             end
@@ -1703,7 +1716,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             tooltip:AddDoubleLine(pfQuest_Loc["Type"] .. ":", (currentNode.spawntype or UNKNOWN), .8,.8,.8, 1,1,1)
             tooltip:AddDoubleLine(pfQuest_Loc["Respawn"] .. ":", (currentNode.respawn or UNKNOWN), .8,.8,.8, 1,1,1)
 
-            for title, meta in pairs(currentNode.node) do
+            for title, meta in pairs(currentNode.node or {}) do
                 pfMap:ShowTooltip(meta, tooltip)
             end
 
@@ -1823,7 +1836,7 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
         local currentQuestId = nil
         local currentTitle = nil
         if currentNode.node then
-            for title, meta in pairs(currentNode.node) do
+            for title, meta in pairs(currentNode.node or {}) do
                 if meta.questid then
                     currentQuestId = meta.questid
                     currentTitle = title
@@ -2714,10 +2727,20 @@ pfMap:SetScript("OnUpdate", function()
         pfMap.lastAlt = alt
 
         local function rebuildTooltip(tt)
-            if pfMap.tooltipCurrentNode and tt and tt:IsShown() then
-                tt:ClearLines()
-                pfMap:ShowClusterTooltip(pfMap.tooltipCurrentNode, tt)
-                tt:Show()
+            if pfMap.tooltipCurrentNode and tt then
+                -- Check if tooltip is actually visible or can be shown
+                local canShow = tt:IsShown() or MouseIsOver(pfMap.tooltipCurrentNode)
+                
+                if canShow then
+                    -- Don't rebuild if tooltipCurrentNode is GameTooltip itself
+                    if pfMap.tooltipCurrentNode == GameTooltip or pfMap.tooltipCurrentNode == WorldMapTooltip then
+                        return
+                    end
+                    
+                    tt:ClearLines()
+                    pfMap:ShowClusterTooltip(pfMap.tooltipCurrentNode, tt)
+                    tt:Show()
+                end
             elseif pfMap.tooltipMeta and tt and tt:IsShown() then
                 tt:ClearLines()
                 pfMap:ShowTooltip(pfMap.tooltipMeta, tt)
