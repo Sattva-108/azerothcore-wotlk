@@ -1508,6 +1508,14 @@ function pfMap:GetChainSummary(questid)
                 end
             end
 
+            -- Collect clean zone names for comparison
+            local cleanZonesList = {}
+            for zone, _ in pairs(objectiveZones) do
+                table.insert(cleanZonesList, zone)
+            end
+            local cleanObjZonesStr = table.getn(cleanZonesList) > 0 and table.concat(cleanZonesList, ", ") or endNPCZone
+            
+            -- Create zones with icons for display
             for zone, _ in pairs(objectiveZones) do
                 local zoneWithIcon = zone
                 -- Add appropriate icon based on objective types
@@ -1526,12 +1534,22 @@ function pfMap:GetChainSummary(questid)
 
             -- Create summary without zone duplication
             local summary
-            if objZonesStr == endNPCZone then
-                -- Same zone for objectives and turn-in, show only once
-                summary = questCounter .. ". " .. questName .. " - " .. endNPCZone
+            if cleanObjZonesStr == endNPCZone then
+                -- Same zone for objectives and turn-in, show only once with icons
+                local zoneWithIcons = endNPCZone
+                if hasKillObjectives and hasItemObjectives then
+                    zoneWithIcons = "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t " .. endNPCZone
+                elseif hasKillObjectives then
+                    zoneWithIcons = "|T"..pfQuestConfig.path.."\\img\\cluster_mob:12:12:0:0|t " .. endNPCZone
+                elseif hasItemObjectives then
+                    zoneWithIcons = "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t " .. endNPCZone
+                elseif hasObjectObjectives then
+                    zoneWithIcons = "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t " .. endNPCZone
+                end
+                summary = questCounter .. ". " .. questName .. " - " .. zoneWithIcons
             else
                 -- Different zones, show both with turn-in icon
-                local turnInZone = "[?] " .. endNPCZone
+                local turnInZone = "|cff555555[|cffffcc00?|cff555555]|r " .. endNPCZone
                 summary = questCounter .. ". " .. questName .. " - " .. objZonesStr .. " - " .. turnInZone
             end
 
