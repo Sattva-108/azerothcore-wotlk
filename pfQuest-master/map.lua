@@ -657,7 +657,13 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
                     local chainTotalXP = pfMap:GetChainTotalXP(meta["questid"])
 
                     if chainCount > 0 then
-                        local chainText = "Chain: " .. chainCount .. " quests (" .. chainTotalXP .. " XP total)"
+                        local chainText
+                        if UnitXPMax("player") == 0 then
+                            -- Max level player - hide XP info
+                            chainText = "Chain: " .. chainCount .. " quests"
+                        else
+                            chainText = "Chain: " .. chainCount .. " quests (" .. chainTotalXP .. " XP total)"
+                        end
                         tooltip:AddLine(chainText, .6, .8, 1)
 
                         -- Alt expand
