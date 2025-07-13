@@ -1112,7 +1112,7 @@ function pfMap:NodeEnter()
 
     local tooltip = this:GetParent() == WorldMapButton and WorldMapTooltip or GameTooltip
 
-    -- Use ANCHOR_CURSOR_LEFT with node - cursor anchors only work with actual frames  
+    -- Use ANCHOR_CURSOR_LEFT with node - cursor anchors only work with actual frames
     if this ~= tooltip then
         tooltip:SetOwner(this, "ANCHOR_CURSOR_RIGHT", 10, 5)
     else
@@ -1129,7 +1129,7 @@ function pfMap:NodeEnter()
     if this ~= GameTooltip and this ~= WorldMapTooltip then
         local spawnName = this.spawn or UNKNOWN
         local originalSpawn = this.spawn
-        
+
         -- Temporarily set spawn for tooltip (restore after)
         this.spawn = spawnName
         pfMap:ShowClusterTooltip(this, tooltip)
@@ -1493,14 +1493,47 @@ function pfMap:GetChainSummary(questid)
                 end
             end
 
-            -- Convert objective zones table to comma-separated string
+            -- Convert objective zones table to comma-separated string with icons
             local objZonesList = {}
+            local hasKillObjectives = false
+            local hasItemObjectives = false
+            local hasObjectObjectives = false
+
+            -- Analyze quest objectives to determine icons needed
+            if qData["obj"] then
+                for objKey, obj in pairs(qData["obj"]) do
+                    if objKey == "U" then hasKillObjectives = true end
+                    if objKey == "I" or objKey == "IR" then hasItemObjectives = true end
+                    if objKey == "O" then hasObjectObjectives = true end
+                end
+            end
+
             for zone, _ in pairs(objectiveZones) do
-                table.insert(objZonesList, zone)
+                local zoneWithIcon = zone
+                -- Add appropriate icon based on objective types
+                if hasKillObjectives and hasItemObjectives then
+                    zoneWithIcon = "|TInterface\\AddOns\\pfQuest-wotlk\\img\\cluster_mob:12:12:0:0|t|TInterface\\AddOns\\pfQuest-wotlk\\img\\cluster_item:12:12:0:0|t " .. zone
+                elseif hasKillObjectives then
+                    zoneWithIcon = "|TInterface\\AddOns\\pfQuest-wotlk\\img\\cluster_mob:12:12:0:0|t " .. zone
+                elseif hasItemObjectives then
+                    zoneWithIcon = "|TInterface\\AddOns\\pfQuest-wotlk\\img\\cluster_item:12:12:0:0|t " .. zone
+                elseif hasObjectObjectives then
+                    zoneWithIcon = "|TInterface\\AddOns\\pfQuest-wotlk\\img\\icon_object:12:12:0:0|t " .. zone
+                end
+                table.insert(objZonesList, zoneWithIcon)
             end
             local objZonesStr = table.getn(objZonesList) > 0 and table.concat(objZonesList, ", ") or endNPCZone
 
-            local summary = questCounter .. ". " .. questName .. " - " .. objZonesStr .. " - " .. endNPCZone
+            -- Create summary without zone duplication
+            local summary
+            if objZonesStr == endNPCZone then
+                -- Same zone for objectives and turn-in, show only once
+                summary = questCounter .. ". " .. questName .. " - " .. endNPCZone
+            else
+                -- Different zones, show both with turn-in icon
+                local turnInZone = "[?] " .. endNPCZone
+                summary = questCounter .. ". " .. questName .. " - " .. objZonesStr .. " - " .. turnInZone
+            end
 
             -- Debug: Show what objectives were found and where
             --[[ COMMENTED OUT FOR LESS SPAM
@@ -2732,13 +2765,13 @@ pfMap:SetScript("OnUpdate", function()
             if pfMap.tooltipCurrentNode and tt then
                 -- Check if tooltip is actually visible or can be shown
                 local canShow = tt:IsShown() or MouseIsOver(pfMap.tooltipCurrentNode)
-                
+
                 if canShow then
                     -- Don't rebuild if tooltipCurrentNode is GameTooltip itself
                     if pfMap.tooltipCurrentNode == GameTooltip or pfMap.tooltipCurrentNode == WorldMapTooltip then
                         return
                     end
-                    
+
                     tt:ClearLines()
                     pfMap:ShowClusterTooltip(pfMap.tooltipCurrentNode, tt)
                     tt:Show()
