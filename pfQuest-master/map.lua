@@ -393,12 +393,8 @@ local pfQuestTooltip = CreateFrame("GameTooltip", "pfQuestTooltip", UIParent, "G
 pfQuestTooltip:SetFrameStrata("TOOLTIP")
 pfQuestTooltip:SetFrameLevel(100)
 
-pfMap.tooltip = CreateFrame("Frame" , "pfMapTooltip", UIParent)
-pfMap.tooltip:RegisterEvent("UPDATE_MOUSEOVER_UNIT")
-pfMap.tooltip:RegisterEvent("CURSOR_UPDATE")
-
--- Separate function for pfQuest tooltip processing
-local function pfQuestTooltipHandler()
+pfMap.tooltip = CreateFrame("Frame" , "pfMapTooltip", GameTooltip)
+pfMap.tooltip:SetScript("OnShow", function()
     local focus = GetMouseFocus()
     -- abort on pfQuest nodes
     if focus and focus.title then return end
@@ -414,7 +410,6 @@ local function pfQuestTooltipHandler()
     name = string.gsub(name, "|c%x%x%x%x%x%x%x%x", "")
     name = string.gsub(name, "|r", "")
 
-    -- ONLY process if pfQuest has information for this object/NPC
     if pfMap.tooltips[name] and pfMap.tooltips[name] then
         -- Calculate total tooltip size first
         local totalEstimatedChars = 0
@@ -425,11 +420,6 @@ local function pfQuestTooltipHandler()
         end
         local shouldCompact = (totalEstimatedChars > 200)
 
-        -- Save original NPC lines count BEFORE adding pfQuest content
-        if not pfMap.originalNPCLines then
-            pfMap.originalNPCLines = GameTooltip:NumLines()
-        end
-        
         -- Show all tooltips with same compact setting
         for title, obj in pairs(pfMap.tooltips[name]) do
             if obj[zone] then
@@ -437,26 +427,6 @@ local function pfQuestTooltipHandler()
                 GameTooltip:Show()
             end
         end
-    end
-end
-
--- Event handler for mouseover units
-pfMap.tooltip:SetScript("OnEvent", function()
-    if event == "UPDATE_MOUSEOVER_UNIT" and UnitExists("mouseover") then
-        -- Small delay to let GameTooltip populate first
-        pfMap.tooltip.timer = GetTime() + 0.1
-    elseif event == "CURSOR_UPDATE" and pfMap.tooltip.timer and GetTime() > pfMap.tooltip.timer then
-        pfMap.tooltip.timer = nil
-        if GameTooltip:IsShown() then
-            pfQuestTooltipHandler()
-        end
-    end
-end)
-
--- Clear state when tooltip hides
-pfMap.tooltip:SetScript("OnUpdate", function()
-    if not GameTooltip:IsShown() and pfMap.originalNPCLines then
-        pfMap.originalNPCLines = nil
     end
 end)
 
@@ -2850,7 +2820,7 @@ pfMap:SetScript("OnUpdate", function()
                     pfMap:ShowClusterTooltip(pfMap.tooltipCurrentNode, tt)
                     tt:Show()
                 end
-            elseif pfMap.tooltipMeta and tt and tt:IsShown() and tt ~= GameTooltip then
+            elseif pfMap.tooltipMeta and tt and tt:IsShown() then
                 tt:ClearLines()
                 pfMap:ShowTooltip(pfMap.tooltipMeta, tt)
                 tt:Show()
@@ -2865,10 +2835,8 @@ pfMap:SetScript("OnUpdate", function()
                 local originalRightColors = {}
                 local originalRightTexts = {}
                 
-                -- Save only ORIGINAL NPC lines (not pfQuest added content)
-                local linesToSave = pfMap.originalNPCLines or 4  -- fallback to 4 if not set
-                
-                for i = 1, linesToSave do
+                -- Save all existing tooltip lines before clearing (using WoW 3.3.5 compatible method)
+                for i = 1, tt:NumLines() do
                     local leftLine = _G["GameTooltipTextLeft"..i]
                     local rightLine = _G["GameTooltipTextRight"..i]
                     
@@ -2912,7 +2880,7 @@ pfMap:SetScript("OnUpdate", function()
                     end
                     
                     -- Now add quest information (with recursion protection)
-                    pfQuestTooltipHandler()
+                    pfMap.tooltip:GetScript("OnShow")()
                 end)
                 
                 -- Ensure flag is always reset, even on error
@@ -2921,6 +2889,7 @@ pfMap:SetScript("OnUpdate", function()
                 -- Log errors for debugging (if needed)
                 if not success and err then
                     -- Silently handle error to avoid breaking tooltip functionality
+                    -- Could add debug print here if needed: DEFAULT_CHAT_FRAME:AddMessage("Tooltip rebuild error: " .. err)
                 end
             end
         end
