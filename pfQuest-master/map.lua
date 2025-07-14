@@ -2831,7 +2831,6 @@ pfMap:SetScript("OnUpdate", function()
         if WorldMapTooltip then
             rebuildTooltip(WorldMapTooltip)
         end
-        rebuildTooltip(GameTooltip)
     end
 
     -- Simple right-click cycling
