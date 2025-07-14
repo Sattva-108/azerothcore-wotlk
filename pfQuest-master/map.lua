@@ -2824,6 +2824,73 @@ pfMap:SetScript("OnUpdate", function()
                 tt:ClearLines()
                 pfMap:ShowTooltip(pfMap.tooltipMeta, tt)
                 tt:Show()
+            elseif tt == GameTooltip and tt:IsShown() then
+                -- Special case for GameTooltip NPC hover - preserve original NPC info
+                -- Prevent recursion by checking if we're already rebuilding
+                if pfMap.tooltipRebuilding then return end
+                pfMap.tooltipRebuilding = true
+                
+                local originalLines = {}
+                local originalLeftColors = {}
+                local originalRightColors = {}
+                local originalRightTexts = {}
+                
+                -- Save all existing tooltip lines before clearing (using WoW 3.3.5 compatible method)
+                for i = 1, tt:NumLines() do
+                    local leftLine = _G["GameTooltipTextLeft"..i]
+                    local rightLine = _G["GameTooltipTextRight"..i]
+                    
+                    if leftLine and leftLine:IsShown() then
+                        originalLines[i] = leftLine:GetText() or ""
+                        local r, g, b, a = leftLine:GetTextColor()
+                        originalLeftColors[i] = {r=r, g=g, b=b, a=a}
+                    end
+                    
+                    if rightLine and rightLine:IsShown() and rightLine:GetText() then
+                        originalRightTexts[i] = rightLine:GetText()
+                        local r, g, b, a = rightLine:GetTextColor()
+                        originalRightColors[i] = {r=r, g=g, b=b, a=a}
+                    end
+                end
+                
+                -- Clear and rebuild tooltip starting with original content
+                tt:ClearLines()
+                
+                -- Restore original NPC information (handle sparse arrays properly)
+                local success, err = pcall(function()
+                    for i = 1, table.getn(originalLines) do
+                        local text = originalLines[i]
+                        if text and text ~= "" then
+                            if originalRightTexts[i] then
+                                -- Double line (like "Level: 80")
+                                local leftColor = originalLeftColors[i] or {r=1, g=1, b=1}
+                                local rightColor = originalRightColors[i] or {r=1, g=1, b=1}
+                                tt:AddDoubleLine(
+                                    text, 
+                                    originalRightTexts[i],
+                                    leftColor.r, leftColor.g, leftColor.b,
+                                    rightColor.r, rightColor.g, rightColor.b
+                                )
+                            else
+                                -- Single line
+                                local color = originalLeftColors[i] or {r=1, g=1, b=1}
+                                tt:AddLine(text, color.r, color.g, color.b)
+                            end
+                        end
+                    end
+                    
+                    -- Now add quest information (with recursion protection)
+                    pfMap.tooltip:GetScript("OnShow")()
+                end)
+                
+                -- Ensure flag is always reset, even on error
+                pfMap.tooltipRebuilding = false
+                
+                -- Log errors for debugging (if needed)
+                if not success and err then
+                    -- Silently handle error to avoid breaking tooltip functionality
+                    -- Could add debug print here if needed: DEFAULT_CHAT_FRAME:AddMessage("Tooltip rebuild error: " .. err)
+                end
             end
         end
 
