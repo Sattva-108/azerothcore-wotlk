@@ -680,6 +680,27 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
                         end
                     end
                 end
+
+                -- Add unlock information
+                if meta["questid"] then
+                    local unlockCount = pfMap:CountUnlockedQuests(meta["questid"])
+                    if unlockCount > 0 then
+                        local unlockText = "Unlocks: " .. unlockCount .. " quests"
+                        tooltip:AddLine(unlockText, .6, .8, 1)
+                        
+                        if IsAltKeyDown() then
+                            local unlockSummary = pfMap:GetUnlockSummary(meta["questid"])
+                            if table.getn(unlockSummary) > 0 then
+                                tooltip:AddLine("", .5, .5, .5)  -- Empty line for separator spacing
+                                for _, uline in ipairs(unlockSummary) do
+                                    tooltip:AddLine("|cffaaaaaa" .. uline .. "|r", .7, .7, .7)
+                                end
+                            end
+                        else
+                            tooltip:AddLine("|cff00ff00[Alt]|r for unlocks", .5, .5, .5)
+                        end
+                    end
+                end
             end
         end
     else
