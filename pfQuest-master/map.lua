@@ -406,6 +406,10 @@ pfMap.tooltip:SetScript("OnShow", function()
     name = string.gsub(name, "|r", "")
 
     if pfMap.tooltips[name] and pfMap.tooltips[name] then
+        -- Build (or reset) the list of meta tables that belong to this tooltip so
+        -- we can properly rebuild it later (e.g. when <Alt> is pressed).
+        pfMap.tooltipMetaList = {}
+
         -- Calculate total tooltip size first
         local totalEstimatedChars = 0
         for title, obj in pairs(pfMap.tooltips[name]) do
@@ -415,12 +419,18 @@ pfMap.tooltip:SetScript("OnShow", function()
         end
         local shouldCompact = (totalEstimatedChars > 200)
 
-        -- Show all tooltips with same compact setting
+        -- Show all tooltips with same compact setting and remember their meta tables
         for title, obj in pairs(pfMap.tooltips[name]) do
             if obj[zone] then
+                table.insert(pfMap.tooltipMetaList, obj[zone])
                 pfMap:ShowTooltip(obj[zone], GameTooltip, shouldCompact)
                 GameTooltip:Show()
             end
+        end
+
+        -- If for some reason we did not collect any meta data, clear the list to avoid stale references
+        if table.getn(pfMap.tooltipMetaList) == 0 then
+            pfMap.tooltipMetaList = nil
         end
     end
 end)
@@ -2300,26 +2310,6 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             tooltip:AddLine("• Use <Right>-Click To Cycle Through All " .. table.getn(pfMap.cycleData.allSpawns) .. " NPCs", .5, .5, .8)
         end
 
-        -- Unlock information
-        local unlockCount = 0
-        if pfMap.activeQuestId then
-            unlockCount = pfMap:CountUnlockedQuests(pfMap.activeQuestId)
-        end
-        if unlockCount > 0 then
-            local unlockText = "Unlocks: " .. unlockCount .. " quests"
-            tooltip:AddLine(unlockText, .6, .8, 1)
-            if IsAltKeyDown() then
-                local unlockSummary = pfMap:GetUnlockSummary(pfMap.activeQuestId)
-                if table.getn(unlockSummary) > 0 then
-                    tooltip:AddLine("", .5, .5, .5)
-                    for _, uline in ipairs(unlockSummary) do
-                        tooltip:AddLine("|cffaaaaaa" .. uline .. "|r", .7, .7, .7)
-                    end
-                end
-            else
-                tooltip:AddLine("|cff00ff00[Alt]|r for unlocks", .5, .5, .5)
-            end
-        end
 
         tooltip:Show()
     end
@@ -2857,9 +2847,26 @@ pfMap:SetScript("OnUpdate", function()
                     pfMap:ShowClusterTooltip(pfMap.tooltipCurrentNode, tt)
                     tt:Show()
                 end
-            elseif pfMap.tooltipMeta and tt and tt:IsShown() then
+            elseif pfMap.tooltipMeta and not pfMap.tooltipMetaList and tt and tt:IsShown() then
                 tt:ClearLines()
                 pfMap:ShowTooltip(pfMap.tooltipMeta, tt)
+                tt:Show()
+            elseif pfMap.tooltipMetaList and tt and tt:IsShown() then
+                -- Rebuild tooltip using stored metas to preserve all information when Alt is pressed.
+                tt:ClearLines()
+                -- Compute compactness heuristic
+                local totalEstimatedChars = 0
+                for _, meta in ipairs(pfMap.tooltipMetaList) do
+                    if meta.spawn then totalEstimatedChars = totalEstimatedChars + string.len(meta.spawn) end
+                    if meta.quest then totalEstimatedChars = totalEstimatedChars + string.len(meta.quest) end
+                    if meta.questid then
+                        totalEstimatedChars = pfMap:addObjectiveChars(meta.questid, totalEstimatedChars)
+                    end
+                end
+                local shouldCompact = (totalEstimatedChars > 200)
+                for _, meta in ipairs(pfMap.tooltipMetaList) do
+                    pfMap:ShowTooltip(meta, tt, shouldCompact)
+                end
                 tt:Show()
             end
         end
