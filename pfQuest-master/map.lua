@@ -3036,11 +3036,18 @@ end
 function pfMap:CountUnlockedQuests(questid)
   local count = 0
   if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then return 0 end
+  
+  -- Get chain quest IDs to exclude from unlocks
+  local chainQuestIds = self:GetChainQuestIds(questid)
+  
   for id, data in pairs(pfDB["quests"]["data"]) do
     if data and data["pre"] then
       for _, pre in ipairs(data["pre"]) do
         if pre == questid then
-          count = count + 1
+          -- Skip if this quest is already in the chain
+          if not chainQuestIds[id] then
+            count = count + 1
+          end
           break
         end
       end
@@ -3053,12 +3060,19 @@ end
 function pfMap:GetUnlockSummary(questid)
   if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then return {} end
   local summary = {}
+  
+  -- Get chain quest IDs to exclude from unlocks
+  local chainQuestIds = self:GetChainQuestIds(questid)
+  
   for id, data in pairs(pfDB["quests"]["data"]) do
     if data and data["pre"] then
       for _, pre in ipairs(data["pre"]) do
         if pre == questid then
-          local qLoc = pfDB["quests"]["loc"] and pfDB["quests"]["loc"][id]
-          if qLoc and qLoc["T"] then table.insert(summary, qLoc["T"]) end
+          -- Skip if this quest is already in the chain
+          if not chainQuestIds[id] then
+            local qLoc = pfDB["quests"]["loc"] and pfDB["quests"]["loc"][id]
+            if qLoc and qLoc["T"] then table.insert(summary, qLoc["T"]) end
+          end
           break
         end
       end
@@ -3066,4 +3080,31 @@ function pfMap:GetUnlockSummary(questid)
   end
   table.sort(summary)
   return summary
+end
+
+-- Helper function to get all quest IDs in the chain
+function pfMap:GetChainQuestIds(questid)
+  local chainIds = {}
+  if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then 
+    return chainIds 
+  end
+
+  local visited = {}
+  
+  -- Recursively collect all chain quest IDs
+  local function collectChainIds(qid)
+    if visited[qid] then return end
+    visited[qid] = true
+    
+    local qData = pfDB["quests"]["data"][qid]
+    if qData and qData["chain"] then
+      for _, nextQuestId in ipairs(qData["chain"]) do
+        chainIds[nextQuestId] = true
+        collectChainIds(nextQuestId)
+      end
+    end
+  end
+  
+  collectChainIds(questid)
+  return chainIds
 end
