@@ -1523,7 +1523,7 @@ function pfMap:GetChainSummary(questid)
                 table.insert(cleanZonesList, zone)
             end
             local cleanObjZonesStr = table.getn(cleanZonesList) > 0 and table.concat(cleanZonesList, ", ") or endNPCZone
-            
+
             -- Create zones with icons for display
             for zone, _ in pairs(objectiveZones) do
                 local zoneWithIcon = zone
@@ -1533,7 +1533,7 @@ function pfMap:GetChainSummary(questid)
                 if hasItemObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t" end
                 if hasObjectObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t" end
                 if hasAreaObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_misc:12:12:0:0|t" end
-                
+
                 if icons ~= "" then
                     zoneWithIcon = icons .. " " .. zone
                 end
@@ -1551,7 +1551,7 @@ function pfMap:GetChainSummary(questid)
                 if hasItemObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_item:12:12:0:0|t" end
                 if hasObjectObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\icon_object:12:12:0:0|t" end
                 if hasAreaObjectives then icons = icons .. "|T"..pfQuestConfig.path.."\\img\\cluster_misc:12:12:0:0|t" end
-                
+
                 -- If no objectives, this is a turn-in only quest
                 if icons == "" then
                     zoneWithIcons = "|cff555555[|cffffcc00?|cff555555]|r " .. endNPCZone
@@ -2279,6 +2279,27 @@ function pfMap:ShowClusterTooltip(currentNode, tooltip)
             tooltip:AddLine("• Use <Right>-Click To Cycle Through All " .. table.getn(pfMap.cycleData.allSpawns) .. " NPCs", .5, .5, .8)
         end
 
+        -- Unlock information
+        local unlockCount = 0
+        if pfMap.activeQuestId then
+            unlockCount = pfMap:CountUnlockedQuests(pfMap.activeQuestId)
+        end
+        if unlockCount > 0 then
+            local unlockText = "Unlocks: " .. unlockCount .. " quests"
+            tooltip:AddLine(unlockText, .6, .8, 1)
+            if IsAltKeyDown() then
+                local unlockSummary = pfMap:GetUnlockSummary(pfMap.activeQuestId)
+                if table.getn(unlockSummary) > 0 then
+                    tooltip:AddLine("", .5, .5, .5)
+                    for _, uline in ipairs(unlockSummary) do
+                        tooltip:AddLine("|cffaaaaaa" .. uline .. "|r", .7, .7, .7)
+                    end
+                end
+            else
+                tooltip:AddLine("|cff00ff00[Alt]|r for unlocks", .5, .5, .5)
+            end
+        end
+
         tooltip:Show()
     end
 
@@ -2988,4 +3009,40 @@ if compat.client >= 30300 then
             end
         end
     end
+end
+
+-- Helper function to count quests unlocked by a given quest
+function pfMap:CountUnlockedQuests(questid)
+  local count = 0
+  if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then return 0 end
+  for id, data in pairs(pfDB["quests"]["data"]) do
+    if data and data["pre"] then
+      for _, pre in ipairs(data["pre"]) do
+        if pre == questid then
+          count = count + 1
+          break
+        end
+      end
+    end
+  end
+  return count
+end
+
+-- Helper function to list quests that become available after the given quest
+function pfMap:GetUnlockSummary(questid)
+  if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then return {} end
+  local summary = {}
+  for id, data in pairs(pfDB["quests"]["data"]) do
+    if data and data["pre"] then
+      for _, pre in ipairs(data["pre"]) do
+        if pre == questid then
+          local qLoc = pfDB["quests"]["loc"] and pfDB["quests"]["loc"][id]
+          if qLoc and qLoc["T"] then table.insert(summary, qLoc["T"]) end
+          break
+        end
+      end
+    end
+  end
+  table.sort(summary)
+  return summary
 end
