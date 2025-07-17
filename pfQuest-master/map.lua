@@ -436,10 +436,18 @@ pfMap.tooltip:SetScript("OnShow", function()
         end
 
         -- If for some reason we did not collect any meta data, clear the list to avoid stale references
-        if table.getn(pfMap.tooltipMetaList) == 0 then
+        if pfMap.tooltipMetaList and table.getn(pfMap.tooltipMetaList) == 0 then
             pfMap.tooltipMetaList = nil
         end
     end
+end)
+
+-- Simple cleanup on tooltip hide
+GameTooltip:HookScript("OnHide", function()
+    pfMap.tooltipCurrentNode = nil
+    pfMap.tooltipMeta = nil
+    pfMap.tooltipMetaList = nil
+    pfMap._origLines = nil
 end)
 
 -- dummy function that can be used by extensions
@@ -539,6 +547,11 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
     local catch = nil
     local catch_obj = nil
     local tooltip = tooltip or GameTooltip
+
+    -- Safety check: don't set meta if tooltip is not shown
+    if not GameTooltip:IsShown() then
+        return
+    end
 
     -- Ultra lightweight: just store meta when tooltip shown
     pfMap.tooltipMeta = meta
@@ -704,7 +717,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
                     if unlockCount > 0 then
                         local unlockText = "Unlocks: " .. unlockCount .. " quests"
                         tooltip:AddLine(unlockText, .6, .8, 1)
-                        
+
                         if IsAltKeyDown() then
                             local unlockSummary = pfMap:GetUnlockSummary(meta["questid"])
                             if table.getn(unlockSummary) > 0 then
@@ -2861,15 +2874,15 @@ pfMap:SetScript("OnUpdate", function()
             elseif pfMap.tooltipMetaList and tt and tt:IsShown() then
                 -- Rebuild tooltip using stored metas to preserve all information when Alt is pressed.
                 tt:ClearLines()
-                
+
                 -- Restore original Blizzard lines first
                 for _, line in ipairs(pfMap._origLines or {}) do
                     tt:AddLine(line, 1, 1, 1, true)
                 end
-                
+
                 -- Compute compactness heuristic
                 local totalEstimatedChars = 0
-                for _, meta in ipairs(pfMap.tooltipMetaList) do
+                for _, meta in ipairs(pfMap.tooltipMetaList or {}) do
                     if meta.spawn then totalEstimatedChars = totalEstimatedChars + string.len(meta.spawn) end
                     if meta.quest then totalEstimatedChars = totalEstimatedChars + string.len(meta.quest) end
                     if meta.questid then
@@ -2877,7 +2890,7 @@ pfMap:SetScript("OnUpdate", function()
                     end
                 end
                 local shouldCompact = (totalEstimatedChars > 200)
-                for _, meta in ipairs(pfMap.tooltipMetaList) do
+                for _, meta in ipairs(pfMap.tooltipMetaList or {}) do
                     pfMap:ShowTooltip(meta, tt, shouldCompact)
                 end
                 tt:Show()
@@ -3056,10 +3069,10 @@ end
 function pfMap:CountUnlockedQuests(questid)
   local count = 0
   if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then return 0 end
-  
+
   -- Get chain quest IDs to exclude from unlocks
   local chainQuestIds = self:GetChainQuestIds(questid)
-  
+
   for id, data in pairs(pfDB["quests"]["data"]) do
     if data and data["pre"] then
       for _, pre in ipairs(data["pre"]) do
@@ -3080,10 +3093,10 @@ end
 function pfMap:GetUnlockSummary(questid)
   if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then return {} end
   local summary = {}
-  
+
   -- Get chain quest IDs to exclude from unlocks
   local chainQuestIds = self:GetChainQuestIds(questid)
-  
+
   for id, data in pairs(pfDB["quests"]["data"]) do
     if data and data["pre"] then
       for _, pre in ipairs(data["pre"]) do
@@ -3105,17 +3118,17 @@ end
 -- Helper function to get all quest IDs in the chain
 function pfMap:GetChainQuestIds(questid)
   local chainIds = {}
-  if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then 
-    return chainIds 
+  if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then
+    return chainIds
   end
 
   local visited = {}
-  
+
   -- Recursively collect all chain quest IDs
   local function collectChainIds(qid)
     if visited[qid] then return end
     visited[qid] = true
-    
+
     local qData = pfDB["quests"]["data"][qid]
     if qData and qData["chain"] then
       for _, nextQuestId in ipairs(qData["chain"]) do
@@ -3124,7 +3137,7 @@ function pfMap:GetChainQuestIds(questid)
       end
     end
   end
-  
+
   collectChainIds(questid)
   return chainIds
 end
