@@ -442,13 +442,23 @@ pfMap.tooltip:SetScript("OnShow", function()
     end
 end)
 
--- Simple cleanup on tooltip hide
+-- Separate cleanup for each tooltip type
 GameTooltip:HookScript("OnHide", function()
-    pfMap.tooltipCurrentNode = nil
+    -- Clear GameTooltip-specific data
     pfMap.tooltipMeta = nil
     pfMap.tooltipMetaList = nil
     pfMap._origLines = nil
 end)
+
+-- WorldMapTooltip cleanup when needed
+if WorldMapTooltip then
+    WorldMapTooltip:HookScript("OnHide", function()
+        -- Clear WorldMap-specific data only when really hiding
+        if not WorldMapFrame:IsShown() then
+            pfMap.tooltipCurrentNode = nil
+        end
+    end)
+end
 
 -- dummy function that can be used by extensions
 -- to avoid drawing the minimap at some locations
@@ -549,7 +559,7 @@ function pfMap:ShowTooltip(meta, tooltip, forceCompact)
     local tooltip = tooltip or GameTooltip
 
     -- Safety check: don't set meta if tooltip is not shown
-    if not GameTooltip:IsShown() then
+    if not tooltip:IsShown() then
         return
     end
 
