@@ -398,6 +398,13 @@ pfMap.tooltip:SetScript("OnShow", function()
     -- abort if tooltips are disabled
     if pfQuest_config.showtooltips == "0" then return end
 
+    -- Save original Blizzard tooltip lines
+    pfMap._origLines = {}
+    for i = 1, GameTooltip:NumLines() do
+        local txt = _G["GameTooltipTextLeft"..i]:GetText()
+        pfMap._origLines[#pfMap._origLines+1] = txt
+    end
+
     local name = getglobal("GameTooltipTextLeft1") and getglobal("GameTooltipTextLeft1"):GetText() or "__NONE__"
     local zone = pfMap:GetMapID(GetCurrentMapContinent(), GetCurrentMapZone())
 
@@ -2854,6 +2861,12 @@ pfMap:SetScript("OnUpdate", function()
             elseif pfMap.tooltipMetaList and tt and tt:IsShown() then
                 -- Rebuild tooltip using stored metas to preserve all information when Alt is pressed.
                 tt:ClearLines()
+                
+                -- Restore original Blizzard lines first
+                for _, line in ipairs(pfMap._origLines or {}) do
+                    tt:AddLine(line, 1, 1, 1, true)
+                end
+                
                 -- Compute compactness heuristic
                 local totalEstimatedChars = 0
                 for _, meta in ipairs(pfMap.tooltipMetaList) do
