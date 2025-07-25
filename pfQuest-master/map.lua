@@ -2682,7 +2682,7 @@ function pfMap:UpdateMinimap()
     local color = pfQuest_config["spawncolors"] == "1" and "spawn" or "title"
     local mapID = pfMap:GetMapIDByName(GetRealZoneText())
     local indoor = minimap_indoor()
-  local mapZoom = minimap_zoom[indoor] and minimap_zoom[indoor][mZoom] or Minimap:GetViewRadius() * 2
+    local mapZoom = minimap_zoom[indoor] and minimap_zoom[indoor][mZoom] or Minimap:GetViewRadius() * 2
     local mapWidth = minimap_sizes[mapID] and minimap_sizes[mapID][1] or 0
     local mapHeight = minimap_sizes[mapID] and minimap_sizes[mapID][2] or 0
 

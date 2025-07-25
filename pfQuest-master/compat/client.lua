@@ -31,7 +31,7 @@ end
 pfQuestCompat.GetDifficultyColor = GetQuestDifficultyColor or GetDifficultyColor
 
 -- wotlk: changed from QuestWatchFrame to WatchFrame in 3.3
-pfQuestCompat.QuestWatchFrame = QuestWatchFrame or WatchFrame
+pfQuestCompat.QuestWatchFrame = QuestWatchFrame or WatchFrame or ObjectiveTrackerFrame
 
 -- wotlk: changed questlog related frame names in 3.3
 pfQuestCompat.QuestLogQuestTitle = QuestLogQuestTitle or QuestInfoTitleHeader
@@ -42,14 +42,14 @@ pfQuestCompat.QuestLogDescriptionTitle = QuestLogDescriptionTitle or QuestInfoDe
 -- wotlk: disable builtin quest progress tooltips
 if client >= 30300 then
   SetCVar("showQuestTrackingTooltips", 0)
-  
+
   -- restore showQuestTrackingTooltips on logout
   local function OnEvent(self, event)
     if event == "PLAYER_LOGOUT" then
       SetCVar("showQuestTrackingTooltips", 1)
     end
   end
-  
+
   local frame = CreateFrame("Frame")
   frame:RegisterEvent("PLAYER_LOGOUT")
   frame:SetScript("OnEvent", OnEvent)
