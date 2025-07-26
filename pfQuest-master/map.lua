@@ -2566,6 +2566,9 @@ function pfMap:UpdateNodes()
     local i = 1
 
 
+    -- build zone index for tracker performance
+    pfQuest.tracker:BuildZoneIndex()
+    
     -- reset tracker
     pfQuest.tracker.Reset()
 

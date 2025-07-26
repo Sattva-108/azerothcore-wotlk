@@ -606,6 +606,281 @@ function tracker.ButtonAdd(title, node)
   tracker.ButtonEvent(tracker.buttons[id])
 end
 
+-- Zone-based quest index for performance - tracks where quests have ANY activity
+tracker.zoneIndex = {}
+
+-- Build zone index when map updates - includes start, objectives, and end locations
+function tracker:BuildZoneIndex()
+  self.zoneIndex = {}
+  
+  -- Index all quest locations from pfMap nodes (start/end NPCs and objectives)
+  if pfMap.nodes and pfMap.nodes["PFQUEST"] then
+    for zoneId, coords in pairs(pfMap.nodes["PFQUEST"]) do
+      for coordKey, questNodes in pairs(coords) do
+        for qtitle, meta in pairs(questNodes) do
+          if meta.questid then
+            if not self.zoneIndex[zoneId] then
+              self.zoneIndex[zoneId] = {}
+            end
+            self.zoneIndex[zoneId][meta.questid] = true
+          end
+        end
+      end
+    end
+  end
+  
+  -- Also index objective locations from quest database for comprehensive coverage
+  if pfDB and pfDB["quests"] and pfDB["quests"]["data"] then
+    for questid, questData in pairs(pfDB["quests"]["data"]) do
+      if questData.obj then
+        -- Check each objective type
+        for objType, objData in pairs(questData.obj) do
+          if type(objData) == "table" then
+            -- Process up to 5 objective entries per type
+            for i = 1, 5 do
+              local objId = objData[i]
+              if objId and type(objId) == "number" then
+                local mapId = nil
+                
+                -- Find zone based on objective type
+                if objType == "U" and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][objId] then
+                  -- NPC objective
+                  local npcData = pfDB["units"]["data"][objId]
+                  if npcData and npcData[1] and npcData[1][1] then
+                    mapId = npcData[1][1]
+                  elseif npcData and npcData["coords"] and npcData["coords"][1] and npcData["coords"][1][3] then
+                    mapId = npcData["coords"][1][3]
+                  end
+                elseif objType == "O" and pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objId] then
+                  -- Object objective
+                  local objectData = pfDB["objects"]["data"][objId]
+                  if objectData and objectData["coords"] and objectData["coords"][1] and objectData["coords"][1][3] then
+                    mapId = objectData["coords"][1][3]
+                  end
+                elseif objType == "I" and pfDB["items"] and pfDB["items"]["data"] and pfDB["items"]["data"][objId] then
+                  -- Item objective - check drop sources
+                  local itemData = pfDB["items"]["data"][objId]
+                  if itemData and itemData["U"] then
+                    -- Item drops from NPCs
+                    for npcId, _ in pairs(itemData["U"]) do
+                      if pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][npcId] then
+                        local npcData = pfDB["units"]["data"][npcId]
+                        if npcData and npcData[1] and npcData[1][1] then
+                          mapId = npcData[1][1]
+                          break
+                        elseif npcData and npcData["coords"] and npcData["coords"][1] and npcData["coords"][1][3] then
+                          mapId = npcData["coords"][1][3]
+                          break
+                        end
+                      end
+                    end
+                  end
+                  if not mapId and itemData and itemData["O"] then
+                    -- Item from objects
+                    for objectId, _ in pairs(itemData["O"]) do
+                      if pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId] then
+                        local objectData = pfDB["objects"]["data"][objectId]
+                        if objectData and objectData["coords"] and objectData["coords"][1] and objectData["coords"][1][3] then
+                          mapId = objectData["coords"][1][3]
+                          break
+                        end
+                      end
+                    end
+                  end
+                end
+                
+                -- Add quest to zone index if location found
+                if mapId then
+                  if not self.zoneIndex[mapId] then
+                    self.zoneIndex[mapId] = {}
+                  end
+                  self.zoneIndex[mapId][questid] = true
+                end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+end
+
+-- Check if quest has active objectives in current zone
+function tracker:HasActiveObjectiveInZone(questid, qlogid, currentZone)
+  if not questid or not qlogid or not currentZone then
+    return false
+  end
+  
+  local objectives = GetNumQuestLeaderBoards(qlogid)
+  if not objectives or objectives == 0 then
+    return false
+  end
+  
+  local questData = pfDB and pfDB["quests"] and pfDB["quests"]["data"] and pfDB["quests"]["data"][questid]
+  if not questData or not questData.obj then
+    return false
+  end
+  
+  -- Check each objective
+  for i = 1, objectives do
+    local text, _, done = GetQuestLogLeaderBoard(i, qlogid)
+    if not done then
+      -- This objective is not complete, check if it's in current zone
+      local objectiveInZone = self:IsObjectiveInZone(questData, i, currentZone)
+      if objectiveInZone then
+        return true
+      end
+    end
+  end
+  
+  return false
+end
+
+-- Helper function to check if specific objective is in given zone
+function tracker:IsObjectiveInZone(questData, objectiveIndex, zoneId)
+  if not questData.obj then return false end
+  
+  -- Check different objective types (U=units, O=objects, I=items)
+  for objType, objData in pairs(questData.obj) do
+    if type(objData) == "table" and objData[objectiveIndex] then
+      local objId = objData[objectiveIndex]
+      if objId and type(objId) == "number" then
+        -- Check zone based on objective type
+        if objType == "U" and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][objId] then
+          local npcData = pfDB["units"]["data"][objId]
+          if self:GetEntityZone(npcData) == zoneId then
+            return true
+          end
+        elseif objType == "O" and pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objId] then
+          local objectData = pfDB["objects"]["data"][objId]
+          if self:GetEntityZone(objectData) == zoneId then
+            return true
+          end
+        elseif objType == "I" and pfDB["items"] and pfDB["items"]["data"] and pfDB["items"]["data"][objId] then
+          local itemData = pfDB["items"]["data"][objId]
+          if self:GetItemSourceZone(itemData) == zoneId then
+            return true
+          end
+        end
+      end
+    end
+  end
+  
+  return false
+end
+
+-- Helper to get zone from entity data
+function tracker:GetEntityZone(entityData)
+  if entityData then
+    if entityData[1] and entityData[1][1] then
+      return entityData[1][1]
+    elseif entityData["coords"] and entityData["coords"][1] and entityData["coords"][1][3] then
+      return entityData["coords"][1][3]
+    end
+  end
+  return nil
+end
+
+-- Helper to get zone from item source data
+function tracker:GetItemSourceZone(itemData)
+  if not itemData then return nil end
+  
+  -- Check NPC sources
+  if itemData["U"] then
+    for npcId, _ in pairs(itemData["U"]) do
+      if pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][npcId] then
+        local zone = self:GetEntityZone(pfDB["units"]["data"][npcId])
+        if zone then return zone end
+      end
+    end
+  end
+  
+  -- Check object sources
+  if itemData["O"] then
+    for objectId, _ in pairs(itemData["O"]) do
+      if pfDB["objects"] and pfDB["objects"]["data"] and pfDB["objects"]["data"][objectId] then
+        local zone = self:GetEntityZone(pfDB["objects"]["data"][objectId])
+        if zone then return zone end
+      end
+    end
+  end
+  
+  return nil
+end
+
+-- Check if quest is part of a chain that has activity in the current zone
+function tracker:IsQuestChainActiveInZone(questid, currentZone, questsInZone)
+  if not questid or not pfDB or not pfDB["quests"] or not pfDB["quests"]["data"] then
+    return false
+  end
+
+  -- Check if any quest in this quest's chain has activity in current zone
+  local function checkChainQuests(qid, visited)
+    if visited[qid] then return false end
+    visited[qid] = true
+
+    local qData = pfDB["quests"]["data"][qid]
+    if not qData then return false end
+
+    -- If this chain quest has activity in current zone, show the original quest
+    if questsInZone[qid] then
+      return true
+    end
+
+    -- Recursively check follow-up quests in chain
+    if qData["chain"] then
+      for _, nextQuestId in ipairs(qData["chain"]) do
+        if checkChainQuests(nextQuestId, visited) then
+          return true
+        end
+      end
+    end
+
+    return false
+  end
+
+  -- Check if any quest that leads to this quest has activity in current zone
+  local function checkPredecessorChains(targetQuestId, visited)
+    if visited[targetQuestId] then return false end
+    visited[targetQuestId] = true
+
+    -- Look for quests that have this quest in their chain
+    for qid, qData in pairs(pfDB["quests"]["data"]) do
+      if qData["chain"] then
+        for _, chainQuestId in ipairs(qData["chain"]) do
+          if chainQuestId == targetQuestId then
+            -- Found a quest that leads to our target quest
+            if questsInZone[qid] then
+              return true -- The predecessor has activity in current zone
+            end
+            -- Recursively check this predecessor's chain
+            if checkPredecessorChains(qid, visited) then
+              return true
+            end
+          end
+        end
+      end
+    end
+
+    return false
+  end
+
+  local visited = {}
+  
+  -- Check forward chain (quests that follow this one)
+  if checkChainQuests(questid, visited) then
+    return true
+  end
+
+  -- Check backward chain (quests that precede this one)
+  visited = {} -- Reset visited for backward check
+  if checkPredecessorChains(questid, visited) then
+    return true
+  end
+
+  return false
+end
+
 function tracker.Reset()
   tracker:SetHeight(panelheight)
   for id, button in pairs(tracker.buttons) do
@@ -617,6 +892,17 @@ function tracker.Reset()
     button:Hide()
   end
 
+  -- Get current zone for filtering with safety checks
+  local currentZone = nil
+  local continent = GetCurrentMapContinent()
+  local zone = GetCurrentMapZone()
+  if continent and zone then
+    currentZone = pfMap:GetMapID(continent, zone)
+  end
+
+  -- Get quests available in current zone (O(1) lookup)
+  local questsInZone = tracker.zoneIndex[currentZone] or {}
+
   -- add tracked quests
   local _, numQuests = GetNumQuestLogEntries()
   local found = 0
@@ -627,8 +913,62 @@ function tracker.Reset()
     if title and not header then
       local watched = IsQuestWatched(qlogid)
       if watched then
-        local img = complete and pfQuestConfig.path.."\\img\\complete_c" or pfQuestConfig.path.."\\img\\complete"
-        pfQuest.tracker.ButtonAdd(title, { dummy = true, addon = "PFQUEST", texture = img })
+        -- Find questid for this title
+        local questid = nil
+        for qid, data in pairs(pfQuest.questlog) do
+          if data.title == title then
+            questid = qid
+            break
+          end
+        end
+
+        local shouldShow = false
+        
+        -- Check objectives to see if we need to do something in current zone
+        local objectives = GetNumQuestLeaderBoards(qlogid)
+        local hasActiveObjectiveInZone = false
+        local onlyTurnInObjective = true
+        local allObjectivesDone = true
+        
+        if objectives and objectives > 0 then
+          for i = 1, objectives do
+            local text, _, done = GetQuestLogLeaderBoard(i, qlogid)
+            if not done then
+              allObjectivesDone = false
+              -- Check if this objective text indicates it's not just a turn-in
+              -- Common turn-in patterns: numbers (kill/collect), "Return to", "Speak with", "Talk to"
+              if text then
+                local hasNumbers = string.find(text, "%d+/%d+")
+                local isReturn = string.find(text, "Return to") or string.find(text, "Верни")
+                local isSpeak = string.find(text, "Speak with") or string.find(text, "Talk to") or string.find(text, "Поговори")
+                
+                if hasNumbers or not (isReturn or isSpeak) then
+                  onlyTurnInObjective = false
+                end
+              end
+            end
+          end
+        end
+        
+        if questid and currentZone and questsInZone[questid] then
+          -- Quest has location in current zone
+          if allObjectivesDone or onlyTurnInObjective then
+            -- Show if all objectives done (turn-in) or only turn-in objective
+            shouldShow = true
+          else
+            -- Check if we have active objectives in this zone by analyzing objective locations
+            hasActiveObjectiveInZone = tracker:HasActiveObjectiveInZone(questid, qlogid, currentZone)
+            shouldShow = hasActiveObjectiveInZone
+          end
+        elseif not currentZone or not questid then
+          -- Fallback: show quest if no zone info or questid not found
+          shouldShow = true
+        end
+
+        if shouldShow then
+          local img = complete and pfQuestConfig.path.."\\img\\complete_c" or pfQuestConfig.path.."\\img\\complete"
+          pfQuest.tracker.ButtonAdd(title, { dummy = true, addon = "PFQUEST", texture = img })
+        end
       end
 
       found = found + 1
