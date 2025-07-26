@@ -45,7 +45,7 @@ local function ShowTooltip()
           GameTooltip:AddLine(" ")
         end
       end
-      
+
       -- Add quest experience information
       local questData = pfDB["quests"] and pfDB["quests"]["data"] and pfDB["quests"]["data"][this.node.questid]
       if questData then
@@ -54,7 +54,7 @@ local function ShowTooltip()
           local xpText = pfQuest_Loc["Experience"] and pfQuest_Loc["Experience"] or "Experience"
           local questLevel = (questData.lvl == -1) and UnitLevel("player") or questData.lvl
           xpText = xpText .. ": " .. pfMap:HexDifficultyColor(questLevel) .. questXP .. "|r"
-          
+
           -- Show server rate if detected and not 1x
           if pfMap.xpRateDetector then
             local serverRate = pfMap.xpRateDetector:GetCurrentRate()
@@ -63,7 +63,7 @@ local function ShowTooltip()
               xpText = xpText .. " " .. rateColor .. "(" .. serverRate .. "x)|r"
             end
           end
-          
+
           GameTooltip:AddLine(xpText, .8,.8,.8)
         end
       end
@@ -612,7 +612,7 @@ tracker.zoneIndex = {}
 -- Build zone index when map updates - includes start, objectives, and end locations
 function tracker:BuildZoneIndex()
   self.zoneIndex = {}
-  
+
   -- Index all quest locations from pfMap nodes (start/end NPCs and objectives)
   if pfMap.nodes and pfMap.nodes["PFQUEST"] then
     for zoneId, coords in pairs(pfMap.nodes["PFQUEST"]) do
@@ -628,7 +628,7 @@ function tracker:BuildZoneIndex()
       end
     end
   end
-  
+
   -- Also index objective locations from quest database for comprehensive coverage
   if pfDB and pfDB["quests"] and pfDB["quests"]["data"] then
     for questid, questData in pairs(pfDB["quests"]["data"]) do
@@ -641,7 +641,7 @@ function tracker:BuildZoneIndex()
               local objId = objData[i]
               if objId and type(objId) == "number" then
                 local mapId = nil
-                
+
                 -- Find zone based on objective type
                 if objType == "U" and pfDB["units"] and pfDB["units"]["data"] and pfDB["units"]["data"][objId] then
                   -- NPC objective
@@ -688,7 +688,7 @@ function tracker:BuildZoneIndex()
                     end
                   end
                 end
-                
+
                 -- Add quest to zone index if location found
                 if mapId then
                   if not self.zoneIndex[mapId] then
@@ -710,17 +710,17 @@ function tracker:HasActiveObjectiveInZone(questid, qlogid, currentZone)
   if not questid or not qlogid or not currentZone then
     return false
   end
-  
+
   local objectives = GetNumQuestLeaderBoards(qlogid)
   if not objectives or objectives == 0 then
     return false
   end
-  
+
   local questData = pfDB and pfDB["quests"] and pfDB["quests"]["data"] and pfDB["quests"]["data"][questid]
   if not questData or not questData.obj then
     return false
   end
-  
+
   -- Check each objective
   for i = 1, objectives do
     local text, _, done = GetQuestLogLeaderBoard(i, qlogid)
@@ -732,14 +732,14 @@ function tracker:HasActiveObjectiveInZone(questid, qlogid, currentZone)
       end
     end
   end
-  
+
   return false
 end
 
 -- Helper function to check if specific objective is in given zone
 function tracker:IsObjectiveInZone(questData, objectiveIndex, zoneId)
   if not questData.obj then return false end
-  
+
   -- Check different objective types (U=units, O=objects, I=items)
   for objType, objData in pairs(questData.obj) do
     if type(objData) == "table" and objData[objectiveIndex] then
@@ -765,7 +765,7 @@ function tracker:IsObjectiveInZone(questData, objectiveIndex, zoneId)
       end
     end
   end
-  
+
   return false
 end
 
@@ -784,7 +784,7 @@ end
 -- Helper to get zone from item source data
 function tracker:GetItemSourceZone(itemData)
   if not itemData then return nil end
-  
+
   -- Check NPC sources
   if itemData["U"] then
     for npcId, _ in pairs(itemData["U"]) do
@@ -794,7 +794,7 @@ function tracker:GetItemSourceZone(itemData)
       end
     end
   end
-  
+
   -- Check object sources
   if itemData["O"] then
     for objectId, _ in pairs(itemData["O"]) do
@@ -804,7 +804,7 @@ function tracker:GetItemSourceZone(itemData)
       end
     end
   end
-  
+
   return nil
 end
 
@@ -866,7 +866,7 @@ function tracker:IsQuestChainActiveInZone(questid, currentZone, questsInZone)
   end
 
   local visited = {}
-  
+
   -- Check forward chain (quests that follow this one)
   if checkChainQuests(questid, visited) then
     return true
@@ -923,13 +923,13 @@ function tracker.Reset()
         end
 
         local shouldShow = false
-        
+
         -- Check objectives to see if we need to do something in current zone
         local objectives = GetNumQuestLeaderBoards(qlogid)
         local hasActiveObjectiveInZone = false
         local onlyTurnInObjective = true
         local allObjectivesDone = true
-        
+
         if objectives and objectives > 0 then
           for i = 1, objectives do
             local text, _, done = GetQuestLogLeaderBoard(i, qlogid)
@@ -941,7 +941,7 @@ function tracker.Reset()
                 local hasNumbers = string.find(text, "%d+/%d+")
                 local isReturn = string.find(text, "Return to") or string.find(text, "Верни")
                 local isSpeak = string.find(text, "Speak with") or string.find(text, "Talk to") or string.find(text, "Поговори")
-                
+
                 if hasNumbers or not (isReturn or isSpeak) then
                   onlyTurnInObjective = false
                 end
@@ -949,7 +949,7 @@ function tracker.Reset()
             end
           end
         end
-        
+
         if questid and currentZone and questsInZone[questid] then
           -- Quest has location in current zone
           if allObjectivesDone or onlyTurnInObjective then
@@ -963,11 +963,12 @@ function tracker.Reset()
         elseif not currentZone or not questid then
           -- Fallback: show quest if no zone info or questid not found
           shouldShow = true
+        else
         end
 
         if shouldShow then
           local img = complete and pfQuestConfig.path.."\\img\\complete_c" or pfQuestConfig.path.."\\img\\complete"
-          pfQuest.tracker.ButtonAdd(title, { dummy = true, addon = "PFQUEST", texture = img })
+          pfQuest.tracker.ButtonAdd(title, { dummy = true, addon = "PFQUEST", texture = img, questid = questid })
         end
       end
 
