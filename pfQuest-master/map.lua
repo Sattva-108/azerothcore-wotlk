@@ -1240,11 +1240,6 @@ function pfMap:GetQuestSymbol(questTitle)
         symbol = "|cff555555[|cffffcc00!|cff555555]|r "  -- Yellow ! for available
     end
 
-    -- Minimal debug для quest 1022 только когда проблема
-    local isQuest1022 = questTitle and string.find(questTitle, "Воющая")
-    if isQuest1022 and not questInLog then
-        print("❗ [QUEST 1022] '" .. tostring(questTitle) .. "' НЕ НАЙДЕН в логе, показываем !")
-    end
 
     return symbol, questInLog, questComplete
 end
@@ -2967,10 +2962,6 @@ pfMap:SetScript("OnUpdate", function()
                     pfMap.clusterHighlights = nil -- Clear cluster highlights during cycling
                     pfMap.queue_update = GetTime()
                     
-                    -- Debug cycling highlight для quest 1022
-                    if activeSpawn.questid == 1022 or (activeSpawn.title and string.find(activeSpawn.title, "Воющая")) then
-                        print("🔄 [CYCLING] questid=" .. tostring(activeSpawn.questid) .. ", highlight='" .. tostring(activeSpawn.title) .. "'")
-                    end
                 end
             end
         elseif not isRightDown then
