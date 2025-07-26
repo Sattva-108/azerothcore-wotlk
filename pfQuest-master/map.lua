@@ -200,6 +200,10 @@ pfMap.minimap_indoor = minimap_indoor
 pfMap.minimap_zoom = minimap_zoom
 pfMap.minimap_sizes = minimap_sizes
 
+-- Ctrl+Map blob switching state
+pfMap.showBlizzardBlobs = false
+pfMap.originalQuestPOI = nil  -- Store original questPOI setting
+
 -- INSERT: Track the node that owns the currently displayed tooltip so we can fully rebuild it when Alt is pressed.
 pfMap.tooltipCurrentNode = nil
 
@@ -2861,6 +2865,64 @@ end)
 
 local hlstate, shiftstate, transition, hidecluster, fps, resetmap
 
+-- Functions for Ctrl+Map blob switching
+function pfMap:ShowBlizzardBlobs()
+    if compat.client >= 30300 and WorldMapPOIFrame then
+        WorldMapPOIFrame.allowBlobTooltip = true
+    end
+    
+    -- Store original questPOI setting and enable it
+    if pfMap.originalQuestPOI == nil then
+        pfMap.originalQuestPOI = GetCVar("questPOI")
+        SetCVar("questPOI", "1")
+    end
+    
+    -- Show blob frame
+    if WorldMapBlobFrame then
+        WorldMapBlobFrame:Show()
+    end
+    
+    -- Force refresh quest display
+    if WorldMapFrame_DisplayQuests then
+        WorldMapFrame_DisplayQuests()
+    end
+end
+
+function pfMap:HideBlizzardBlobs()
+    if compat.client >= 30300 and WorldMapPOIFrame then
+        WorldMapPOIFrame.allowBlobTooltip = false
+    end
+    
+    -- Restore original questPOI setting
+    if pfMap.originalQuestPOI ~= nil then
+        SetCVar("questPOI", pfMap.originalQuestPOI)
+        pfMap.originalQuestPOI = nil
+    end
+    
+    if WorldMapBlobFrame and WorldMapBlobFrame.Hide then
+        WorldMapBlobFrame:Hide()
+    end
+    if WorldMapFrame_ClearQuestPOIs then
+        WorldMapFrame_ClearQuestPOIs()
+    end
+end
+
+function pfMap:ShowPfQuestNodes()
+    for i, pin in pairs(pfMap.pins) do
+        if pin and pin.Show then
+            pin:Show()
+        end
+    end
+end
+
+function pfMap:HidePfQuestNodes()
+    for i, pin in pairs(pfMap.pins) do
+        if pin and pin.Hide then
+            pin:Hide()
+        end
+    end
+end
+
 pfMap:SetScript("OnUpdate", function()
     -- Ultra lightweight Alt check
     local alt = IsAltKeyDown()
@@ -3037,6 +3099,13 @@ pfMap:SetScript("OnUpdate", function()
     elseif resetmap == true then
         SetMapToCurrentZone()
         resetmap = nil
+        
+        -- Reset blob switching state when map closes
+        if pfMap.showBlizzardBlobs then
+            pfMap.showBlizzardBlobs = false
+            pfMap:HideBlizzardBlobs()
+            pfMap:ShowPfQuestNodes()
+        end
     end
 
     -- refresh minimap
@@ -3045,8 +3114,22 @@ pfMap:SetScript("OnUpdate", function()
     -- update hidecluster detection
     if controlkey.pressed then
         hidecluster = MouseIsOver(WorldMapFrame)
+        
+        -- Ctrl+Map blob switching: show Blizzard blobs, hide pfQuest nodes
+        if hidecluster and WorldMapFrame:IsShown() and not pfMap.showBlizzardBlobs then
+            pfMap.showBlizzardBlobs = true
+            pfMap:HidePfQuestNodes()
+            pfMap:ShowBlizzardBlobs()
+        end
     else
         hidecluster = nil
+        
+        -- Restore pfQuest nodes when Ctrl released
+        if pfMap.showBlizzardBlobs then
+            pfMap.showBlizzardBlobs = false
+            pfMap:HideBlizzardBlobs()
+            pfMap:ShowPfQuestNodes()
+        end
     end
 end)
 
