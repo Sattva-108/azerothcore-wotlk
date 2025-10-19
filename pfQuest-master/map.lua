@@ -551,7 +551,7 @@ function pfMap:GetQuestXP(questData)
 
     -- Step 5: Apply server rate (GetQuestRate)
     local serverRate = (pfMap.xpRateDetector and pfMap.xpRateDetector:GetCurrentRate()) or 1
-    xp = xp * serverRate
+    xp = xp * serverRate * 3
 
     -- Step 6: Final floor (as AzerothCore converts to uint32)
     return math.floor(xp)
@@ -1225,7 +1225,7 @@ function pfMap:GetQuestSymbol(questTitle)
 
     for qid=1, GetNumQuestLogEntries() do
         local qtitle, _, _, _, _, complete = compat.GetQuestLogTitle(qid)
-        
+
         if questTitle == qtitle or (questTitle and qtitle and string.lower(questTitle) == string.lower(qtitle)) then
             questInLog = true
             questComplete = complete
@@ -2574,7 +2574,7 @@ function pfMap:UpdateNodes()
 
     -- build zone index for tracker performance
     pfQuest.tracker:BuildZoneIndex()
-    
+
     -- reset tracker
     pfQuest.tracker.Reset()
 
@@ -2870,18 +2870,18 @@ function pfMap:ShowBlizzardBlobs()
     if compat.client >= 30300 and WorldMapPOIFrame then
         WorldMapPOIFrame.allowBlobTooltip = true
     end
-    
+
     -- Store original questPOI setting and enable it
     if pfMap.originalQuestPOI == nil then
         pfMap.originalQuestPOI = GetCVar("questPOI")
         SetCVar("questPOI", "1")
     end
-    
+
     -- Show blob frame
     if WorldMapBlobFrame then
         WorldMapBlobFrame:Show()
     end
-    
+
     -- Force refresh quest display
     if WorldMapFrame_DisplayQuests then
         WorldMapFrame_DisplayQuests()
@@ -2892,13 +2892,13 @@ function pfMap:HideBlizzardBlobs()
     if compat.client >= 30300 and WorldMapPOIFrame then
         WorldMapPOIFrame.allowBlobTooltip = false
     end
-    
+
     -- Restore original questPOI setting
     if pfMap.originalQuestPOI ~= nil then
         SetCVar("questPOI", pfMap.originalQuestPOI)
         pfMap.originalQuestPOI = nil
     end
-    
+
     if WorldMapBlobFrame and WorldMapBlobFrame.Hide then
         WorldMapBlobFrame:Hide()
     end
@@ -3023,7 +3023,7 @@ pfMap:SetScript("OnUpdate", function()
                     pfMap.highlight = activeSpawn.title
                     pfMap.clusterHighlights = nil -- Clear cluster highlights during cycling
                     pfMap.queue_update = GetTime()
-                    
+
                 end
             end
         elseif not isRightDown then
@@ -3099,7 +3099,7 @@ pfMap:SetScript("OnUpdate", function()
     elseif resetmap == true then
         SetMapToCurrentZone()
         resetmap = nil
-        
+
         -- Reset blob switching state when map closes
         if pfMap.showBlizzardBlobs then
             pfMap.showBlizzardBlobs = false
@@ -3114,7 +3114,7 @@ pfMap:SetScript("OnUpdate", function()
     -- update hidecluster detection
     if controlkey.pressed then
         hidecluster = MouseIsOver(WorldMapFrame)
-        
+
         -- Ctrl+Map blob switching: show Blizzard blobs, hide pfQuest nodes
         if hidecluster and WorldMapFrame:IsShown() and not pfMap.showBlizzardBlobs then
             pfMap.showBlizzardBlobs = true
@@ -3123,7 +3123,7 @@ pfMap:SetScript("OnUpdate", function()
         end
     else
         hidecluster = nil
-        
+
         -- Restore pfQuest nodes when Ctrl released
         if pfMap.showBlizzardBlobs then
             pfMap.showBlizzardBlobs = false
