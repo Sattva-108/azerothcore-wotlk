@@ -551,7 +551,7 @@ function pfMap:GetQuestXP(questData)
 
     -- Step 5: Apply server rate (GetQuestRate)
     local serverRate = (pfMap.xpRateDetector and pfMap.xpRateDetector:GetCurrentRate()) or 1
-    xp = xp * serverRate * 3
+    xp = xp * serverRate * 5
 
     -- Step 6: Final floor (as AzerothCore converts to uint32)
     return math.floor(xp)
