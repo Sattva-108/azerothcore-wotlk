@@ -6,6 +6,9 @@ luasql = require("luasql.mysql")
 local env = luasql.mysql()
 mysql = env:connect("acore_world", "acore", "acore", "127.0.0.1", 3306)
 
+mysql:execute("SET NAMES utf8")
+mysql:execute("SET CHARACTER SET utf8")
+
 if not mysql then
   print("ERROR: Failed to connect to database")
   return
@@ -46,51 +49,53 @@ end
 
 -- Function to read CSV file and create table
 function load_dbc_csv(filename, table_name, create_sql, custom_insert)
-  print("Processing: " .. filename)
+    print("Processing: " .. filename)
 
-  -- Drop table if exists
-  mysql:execute("DROP TABLE IF EXISTS `" .. table_name .. "`")
+    if create_sql then
+        -- Drop table if exists
+        mysql:execute("DROP TABLE IF EXISTS `" .. table_name .. "`")
 
-  -- Create table
-  local result = mysql:execute(create_sql)
-  if not result then
-    print("ERROR: Failed to create table " .. table_name)
-    return false
-  end
-
-  -- Read CSV file
-  local file = io.open(filename, "r")
-  if not file then
-    print("ERROR: Cannot open file " .. filename)
-    return false
-  end
-
-  -- Skip header line
-  local header = file:read("*line")
-  print("  Header: " .. header)
-
-  local count = 0
-  for line in file:lines() do
-    if line and line ~= "" then
-      local values = parse_csv_line(line)
-
-      if #values > 0 then
-        local sql = custom_insert(values)
-        if sql then
-          local result = mysql:execute(sql)
-          if result then
-            count = count + 1
-          else
-            print("  ERROR inserting row: " .. line)
-          end
+        -- Create table
+        local result = mysql:execute(create_sql)
+        if not result then
+            print("ERROR: Failed to create table " .. table_name)
+            return false
         end
-      end
     end
-  end
 
-  file:close()
-  print("  SUCCESS: Loaded " .. count .. " rows into " .. table_name)
-  return true
+    -- Read CSV file
+    local file = io.open(filename, "r")
+    if not file then
+        print("ERROR: Cannot open file " .. filename)
+        return false
+    end
+
+    -- Skip header line
+    local header = file:read("*line")
+    print("  Header: " .. header)
+
+    local count = 0
+    for line in file:lines() do
+        if line and line ~= "" then
+            local values = parse_csv_line(line)
+
+            if #values > 0 then
+                local sql = custom_insert(values)
+                if sql then
+                    local result = mysql:execute(sql)
+                    if result then
+                        count = count + 1
+                    else
+                        print("  ERROR inserting row: " .. line)
+                    end
+                end
+            end
+        end
+    end
+
+    file:close()
+    print("  SUCCESS: Loaded " .. count .. " rows into " .. table_name)
+    return true
 end
 
 -- Check if file exists
@@ -285,6 +290,23 @@ load_dbc_csv("DBC/wotlk/enUS/AreaTable.dbc.csv", "AreaTable_" .. version,
     return "INSERT INTO `AreaTable_" .. version .. "` VALUES (" .. id .. ", " .. continentID .. ", " .. parentAreaID .. ", " .. flags .. ", " .. name .. ", '', '', '', '', '', '', '', '', '')"
   end)
 
+-- AreaTable_wotlk (ruRU) - UPDATE existing rows, write into name_loc8
+load_dbc_csv("DBC/wotlk/ruRU/AreaTable.dbc.csv", "AreaTable_" .. version,
+    nil,  -- no CREATE, table already exists
+    function(values)
+        local id = values[1]
+        local name = values[20] or ""
+
+        -- strip surrounding CSV quotes
+        name = name:gsub('^"', ''):gsub('"$', '')
+        -- convert escaped double-quotes "" to single quote for display
+        name = name:gsub('""', '"')
+        -- escape single quotes for MySQL
+        name = name:gsub("'", "\\'")
+
+        return "UPDATE `AreaTable_" .. version .. "` SET `name_loc8` = '" .. name .. "' WHERE `id` = " .. id
+    end)
+
 -- SkillLine_wotlk (only enUS for now, matching load-client-data.sh)
 load_dbc_csv("DBC/wotlk/enUS/SkillLine.dbc.csv", "SkillLine_" .. version,
   "CREATE TABLE `SkillLine_" .. version .. "` (" ..
@@ -357,7 +379,7 @@ if file_exists("DBC/wotlk/Spell.dbc.csv") then
       local id = values[1] or "0"
       local requiresSpellFocus = values[17] or "0"  -- RequiresSpellFocus field position
       local name = values[136] or ""  -- SpellName_Lang_enUS field position
-      
+
       -- Handle quotes in name
       name = name:gsub('""', '\\"')
       if name ~= "" and name ~= '""' then
@@ -365,7 +387,7 @@ if file_exists("DBC/wotlk/Spell.dbc.csv") then
       else
         name = '""'
       end
-      
+
       return "INSERT INTO `spell_dbc_full` VALUES (" .. id .. ", " .. requiresSpellFocus .. ", " .. name .. ")"
     end)
   print("SUCCESS: spell_dbc_full table created with full Spell.dbc data")
