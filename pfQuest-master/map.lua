@@ -551,7 +551,7 @@ function pfMap:GetQuestXP(questData)
 
     -- Step 5: Apply server rate (GetQuestRate)
     local serverRate = (pfMap.xpRateDetector and pfMap.xpRateDetector:GetCurrentRate()) or 1
-    xp = xp * serverRate * 5
+    xp = xp * serverRate * 1
 
     -- Step 6: Final floor (as AzerothCore converts to uint32)
     return math.floor(xp)
@@ -3105,6 +3105,7 @@ pfMap:SetScript("OnUpdate", function()
             pfMap.showBlizzardBlobs = false
             pfMap:HideBlizzardBlobs()
             pfMap:ShowPfQuestNodes()
+            pfMap:UpdateNodes()
         end
     end
 
@@ -3129,6 +3130,7 @@ pfMap:SetScript("OnUpdate", function()
             pfMap.showBlizzardBlobs = false
             pfMap:HideBlizzardBlobs()
             pfMap:ShowPfQuestNodes()
+            pfMap:UpdateNodes()
         end
     end
 end)
