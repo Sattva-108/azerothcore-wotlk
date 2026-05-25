@@ -333,6 +333,23 @@ load_dbc_csv("DBC/wotlk/enUS/SkillLine.dbc.csv", "SkillLine_" .. version,
     return "INSERT INTO `SkillLine_" .. version .. "` VALUES (" .. id .. ", " .. name .. ", '', '', '', '', '', '', '', '', '')"
   end)
 
+-- SkillLine_wotlk (ruRU) - UPDATE existing rows, write into name_loc8
+load_dbc_csv("DBC/wotlk/ruRU/SkillLine.dbc.csv", "SkillLine_" .. version,
+    nil,  -- no CREATE, table already exists
+    function(values)
+        local id = values[1]
+        local name = values[12] or ""
+
+        -- strip surrounding CSV quotes
+        name = name:gsub('^"', ''):gsub('"$', '')
+        -- convert escaped double-quotes "" to single quote for display
+        name = name:gsub('""', '"')
+        -- escape single quotes for MySQL
+        name = name:gsub("'", "\\'")
+
+        return "UPDATE `SkillLine_" .. version .. "` SET `name_loc8` = '" .. name .. "' WHERE `id` = " .. id
+    end)
+
 -- WorldMapOverlay_wotlk (if file exists)
 if file_exists("DBC/wotlk/WorldMapOverlay.dbc.csv") then
   load_dbc_csv("DBC/wotlk/WorldMapOverlay.dbc.csv", "WorldMapOverlay_" .. version,
