@@ -646,7 +646,7 @@ local config = {
       client = "1.12.1",
       core = "acore", -- Use AzerothCore for this project
       name = "Vanilla (AzerothCore WotLK data as base)",
-      locales = { ["enUS"]=0 }, -- Only English for testing
+      locales = { ["enUS"]=0, ["ruRU"]=8 },
       database = "acore_world", -- Specify the world database name for AzerothCore
       prior = nil,      -- version this one is based on (nil for vanilla)
     },
@@ -671,7 +671,7 @@ local config = {
       client = "3.3.5",
       core = "acore",   -- Use the new AzerothCore config
       name = "Wrath of the Lich King (AzerothCore)",
-      locales = { ["enUS"]=0 }, -- Only English for testing
+      locales = { ["enUS"]=0, ["ruRU"]=8 },
       prior = "vanilla", -- WotLK data is diffed against Vanilla
       database = "acore_world", -- Specify the world database name for AzerothCore
     },
@@ -929,6 +929,8 @@ if config.expansions[expansion_to_process] then
 --         print("User: " .. config.mysql.live.username)
 
         mysql, err = env:connect(db_name, config.mysql.live.username, config.mysql.live.password, config.mysql.live.address, config.mysql.live.port)
+        mysql:execute("SET NAMES utf8")
+        mysql:execute("SET CHARACTER SET utf8")
         if not mysql then
             error("Database connection failed: " .. (err or "unknown error"))
         end
@@ -4222,7 +4224,7 @@ end
           where_clause = " WHERE creature_template.entry IN (" .. npc_list .. ") "
         end
 
-        local query = mysql:execute('SELECT creature_template.entry, creature_template.name FROM creature_template' .. where_clause .. ' ORDER BY creature_template.entry ASC')
+          local query = mysql:execute('SELECT creature_template.entry, creature_template.name, creature_template_locale.Name AS locale_name FROM creature_template LEFT JOIN creature_template_locale ON creature_template_locale.entry = creature_template.entry AND creature_template_locale.locale = \'' .. locale_code .. '\'' .. where_clause .. ' ORDER BY creature_template.entry ASC')
 
         if query then
           while query:fetch(locales_creature, "a") do
@@ -4301,26 +4303,29 @@ end
           where_clause = " WHERE entry IN (" .. object_list .. ") "
         end
 
-        -- Try simple query without locale table since it may not exist
-        local query = mysql:execute('SELECT entry, name FROM gameobject_template' .. where_clause .. ' ORDER BY entry ASC' .. limit_clause)
+          local query = mysql:execute('SELECT gameobject_template.entry, gameobject_template.name, gameobject_template_locale.name AS locale_name FROM gameobject_template LEFT JOIN gameobject_template_locale ON gameobject_template_locale.entry = gameobject_template.entry AND gameobject_template_locale.locale = \'' .. locale_code .. '\'' .. where_clause .. ' ORDER BY gameobject_template.entry ASC' .. limit_clause)
 
-        if query then
-          while query:fetch(locales_gameobject, "a") do
-            if debug("locales_object") then break end
+          if query then
+              while query:fetch(locales_gameobject, "a") do
+                  if debug("locales_object") then break end
 
-            local entry = tonumber(locales_gameobject.entry)
-            local name = locales_gameobject.name
-            -- No locale_name since we're using simplified query
+                  local entry = tonumber(locales_gameobject.entry)
+                  local name = locales_gameobject.name
 
-            if entry then
-              local final_name = name or ""
-              if final_name ~= "" then
-                local locale = loc .. ( expansion ~= "vanilla" and "-" .. expansion or "" )
-                pfDB["objects"][locale] = pfDB["objects"][locale] or {}
-                pfDB["objects"][locale][entry] = sanitize(final_name)
+                  -- WE MUST ADD THIS LINE TO READ THE RUSSIAN NAME:
+                  local locale_name = locales_gameobject.locale_name
+
+                  if entry then
+                      -- WE MUST CHANGE THIS LINE SO IT PRIORITIZES THE RUSSIAN NAME:
+                      local final_name = locale_name or name or ""
+
+                      if final_name ~= "" then
+                          local locale = loc .. ( expansion ~= "vanilla" and "-" .. expansion or "" )
+                          pfDB["objects"][locale] = pfDB["objects"][locale] or {}
+                          pfDB["objects"][locale][entry] = sanitize(final_name)
+                      end
+                  end
               end
-            end
-          end
         else
           print("  Warning: Failed to execute objects locales query for " .. loc)
         end
